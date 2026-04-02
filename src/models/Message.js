@@ -1,0 +1,44 @@
+import mongoose from 'mongoose';
+
+const messageSchema = new mongoose.Schema({
+  messageId: {
+    type: String,
+    unique: true,
+    default: () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  },
+  chatId: {
+     type: mongoose.Schema.Types.Mixed, 
+    ref: 'Chat',
+    required: true
+  },
+  senderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  senderRole: {
+    type: String,
+    enum: ['user', 'counsellor'],
+    required: true
+  },
+  content: {
+    type: String,
+    required: true
+  },
+  contentType: {
+    type: String,
+    enum: ['TEXT', 'IMAGE', 'FILE', 'AUDIO'],
+    default: 'TEXT'
+  },
+  isRead: {
+    type: Boolean,
+    default: false
+  },
+  readAt: Date,
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+export default mongoose.model('Message', messageSchema);
