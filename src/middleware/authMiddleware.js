@@ -65,9 +65,8 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
             sameSite: 'lax',
             path: '/'
         };
-        res.cookie('accessToken',  newAccessToken,  { ...cookieBase, maxAge: 15 * 60 * 1000 });
-        res.cookie('refreshToken', newRefreshToken, { ...cookieBase, maxAge: 7 * 24 * 60 * 60 * 1000 });
-
+        res.cookie('accessToken',  newAccessToken,  )
+        res.cookie('refreshToken', newRefreshToken, )
         // 8. Expose new access token in header so frontend can store it
         res.setHeader('X-New-Access-Token', newAccessToken);
 

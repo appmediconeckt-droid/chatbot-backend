@@ -7654,14 +7654,12 @@ export const completeRegistration = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 15 * 60 * 1000, // 15 minutes
     });
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     });
 
     return res.status(201).json({
@@ -7695,6 +7693,126 @@ export const completeRegistration = async (req, res) => {
   }
 };
 // controllers/authController.js - FIXED loginUser
+// export const loginUser = async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     if (!email || !password) {
+//       return res
+//         .status(400)
+//         .json({ message: "Email and password are required", success: false });
+//     }
+
+//     const user = await User.findOne({ email });
+
+//     if (!user) {
+//       return res
+//         .status(404)
+//         .json({ message: "User not found", success: false });
+//     }
+
+//     if (!user.isActive) {
+//       return res
+//         .status(401)
+//         .json({ message: "Account is deactivated", success: false });
+//     }
+
+//     const match = await bcrypt.compare(password, user.password);
+//     if (!match) {
+//       return res
+//         .status(401)
+//         .json({ message: "Invalid password", success: false });
+//     }
+
+//     // Force logout all previous sessions
+//     await Session.updateMany(
+//       { userId: user._id, isActive: true },
+//       { isActive: false, logoutAt: new Date() },
+//     );
+
+//     // ✅ STEP 1: Create session FIRST
+// // ✅ STEP 1: Create empty session FIRST (without validation issue)
+// const newSession = new Session({
+//   userId: user._id,
+//   isActive: true,
+//   createdAt: new Date(),
+// });
+
+// // ✅ STEP 2: Generate tokens WITH sessionId
+// const refreshToken = generateRefreshToken(user._id, newSession._id);
+// const accessToken = generateAccessToken(user._id, newSession._id);
+
+//    console.log("========== TOKEN DEBUG INFO ==========");
+//     console.log("Access token payload:", jwt.decode(accessToken));
+//     console.log("Refresh token payload:", jwt.decode(refreshToken));
+//     console.log("Session ID:", newSession._id.toString());
+//     console.log("======================================");
+
+// // ✅ STEP 3: assign refreshToken BEFORE save
+// newSession.refreshToken = refreshToken;
+
+// // ✅ STEP 4: now save (no validation error)
+// await newSession.save();
+//     // // Generate refresh token (NO EXPIRY)
+//     // const refreshToken = generateRefreshToken(user._id);
+
+//     // // FIRST create session
+//     // const newSession = await Session.create({
+//     //   userId: user._id,
+//     //   refreshToken,
+//     //   isActive: true,
+//     //   createdAt: new Date(),
+//     // });
+
+//     // console.log(`✅ Created new session: ${newSession._id}`);
+
+//     // // THEN create access token WITH sessionId
+//     // const accessToken = generateAccessToken(user._id, newSession._id);
+
+//     // Set cookies
+//     res.cookie("accessToken", accessToken, {
+//       httpOnly: true,
+//      secure: false,
+// sameSite: "lax",
+//     });
+
+//     // res.cookie("refreshToken", refreshToken, {
+//     //   httpOnly: true,
+//     //   secure: process.env.NODE_ENV === "production",
+//     //   sameSite: "none",
+//     //   maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
+//     // });
+  
+//     const cookieOptions = {
+//   httpOnly: true,
+//  secure: false,
+// sameSite: "lax",
+// };
+
+// res.cookie("refreshToken", refreshToken, cookieOptions);
+//     return res.status(200).json({
+//       message: "Login successful",
+//       success: true,
+//       accessToken,
+//       refreshToken,
+//       user: user.toJSON(),
+//       role: user.role,
+//     });
+
+
+//   } catch (error) {
+//     console.log("Login error:", error);
+//     return res
+//       .status(500)
+//       .json({
+//         message: "Error in login",
+//         success: false,
+//         error: error.message,
+//       });
+//   }
+// };
+
+// ================= LOGIN USER (Prevent multiple logins - returns error if already logged in) =================
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -7726,74 +7844,55 @@ export const loginUser = async (req, res) => {
         .json({ message: "Invalid password", success: false });
     }
 
-    // Force logout all previous sessions
-    await Session.updateMany(
-      { userId: user._id, isActive: true },
-      { isActive: false, logoutAt: new Date() },
-    );
+    // Check if there's an existing active session for this user
+    const existingActiveSession = await Session.findOne({
+      userId: user._id,
+      isActive: true
+    });
 
-    // ✅ STEP 1: Create session FIRST
-// ✅ STEP 1: Create empty session FIRST (without validation issue)
-const newSession = new Session({
-  userId: user._id,
-  isActive: true,
-  createdAt: new Date(),
-});
+    // If user already has an active session, return error
+    if (existingActiveSession) {
+      return res.status(409).json({
+        message: "User is already logged in. Please logout from existing session first.",
+        success: false,
+        existingSessionId: existingActiveSession._id,
+        loggedInAt: existingActiveSession.createdAt
+      });
+    }
 
-// ✅ STEP 2: Generate tokens WITH sessionId
-const refreshToken = generateRefreshToken(user._id, newSession._id);
-const accessToken = generateAccessToken(user._id, newSession._id);
+    // Create new session
+    const newSession = new Session({
+      userId: user._id,
+      isActive: true,
+      createdAt: new Date(),
+    });
 
-   console.log("========== TOKEN DEBUG INFO ==========");
+    // Generate tokens WITH sessionId
+    const refreshToken = generateRefreshToken(user._id, newSession._id);
+    const accessToken = generateAccessToken(user._id, newSession._id);
+
+    console.log("========== TOKEN DEBUG INFO ==========");
     console.log("Access token payload:", jwt.decode(accessToken));
     console.log("Refresh token payload:", jwt.decode(refreshToken));
     console.log("Session ID:", newSession._id.toString());
     console.log("======================================");
 
-// ✅ STEP 3: assign refreshToken BEFORE save
-newSession.refreshToken = refreshToken;
+    // Assign refreshToken and save session
+    newSession.refreshToken = refreshToken;
+    await newSession.save();
 
-// ✅ STEP 4: now save (no validation error)
-await newSession.save();
-    // // Generate refresh token (NO EXPIRY)
-    // const refreshToken = generateRefreshToken(user._id);
-
-    // // FIRST create session
-    // const newSession = await Session.create({
-    //   userId: user._id,
-    //   refreshToken,
-    //   isActive: true,
-    //   createdAt: new Date(),
-    // });
-
-    // console.log(`✅ Created new session: ${newSession._id}`);
-
-    // // THEN create access token WITH sessionId
-    // const accessToken = generateAccessToken(user._id, newSession._id);
+    console.log(`✅ Created new session for user ${user._id}: ${newSession._id}`);
 
     // Set cookies
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-     secure: false,
-sameSite: "lax",
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
-
-    // res.cookie("refreshToken", refreshToken, {
-    //   httpOnly: true,
-    //   secure: process.env.NODE_ENV === "production",
-    //   sameSite: "none",
-    //   maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
-    // });
-  
     const cookieOptions = {
-  httpOnly: true,
- secure: false,
-sameSite: "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000, 
-};
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+    };
 
-res.cookie("refreshToken", refreshToken, cookieOptions);
+    res.cookie("accessToken", accessToken, cookieOptions);
+    res.cookie("refreshToken", refreshToken, cookieOptions);
+
     return res.status(200).json({
       message: "Login successful",
       success: true,
@@ -7803,9 +7902,8 @@ res.cookie("refreshToken", refreshToken, cookieOptions);
       role: user.role,
     });
 
-
   } catch (error) {
-    console.log("Login error:", error);
+    console.error("Login error:", error);
     return res
       .status(500)
       .json({
@@ -8290,7 +8388,6 @@ export const refreshAccessToken = async (req, res) => {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
       path: '/'
     });
     
@@ -8298,7 +8395,6 @@ export const refreshAccessToken = async (req, res) => {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/'
     });
     
@@ -8378,26 +8474,115 @@ export const refreshAccessToken = async (req, res) => {
 // };
 
 // ================= LOGOUT ================= real
+// export const logout = async (req, res) => {
+//     try {
+//         const refreshToken = req.cookies?.refreshToken;
+
+//         if (refreshToken) {
+//             await Session.updateOne(
+//                 { refreshToken, isActive: true },
+//                 { isActive: false, logoutAt: new Date() }
+//             );
+//         }
+
+//         res.clearCookie("accessToken", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" });
+//         res.clearCookie("refreshToken", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" });
+
+//         return res.status(200).json({ message: "Logged out successfully", success: true });
+
+//     } catch (error) {
+//         console.error("Logout error:", error);
+//         return res.status(500).json({ message: "Error in logout", success: false });
+//     }
+// };
+
+// ================= LOGOUT (FIXED - Properly invalidates session) =================
 export const logout = async (req, res) => {
-    try {
-        const refreshToken = req.cookies?.refreshToken;
+  try {
+    // Get userId from request (set by auth middleware)
+    let userId = req.userId || req.user?._id;
+    const refreshToken = req.cookies?.refreshToken;
 
-        if (refreshToken) {
-            await Session.updateOne(
-                { refreshToken, isActive: true },
-                { isActive: false, logoutAt: new Date() }
-            );
-        }
+    console.log("🔓 Logout - UserId from request:", userId);
+    console.log("🔓 Logout - Refresh token present:", !!refreshToken);
 
-        res.clearCookie("accessToken", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" });
-        res.clearCookie("refreshToken", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" });
-
-        return res.status(200).json({ message: "Logged out successfully", success: true });
-
-    } catch (error) {
-        console.error("Logout error:", error);
-        return res.status(500).json({ message: "Error in logout", success: false });
+    // If no userId but we have refresh token, try to decode it
+    if (!userId && refreshToken) {
+      try {
+        const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
+        userId = decoded.userId;
+        console.log("✅ Got userId from refresh token in logout function:", userId);
+      } catch (error) {
+        console.log("⚠️ Could not decode refresh token:", error.message);
+      }
     }
+
+    // Invalidate session(s)
+    if (userId) {
+      if (refreshToken) {
+        // Invalidate the specific session with this refresh token
+        const result = await Session.updateOne(
+          { userId, refreshToken, isActive: true },
+          { isActive: false, logoutAt: new Date() }
+        );
+        
+        if (result.modifiedCount === 0) {
+          // If no specific session found, invalidate all active sessions for this user
+          const allResult = await Session.updateMany(
+            { userId, isActive: true },
+            { isActive: false, logoutAt: new Date() }
+          );
+          console.log(`✅ All ${allResult.modifiedCount} sessions invalidated for user: ${userId}`);
+        } else {
+          console.log(`✅ Specific session invalidated for user: ${userId}`);
+        }
+      } else {
+        // No refresh token provided, invalidate ALL active sessions
+        const result = await Session.updateMany(
+          { userId, isActive: true },
+          { isActive: false, logoutAt: new Date() }
+        );
+        console.log(`✅ All ${result.modifiedCount} sessions invalidated for user: ${userId}`);
+      }
+    } else {
+      console.log("⚠️ No userId found, skipping session invalidation");
+    }
+
+    // Clear cookies regardless
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/"
+    };
+
+    res.clearCookie("accessToken", cookieOptions);
+    res.clearCookie("refreshToken", cookieOptions);
+
+    console.log("✅ Cookies cleared successfully");
+
+    return res.status(200).json({
+      message: "Logged out successfully",
+      success: true
+    });
+
+  } catch (error) {
+    console.error("Logout error:", error);
+
+    // Even on error, try to clear cookies
+    try {
+      res.clearCookie("accessToken", { path: "/" });
+      res.clearCookie("refreshToken", { path: "/" });
+    } catch (cookieError) {
+      console.error("Error clearing cookies:", cookieError);
+    }
+
+    return res.status(500).json({
+      message: "Error in logout",
+      success: false,
+      error: error.message
+    });
+  }
 };
 
 

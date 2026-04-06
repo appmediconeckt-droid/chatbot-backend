@@ -58,7 +58,7 @@ export const generateAccessToken = (userId, sessionId) => {
     return jwt.sign(
         { userId, sessionId },   // 🔥 ADD THIS
         process.env.ACCESS_SECRET,
-        { expiresIn: "15m" }
+        // { expiresIn: "15m" }
     );
 };
 

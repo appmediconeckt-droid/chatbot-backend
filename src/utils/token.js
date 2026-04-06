@@ -58,7 +58,7 @@ export const generateAccessToken = (userId, sessionId) => {
   return jwt.sign(
     { userId, sessionId },
     process.env.ACCESS_SECRET,
-    { expiresIn: "15m" }
+    // { expiresIn: "15m" }
   );
 };
 
@@ -66,7 +66,7 @@ export const generateRefreshToken = (userId, sessionId) => {
   return jwt.sign(
     { userId, sessionId },
     process.env.REFRESH_SECRET,
-    { expiresIn: "7d" }
+    // { expiresIn: "7d" }
   );
 };
 
@@ -125,13 +125,11 @@ export const generateAccessRefreshToken = async (user, sessionId) => {
     const accessToken = jwt.sign(
       { userId: user._id, sessionId },
       process.env.ACCESS_SECRET,
-      { expiresIn: "15m" }
     );
 
     const refreshToken = jwt.sign(
       { userId: user._id, sessionId },  // ✅ FIXED
       process.env.REFRESH_SECRET,
-      { expiresIn: "7d" }
     );
 
     user.refreshToken = refreshToken;
