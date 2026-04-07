@@ -13,7 +13,7 @@ export const initiateCall = async (req, res) => {
     }
     
     // Check if chat exists
-    const chat = await Chat.findById(chatId)
+    const chat = await Chat.findOne({ chatId: chatId })
       .populate('userId', 'fullName profilePhoto location')
       .populate('counselorId', 'fullName profilePhoto location');
     

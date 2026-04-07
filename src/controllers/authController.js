@@ -6324,22 +6324,58 @@ export const sendPhoneOTP = async (req, res) => {
 
     console.log(`📱 Sending Phone OTP to ${formattedPhone}: ${otp}`);
 
-    try {
-      const message = await twilioClient.messages.create({
-        body: `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
-        from: TWILIO_PHONE_NUMBER,
-        to: formattedPhone,
-      });
+    userVerification.phoneNumber = cleanedPhone;
+    userVerification.formattedPhone = formattedPhone;
+    verifiedUsersStore.set(userEmail, userVerification);
 
-      userVerification.phoneNumber = cleanedPhone;
-      userVerification.formattedPhone = formattedPhone;
+    phoneOTPStore.set(userEmail, {
+      otp,
+      phoneNumber: cleanedPhone,
+      formattedPhone,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+    const isTwilioConfigured = Boolean(
+      process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      twilioPhoneNumber,
+    );
+
+    if (!isTwilioConfigured && process.env.NODE_ENV !== "production") {
+      console.warn(
+        "Twilio is not configured. Returning OTP in development response only.",
+      );
+      return res.status(200).json({
+        message: "Phone OTP generated in development mode",
+        success: true,
+        phoneNumber: cleanedPhone,
+        email: userEmail,
+        devOtp: otp,
+      });
+    }
+
+    if (!isTwilioConfigured) {
+      phoneOTPStore.delete(userEmail);
+      userVerification.phoneNumber = undefined;
+      userVerification.formattedPhone = undefined;
       verifiedUsersStore.set(userEmail, userVerification);
 
-      phoneOTPStore.set(userEmail, {
-        otp,
-        phoneNumber: cleanedPhone,
-        formattedPhone,
-        expiresAt: Date.now() + 10 * 60 * 1000,
+      return res.status(503).json({
+        message: "SMS service is not configured. Please contact support.",
+        success: false,
+      });
+    }
+
+    try {
+      const twilioModule = await import('twilio');
+      const twilio = twilioModule.default || twilioModule;
+      const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      
+      await twilioClient.messages.create({
+        body: `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
+        from: twilioPhoneNumber,
+        to: formattedPhone,
       });
 
       return res.status(200).json({
@@ -6349,10 +6385,43 @@ export const sendPhoneOTP = async (req, res) => {
         email: userEmail,
       });
     } catch (sendError) {
-      // console.error("Phone OTP sending error:", sendError);
-      return res
-        .status(500)
-        .json({ message: "Failed to send phone OTP", success: false });
+      phoneOTPStore.delete(userEmail);
+      userVerification.phoneNumber = undefined;
+      userVerification.formattedPhone = undefined;
+      verifiedUsersStore.set(userEmail, userVerification);
+
+      console.error("Phone OTP sending error:", {
+        code: sendError?.code,
+        message: sendError?.message,
+        moreInfo: sendError?.moreInfo,
+      });
+
+      if (sendError?.code === 21211) {
+        return res.status(400).json({
+          message: "Invalid phone number format.",
+          success: false,
+        });
+      }
+
+      if (sendError?.code === 21608) {
+        return res.status(400).json({
+          message:
+            "Phone number is not verified for your Twilio trial account. Verify this number in Twilio console or use a paid account.",
+          success: false,
+        });
+      }
+
+      if (sendError?.code === 20003) {
+        return res.status(502).json({
+          message: "Twilio authentication failed. Please verify SMS credentials.",
+          success: false,
+        });
+      }
+
+      return res.status(502).json({
+        message: "Failed to send phone OTP via SMS provider.",
+        success: false,
+      });
     }
   } catch (error) {
     console.error("Send phone OTP error:", error);
