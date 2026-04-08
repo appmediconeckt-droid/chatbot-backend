@@ -237,17 +237,17 @@ export const videoCallController = {
               receiverType,
               "incoming_call_request",
               {
-              callId: existingCall.callId,
-              roomId: existingCall.roomId,
-              from: initiatorDisplayName,
-              fromId: initiatorId,
-              fromType: initiatorType,
-              fromProfilePhoto: initiatorDetails.profilePhoto,
-              callType,
-              message,
-              expiresAt,
-              remainingSeconds: 10,
-              timestamp: new Date(),
+                callId: existingCall.callId,
+                roomId: existingCall.roomId,
+                from: initiatorDisplayName,
+                fromId: initiatorId,
+                fromType: initiatorType,
+                fromProfilePhoto: initiatorDetails.profilePhoto,
+                callType,
+                message,
+                expiresAt,
+                remainingSeconds: 10,
+                timestamp: new Date(),
               },
             );
           }
@@ -380,17 +380,17 @@ export const videoCallController = {
           receiverType,
           "incoming_call_request",
           {
-          callId,
-          roomId,
-          from: initiatorDisplayName,
-          fromId: initiatorId,
-          fromType: initiatorType,
-          fromProfilePhoto: initiatorDetails.profilePhoto,
-          callType,
-          message,
-          expiresAt,
-          remainingSeconds: 10,
-          timestamp: new Date(),
+            callId,
+            roomId,
+            from: initiatorDisplayName,
+            fromId: initiatorId,
+            fromType: initiatorType,
+            fromProfilePhoto: initiatorDetails.profilePhoto,
+            callType,
+            message,
+            expiresAt,
+            remainingSeconds: 10,
+            timestamp: new Date(),
           },
         );
       }
@@ -634,11 +634,11 @@ export const videoCallController = {
           call.initiator.type,
           "call_accepted",
           {
-          callId,
-          roomId: call.roomId,
-          by: acceptorDisplayName,
-          byProfilePhoto: acceptorDetails.profilePhoto,
-          timestamp: new Date(),
+            callId,
+            roomId: call.roomId,
+            by: acceptorDisplayName,
+            byProfilePhoto: acceptorDetails.profilePhoto,
+            timestamp: new Date(),
           },
         );
       }
@@ -761,10 +761,10 @@ export const videoCallController = {
           call.initiator.type,
           "call_rejected",
           {
-          callId,
-          reason,
-          by: call.receiver.fullName,
-          timestamp: new Date(),
+            callId,
+            reason,
+            by: call.receiver.fullName,
+            timestamp: new Date(),
           },
         );
       }
@@ -912,11 +912,11 @@ export const videoCallController = {
           isInitiator ? call.receiver.type : call.initiator.type,
           "participant_joined",
           {
-          callId,
-          userId,
-          userName: userDetails.fullName,
-          userType,
-          timestamp: new Date(),
+            callId,
+            userId,
+            userName: userDetails.fullName,
+            userType,
+            timestamp: new Date(),
           },
         );
       }
@@ -972,6 +972,28 @@ export const videoCallController = {
       const call = activeCalls.get(callId);
 
       if (!call) {
+        const historicalCall = callHistory.find((entry) => entry.id === callId);
+
+        if (historicalCall) {
+          return res.json({
+            success: true,
+            message: "Call already ended",
+            callSummary: {
+              callId,
+              duration: historicalCall.duration || 0,
+              endedAt:
+                historicalCall.endTime ||
+                historicalCall.rejectedAt ||
+                historicalCall.cancelledAt ||
+                historicalCall.createdAt,
+              endedBy:
+                historicalCall.endedBy?.name ||
+                historicalCall.endedBy ||
+                "unknown",
+            },
+          });
+        }
+
         return res.status(404).json({
           success: false,
           error: "Call not found",
@@ -1043,7 +1065,9 @@ export const videoCallController = {
         call.initiator.id === userId ? call.receiver.id : call.initiator.id;
       if (global.io) {
         const otherParticipantType =
-          call.initiator.id === userId ? call.receiver.type : call.initiator.type;
+          call.initiator.id === userId
+            ? call.receiver.type
+            : call.initiator.type;
 
         videoCallController.emitToParticipant(
           global.io,
@@ -1051,10 +1075,10 @@ export const videoCallController = {
           otherParticipantType,
           "call_ended",
           {
-          callId,
-          duration,
-          endedBy: endedBy.fullName,
-          timestamp: new Date(),
+            callId,
+            duration,
+            endedBy: endedBy.fullName,
+            timestamp: new Date(),
           },
         );
       }
@@ -1141,17 +1165,17 @@ export const videoCallController = {
           call.receiver.type,
           "incoming_call_request",
           {
-          callId,
-          roomId: call.roomId,
-          from: initiatorDisplayName,
-          fromId: call.initiator.id,
-          fromType: call.initiator.type,
-          fromProfilePhoto: call.initiator.profilePhoto,
-          callType: call.type,
-          message: call.requestMessage,
-          expiresAt,
-          remainingSeconds: 10,
-          timestamp: new Date(),
+            callId,
+            roomId: call.roomId,
+            from: initiatorDisplayName,
+            fromId: call.initiator.id,
+            fromType: call.initiator.type,
+            fromProfilePhoto: call.initiator.profilePhoto,
+            callType: call.type,
+            message: call.requestMessage,
+            expiresAt,
+            remainingSeconds: 10,
+            timestamp: new Date(),
           },
         );
       }
@@ -1202,8 +1226,8 @@ export const videoCallController = {
               call.initiator.type,
               "call_expired",
               {
-              callId,
-              message: "Call request expired after 10 seconds",
+                callId,
+                message: "Call request expired after 10 seconds",
               },
             );
           }
