@@ -6988,7 +6988,7 @@ export const completeRegistration = async (req, res) => {
 // ================= LOGIN USER (One-device policy: auto-logout previous sessions) =================
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
     if (!email || !password) {
       return res
@@ -7002,6 +7002,13 @@ export const loginUser = async (req, res) => {
       return res
         .status(404)
         .json({ message: "User not found", success: false });
+    }
+
+    if (role && user.role !== role) {
+      return res.status(403).json({
+        message: `Access denied. You are registered as a ${user.role}, but attempting to login as a ${role}.`,
+        success: false,
+      });
     }
 
     if (!user.isActive) {
