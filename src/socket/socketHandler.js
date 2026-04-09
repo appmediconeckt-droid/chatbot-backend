@@ -557,7 +557,7 @@ class SocketHandler {
   setupCallSignaling(socket, callId) {
     const callRoom = `call_${callId}`;
 
-    // WebRTC Offer
+    // WebRTC Offer (prefixed)
     socket.on("call-offer", ({ callId: callIdParam, offer, to }) => {
       if (callIdParam !== callId) return;
       console.log(`📞 Call offer from ${socket.userId} to ${to}`);
@@ -570,7 +570,19 @@ class SocketHandler {
       });
     });
 
-    // WebRTC Answer
+    // WebRTC Offer (bare — backward compatibility)
+    socket.on("offer", ({ callId: callIdParam, offer, userId: senderUserId }) => {
+      if (callIdParam !== callId) return;
+      console.log(`📞 Bare offer from ${socket.userId}`);
+      socket.to(callRoom).emit("offer", {
+        callId: callIdParam,
+        offer,
+        userId: senderUserId || socket.userId,
+        from: socket.userId,
+      });
+    });
+
+    // WebRTC Answer (prefixed)
     socket.on("call-answer", ({ callId: callIdParam, answer, to }) => {
       if (callIdParam !== callId) return;
       console.log(`📞 Call answer from ${socket.userId} to ${to}`);
@@ -579,6 +591,18 @@ class SocketHandler {
         answer,
         from: socket.userId,
         to,
+      });
+    });
+
+    // WebRTC Answer (bare — backward compatibility)
+    socket.on("answer", ({ callId: callIdParam, answer, userId: senderUserId }) => {
+      if (callIdParam !== callId) return;
+      console.log(`📞 Bare answer from ${socket.userId}`);
+      socket.to(callRoom).emit("answer", {
+        callId: callIdParam,
+        answer,
+        userId: senderUserId || socket.userId,
+        from: socket.userId,
       });
     });
 
