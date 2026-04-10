@@ -330,9 +330,7 @@ app.use(cookieParser());
 // 3. Static files
 // ---------------------------
 
-app.use("/" , (req, res) => {
-  res.send("Backend is running")
-});
+
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Serve password reset HTML page
