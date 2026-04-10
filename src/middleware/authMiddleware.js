@@ -8,11 +8,83 @@ import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // Helper: attempt silent token refresh and continue the request
 // ────────────────────────────────────────────────────────────────────────────
 const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
+<<<<<<< HEAD
   try {
     // 1. Verify refresh token
     let decoded;
     try {
       decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET);
+=======
+        try {
+        // 1. Verify refresh token
+        let decoded;
+        try {
+            decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET);
+        } catch (err) {
+            return res.status(401).json({
+                success: false,
+                error: 'Refresh token invalid or expired. Please log in again.',
+                code: 'REFRESH_INVALID'
+            });
+        }
+
+        // 2. Find the session
+        const session = await Session.findById(decoded.sessionId);
+        if (!session || !session.isActive) {
+            return res.status(401).json({
+                success: false,
+                error: 'Session expired. Please log in again.',
+                code: 'SESSION_EXPIRED'
+            });
+        }
+
+        // 3. Ensure refresh token matches what we stored (token rotation guard)
+        if (session.refreshToken !== incomingRefreshToken) {
+            return res.status(401).json({
+                success: false,
+                error: 'Token mismatch. Please log in again.',
+                code: 'TOKEN_MISMATCH'
+            });
+        }
+
+        // 4. Load user
+        const user = await User.findById(decoded.userId);
+        if (!user || !user.isActive) {
+            return res.status(401).json({
+                success: false,
+                error: 'User not found or deactivated.',
+                code: 'USER_NOT_FOUND'
+            });
+        }
+
+        // 5. Issue new tokens (rotation)
+        const newAccessToken  = generateAccessToken(user._id, session._id);
+        const newRefreshToken = generateRefreshToken(user._id, session._id);
+
+        // 6. Persist new refresh token
+        session.refreshToken = newRefreshToken;
+        await session.save();
+
+        // 7. Set new cookies
+        const cookieBase = {
+            httpOnly: true,
+            secure: false,
+            sameSite: 'lax',
+            path: '/'
+        };
+        res.cookie('accessToken',  newAccessToken,  )
+        res.cookie('refreshToken', newRefreshToken, )
+        // 8. Expose new access token in header so frontend can store it
+        res.setHeader('X-New-Access-Token', newAccessToken);
+
+        // 9. Attach user and continue
+        req.user          = user;
+        req.userId        = user._id;
+        req.userRole      = user.role;
+        req.newAccessToken = newAccessToken;
+
+        return next();
+>>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
     } catch (err) {
       return res.status(401).json({
         success: false,
