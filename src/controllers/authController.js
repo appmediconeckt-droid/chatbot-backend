@@ -7084,10 +7084,6 @@ export const loginUser = async (req, res) => {
   }
 };
 
-<<<<<<< HEAD
-=======
-
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
 // export const loginUser = async (req, res) => {
 //     try {
 //         const { email, password } = req.body;

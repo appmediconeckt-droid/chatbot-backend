@@ -258,15 +258,6 @@ class SocketHandler {
     this.io.on("connection", async (socket) => {
       console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
 
-<<<<<<< HEAD
-=======
-      if (!socket.userId || !socket.userRole) {
-        socket.emit('error', { message: 'Socket authentication missing' });
-        socket.disconnect();
-        return;
-      }
-      
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       // Get user details
       const user = await User.findById(socket.userId);
       if (!user) {
@@ -279,7 +270,6 @@ class SocketHandler {
       // call notifications can be delivered regardless of role spelling.
       const userRoom = `${socket.userRole}_${socket.userId}`;
       socket.join(userRoom);
-<<<<<<< HEAD
       socket.join(`user_${socket.userId}`);
       if (socket.userRole === "counsellor") {
         socket.join(`counselor_${socket.userId}`);
@@ -288,15 +278,6 @@ class SocketHandler {
         socket.join(`counsellor_${socket.userId}`);
       }
 
-=======
-
-      // Join compatibility aliases so older emitters still reach the user.
-      if (socket.userRole === 'counsellor' || socket.userRole === 'counselor') {
-        socket.join(`counsellor_${socket.userId}`);
-        socket.join(`counselor_${socket.userId}`);
-      }
-      
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       // Join all active chats for this user
       await this.joinExistingChats(socket);
 
@@ -599,39 +580,15 @@ class SocketHandler {
     socket.data.callSignalingRooms.add(callId);
     const callRoom = `call_${callId}`;
 
-<<<<<<< HEAD
     // WebRTC Offer (prefixed)
     socket.on("call-offer", ({ callId: callIdParam, offer, to }) => {
       if (callIdParam !== callId) return;
       console.log(`📞 Call offer from ${socket.userId} to ${to}`);
       socket.to(callRoom).emit("call-offer", {
-=======
-    const emitToPeer = (eventName, payload = {}) => {
-      if (payload.to) {
-        this.emitToUserRooms(payload.to, eventName, payload);
-        return;
-      }
-
-      socket.to(callRoom).emit(eventName, payload);
-    };
-
-    const registerAliases = (eventNames, handler) => {
-      eventNames.forEach((eventName) => {
-        socket.on(eventName, handler);
-      });
-    };
-    
-    // WebRTC Offer
-    registerAliases(['call-offer', 'offer'], ({ callId: callIdParam, offer, to, userId }) => {
-      if (callIdParam !== callId) return;
-      console.log(`📞 Call offer from ${socket.userId} to ${to}`);
-      emitToPeer('call-offer', {
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
         callId: callIdParam,
         offer,
         from: socket.userId || userId,
         fromRole: socket.userRole,
-<<<<<<< HEAD
         to,
       });
     });
@@ -657,33 +614,6 @@ class SocketHandler {
         answer,
         from: socket.userId,
         to,
-=======
-        to
-      });
-      emitToPeer('offer', {
-        callId: callIdParam,
-        offer,
-        userId: socket.userId || userId,
-        from: socket.userId || userId
-      });
-    });
-    
-    // WebRTC Answer
-    registerAliases(['call-answer', 'answer'], ({ callId: callIdParam, answer, to, userId }) => {
-      if (callIdParam !== callId) return;
-      console.log(`📞 Call answer from ${socket.userId} to ${to}`);
-      emitToPeer('call-answer', {
-        callId: callIdParam,
-        answer,
-        from: socket.userId || userId,
-        to
-      });
-      emitToPeer('answer', {
-        callId: callIdParam,
-        answer,
-        userId: socket.userId || userId,
-        from: socket.userId || userId
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
 
@@ -700,7 +630,6 @@ class SocketHandler {
     });
 
     // WebRTC ICE Candidate
-<<<<<<< HEAD
     socket.on("ice-candidate", ({ callId: callIdParam, candidate, to }) => {
       if (callIdParam !== callId) return;
       console.log(`🎯 ICE candidate from ${socket.userId}`);
@@ -709,60 +638,33 @@ class SocketHandler {
         candidate,
         from: socket.userId,
         to,
-=======
-    socket.on('ice-candidate', ({ callId: callIdParam, candidate, to, userId }) => {
-      if (callIdParam !== callId) return;
-      console.log(`🎯 ICE candidate from ${socket.userId}`);
-      emitToPeer('ice-candidate', {
-        callId: callIdParam,
-        candidate,
-        from: socket.userId || userId,
-        to
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
 
     // Call status updates
     socket.on("call-status-update", ({ callId: callIdParam, status, to }) => {
       if (callIdParam !== callId) return;
-<<<<<<< HEAD
       socket.to(callRoom).emit("call-status-update", {
-=======
-      emitToPeer('call-status-update', {
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
         callId: callIdParam,
         status,
         from: socket.userId,
         to,
-<<<<<<< HEAD
         timestamp: new Date(),
-=======
-        timestamp: new Date()
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
 
     // Mute/Unmute
     socket.on("call-mute-toggle", ({ callId: callIdParam, isMuted, to }) => {
       if (callIdParam !== callId) return;
-<<<<<<< HEAD
       socket.to(callRoom).emit("call-mute-toggle", {
         callId: callIdParam,
         isMuted,
         from: socket.userId,
         to,
-=======
-      emitToPeer('call-mute-toggle', {
-        callId: callIdParam,
-        isMuted,
-        from: socket.userId,
-        to
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
 
     // Speaker toggle
-<<<<<<< HEAD
     socket.on(
       "call-speaker-toggle",
       ({ callId: callIdParam, isSpeakerOn, to }) => {
@@ -776,53 +678,25 @@ class SocketHandler {
       },
     );
 
-=======
-    socket.on('call-speaker-toggle', ({ callId: callIdParam, isSpeakerOn, to }) => {
-      if (callIdParam !== callId) return;
-      emitToPeer('call-speaker-toggle', {
-        callId: callIdParam,
-        isSpeakerOn,
-        from: socket.userId,
-        to
-      });
-    });
-    
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
     // Hold/Resume
     socket.on("call-hold-toggle", ({ callId: callIdParam, isOnHold, to }) => {
       if (callIdParam !== callId) return;
-<<<<<<< HEAD
       socket.to(callRoom).emit("call-hold-toggle", {
         callId: callIdParam,
         isOnHold,
         from: socket.userId,
         to,
-=======
-      emitToPeer('call-hold-toggle', {
-        callId: callIdParam,
-        isOnHold,
-        from: socket.userId,
-        to
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
 
     // Call quality update
     socket.on("call-quality-update", ({ callId: callIdParam, quality, to }) => {
       if (callIdParam !== callId) return;
-<<<<<<< HEAD
       socket.to(callRoom).emit("call-quality-update", {
         callId: callIdParam,
         quality,
         from: socket.userId,
         to,
-=======
-      emitToPeer('call-quality-update', {
-        callId: callIdParam,
-        quality,
-        from: socket.userId,
-        to
->>>>>>> a08d7822750d80e75aa0bad21029d20f488cb7fd
       });
     });
   }
