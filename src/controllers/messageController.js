@@ -511,7 +511,7 @@ export const acceptChat = async (req, res) => {
     await chat.save();
 
     // Add acceptance message
-    await Message.create({
+    const acceptMsg = await Message.create({
       chatId: chat._id,
       senderId: req.user._id,
       senderRole: "counsellor",
@@ -531,6 +531,29 @@ export const acceptChat = async (req, res) => {
     const messages = await Message.find({ chatId: chat._id }).sort({
       createdAt: 1,
     });
+
+    // ✅ Emit real-time events
+    if (global.io) {
+      const chatRoom = `chat_${chat.chatId}`;
+      // Notify user that chat was accepted
+      global.io.to(`user_${chat.userId}`).emit("chat-status-update", {
+        chatId: chat._id,
+        status: "accepted",
+        acceptedAt: chat.acceptedAt,
+      });
+      // Emit the acceptance message into the chat room
+      global.io.to(chatRoom).emit("new-message", {
+        id: acceptMsg._id,
+        messageId: acceptMsg.messageId,
+        chatId: chat._id,
+        content: acceptMsg.content,
+        senderRole: acceptMsg.senderRole,
+        senderId: req.user._id,
+        contentType: acceptMsg.contentType,
+        createdAt: acceptMsg.createdAt,
+        isRead: acceptMsg.isRead,
+      });
+    }
 
     res.json({
       success: true,
@@ -651,13 +674,34 @@ export const rejectChat = async (req, res) => {
     await chat.save();
 
     // Add rejection message
-    await Message.create({
+    const rejectMsg = await Message.create({
       chatId: chat._id,
       senderId: req.user._id,
       senderRole: "counsellor",
       content: `❌ I'm currently unavailable. ${reason ? `Reason: ${reason}` : "Please try again later."}`,
       contentType: "TEXT",
     });
+
+    // ✅ Emit real-time events
+    if (global.io) {
+      const chatRoom = `chat_${chat.chatId}`;
+      global.io.to(`user_${chat.userId}`).emit("chat-status-update", {
+        chatId: chat._id,
+        status: "rejected",
+        rejectedAt: chat.rejectedAt,
+      });
+      global.io.to(chatRoom).emit("new-message", {
+        id: rejectMsg._id,
+        messageId: rejectMsg.messageId,
+        chatId: chat._id,
+        content: rejectMsg.content,
+        senderRole: rejectMsg.senderRole,
+        senderId: req.user._id,
+        contentType: rejectMsg.contentType,
+        createdAt: rejectMsg.createdAt,
+        isRead: rejectMsg.isRead,
+      });
+    }
 
     res.json({
       success: true,
@@ -1270,22 +1314,43 @@ export const sendMessage = async (req, res) => {
       "fullName profilePhoto",
     );
 
+    const messagePayloadForSocket = {
+      id: populatedMessage._id,
+      messageId: populatedMessage.messageId,
+      chatId: chat._id,
+      content: populatedMessage.content,
+      senderRole: populatedMessage.senderRole,
+      senderName: populatedMessage.senderId?.fullName,
+      senderId: populatedMessage.senderId?._id,
+      contentType: populatedMessage.contentType,
+      attachmentUrl: populatedMessage.attachmentUrl,
+      attachmentName: populatedMessage.attachmentName,
+      attachmentMimeType: populatedMessage.attachmentMimeType,
+      attachmentSize: populatedMessage.attachmentSize,
+      createdAt: populatedMessage.createdAt,
+      isRead: populatedMessage.isRead,
+    };
+
+    // ✅ Emit real-time event to everyone in the chat room (REST-based send)
+    if (global.io) {
+      const chatRoom = `chat_${chat.chatId}`;
+      global.io.to(chatRoom).emit("new-message", messagePayloadForSocket);
+
+      // Also notify the recipient's personal room for sidebar/badge updates
+      const recipientRoom =
+        req.user.role === "user"
+          ? `counsellor_${chat.counselorId}`
+          : `user_${chat.userId}`;
+      global.io.to(recipientRoom).emit("message-notification", {
+        chatId: chat._id,
+        message: messagePayloadForSocket,
+        sender: { id: req.user._id, role: req.user.role },
+      });
+    }
+
     res.json({
       success: true,
-      message: {
-        id: populatedMessage._id,
-        messageId: populatedMessage.messageId,
-        content: populatedMessage.content,
-        senderRole: populatedMessage.senderRole,
-        senderName: populatedMessage.senderId?.fullName,
-        contentType: populatedMessage.contentType,
-        attachmentUrl: populatedMessage.attachmentUrl,
-        attachmentName: populatedMessage.attachmentName,
-        attachmentMimeType: populatedMessage.attachmentMimeType,
-        attachmentSize: populatedMessage.attachmentSize,
-        createdAt: populatedMessage.createdAt,
-        isRead: populatedMessage.isRead,
-      },
+      message: messagePayloadForSocket,
     });
   } catch (error) {
     console.error("Error sending message:", error);
