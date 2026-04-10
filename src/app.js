@@ -265,7 +265,7 @@ import videoRoutes from "./routes/videoRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
-import { videoCallController } from "./controllers/videoCallController.js"; // Add this import
+import { authenticateSocket } from "./middleware/auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -340,18 +340,7 @@ const io = new Server(server, {
 
 // Make io accessible globally for your controllers
 global.io = io;
-
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-  
-  // Setup WebRTC signaling for video calls
-  videoCallController.handleWebRTCSignaling(io, socket);
-  
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
+io.use(authenticateSocket);
 
 // Initialize your existing socket handler (for chat, etc.)
 const socketHandler = new SocketHandler(io);

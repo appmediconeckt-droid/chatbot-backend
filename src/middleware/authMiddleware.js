@@ -8,7 +8,7 @@ import { generateAccessToken, generateRefreshToken } from '../utils/token.js';
 // Helper: attempt silent token refresh and continue the request
 // ────────────────────────────────────────────────────────────────────────────
 const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
-    try {
+        try {
         // 1. Verify refresh token
         let decoded;
         try {

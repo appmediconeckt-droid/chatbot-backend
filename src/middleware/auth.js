@@ -44,18 +44,36 @@ export const authenticateToken = async (req, res, next) => {
   }
 };
 
-export const authenticateSocket = (socket, next) => {
+export const authenticateSocket = async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token;
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.split(' ')[1];
     
     if (!token) {
       return next(new Error('Authentication required'));
     }
     
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
+    const decoded = jwt.verify(token, secret);
+    const userId = decoded.userId || decoded.id;
+
+    if (!userId) {
+      return next(new Error('Invalid token payload'));
+    }
+
+    const user = await User.findById(userId).select('_id role isActive');
+    if (!user) {
+      return next(new Error('User not found'));
+    }
+
+    if (!user.isActive) {
+      return next(new Error('Account is deactivated'));
+    }
     
-    socket.userId = decoded.userId;
-    socket.userRole = decoded.role;
+    socket.userId = user._id.toString();
+    socket.userRole = user.role;
+    socket.user = user;
     
     next();
   } catch (error) {

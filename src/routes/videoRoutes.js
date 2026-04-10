@@ -7,7 +7,7 @@ const router = express.Router();
 // Call Request Management 
 router.post('/calls/initiate', videoCallController.initiateCall);
 router.get('/calls/pending/:userId', videoCallController.getPendingRequests);
-// router.put('/calls/:callId/accept', videoCallController.acceptCall);
+router.put('/calls/:callId/accept', videoCallController.acceptCall);
 router.put('/calls/:callId/reject', videoCallController.rejectCall);
 router.post('/calls/:callId/resend', videoCallController.resendCallRequest);
 
