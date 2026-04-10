@@ -330,7 +330,7 @@ app.use(cookieParser());
 // 3. Static files
 // ---------------------------
 
-app.post("/" , (req, res) => {
+app.use("/" , (req, res) => {
   res.send("Backend is running")
 });
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
