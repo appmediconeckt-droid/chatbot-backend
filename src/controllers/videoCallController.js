@@ -8,6 +8,18 @@ const activeCalls = new Map();
 const userCallHistory = new Map(); // userId -> array of calls
 const userStatus = new Map(); // Track online/busy status of users
 
+const normalizeParticipantType = (type) => {
+  const normalized = String(type || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "counselor") {
+    return "counsellor";
+  }
+
+  return normalized;
+};
+
 export const videoCallController = {
   emitToParticipant(io, participantId, participantType, eventName, payload) {
     if (!io || !participantId) return;
@@ -519,9 +531,14 @@ export const videoCallController = {
   acceptCall: async (req, res) => {
     try {
       const { callId } = req.params;
-      const { acceptorId, acceptorType } = req.body;
+      const acceptorId = String(
+        req.body?.acceptorId || req.body?.userId || "",
+      ).trim();
+      const requestedAcceptorType = normalizeParticipantType(
+        req.body?.acceptorType || req.body?.userType,
+      );
 
-      if (!mongoose.Types.ObjectId.isValid(acceptorId)) {
+      if (!acceptorId || !mongoose.Types.ObjectId.isValid(acceptorId)) {
         return res.status(400).json({
           success: false,
           error: "Invalid acceptorId format",
@@ -537,8 +554,11 @@ export const videoCallController = {
         });
       }
 
+      const acceptorType =
+        requestedAcceptorType || normalizeParticipantType(call.receiver.type);
+
       // Verify the acceptor is the intended receiver
-      if (call.receiver.id !== acceptorId) {
+      if (String(call.receiver.id) !== String(acceptorId)) {
         return res.status(403).json({
           success: false,
           error: "You are not the intended recipient of this call",
@@ -592,6 +612,7 @@ export const videoCallController = {
       call.expiresAt = null;
       call.receiver.fullName = acceptorDetails.fullName;
       call.receiver.anonymous = acceptorDetails.anonymous;
+      call.receiver.type = acceptorType || call.receiver.type;
       call.receiver.profilePhoto = acceptorDetails.profilePhoto;
       call.receiver.specialization = acceptorDetails.specialization;
       call.receiver.rating = acceptorDetails.rating;
@@ -625,8 +646,16 @@ export const videoCallController = {
           acceptorDetails,
           call.initiator.id,
           call.initiator.type,
-          acceptorType,
+          call.receiver.type,
         );
+
+        const acceptedAt = new Date();
+        const statusPayload = {
+          callId,
+          status: "active",
+          from: acceptorId,
+          timestamp: acceptedAt,
+        };
 
         videoCallController.emitToParticipant(
           global.io,
@@ -638,8 +667,24 @@ export const videoCallController = {
             roomId: call.roomId,
             by: acceptorDisplayName,
             byProfilePhoto: acceptorDetails.profilePhoto,
-            timestamp: new Date(),
+            timestamp: acceptedAt,
           },
+        );
+
+        videoCallController.emitToParticipant(
+          global.io,
+          call.initiator.id,
+          call.initiator.type,
+          "call-status-update",
+          statusPayload,
+        );
+
+        videoCallController.emitToParticipant(
+          global.io,
+          call.receiver.id,
+          call.receiver.type,
+          "call-status-update",
+          statusPayload,
         );
       }
 
@@ -661,7 +706,7 @@ export const videoCallController = {
         },
         call.initiator.id,
         call.initiator.type,
-        acceptorType,
+        call.receiver.type,
       );
 
       res.json({
@@ -695,7 +740,17 @@ export const videoCallController = {
   rejectCall: async (req, res) => {
     try {
       const { callId } = req.params;
-      const { userId, reason = "declined" } = req.body;
+      const rejectingUserId = String(
+        req.body?.userId || req.body?.rejectorId || req.body?.acceptorId || "",
+      ).trim();
+      const { reason = "declined" } = req.body;
+
+      if (!rejectingUserId || !mongoose.Types.ObjectId.isValid(rejectingUserId)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid userId format",
+        });
+      }
 
       const call = activeCalls.get(callId);
 
@@ -707,7 +762,7 @@ export const videoCallController = {
       }
 
       // Only receiver can reject
-      if (call.receiver.id !== userId) {
+      if (String(call.receiver.id) !== String(rejectingUserId)) {
         return res.status(403).json({
           success: false,
           error: "Only the receiver can reject this call",
@@ -741,8 +796,12 @@ export const videoCallController = {
         createdAt: call.createdAt,
         rejectedAt: new Date(),
         reason,
-        rejectedBy: userId,
+        rejectedBy: rejectingUserId,
       };
+
+      call.status = "rejected";
+      call.rejectedAt = historyEntry.rejectedAt;
+      call.isActive = false;
 
       callHistory.unshift(historyEntry);
 
@@ -755,16 +814,46 @@ export const videoCallController = {
 
       // Notify initiator
       if (global.io) {
+        const rejectedAt = new Date();
+        const rejectedPayload = {
+          callId,
+          reason,
+          status: "rejected",
+          by: call.receiver.fullName,
+          timestamp: rejectedAt,
+        };
+
         videoCallController.emitToParticipant(
           global.io,
           call.initiator.id,
           call.initiator.type,
           "call_rejected",
+          rejectedPayload,
+        );
+
+        videoCallController.emitToParticipant(
+          global.io,
+          call.initiator.id,
+          call.initiator.type,
+          "call-status-update",
           {
             callId,
-            reason,
-            by: call.receiver.fullName,
-            timestamp: new Date(),
+            status: "rejected",
+            from: rejectingUserId,
+            timestamp: rejectedAt,
+          },
+        );
+
+        videoCallController.emitToParticipant(
+          global.io,
+          call.receiver.id,
+          call.receiver.type,
+          "call-status-update",
+          {
+            callId,
+            status: "rejected",
+            from: rejectingUserId,
+            timestamp: rejectedAt,
           },
         );
       }
