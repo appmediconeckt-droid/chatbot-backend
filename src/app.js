@@ -255,7 +255,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import http from "http";
 import { Server } from "socket.io";
-import { authRoutes } from "./routes/authRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 import videoRoutes from "./routes/videoRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
@@ -329,6 +329,8 @@ app.use(cookieParser());
 // ---------------------------
 // 3. Static files
 // ---------------------------
+
+
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Serve password reset HTML page

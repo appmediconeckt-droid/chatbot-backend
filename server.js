@@ -53,7 +53,28 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 // IMPORTANT: Load environment variables FIRST
 dotenv.config();
 
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT, 10) || 5000;
+
+function handleServerError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  const bind = typeof PORT === 'string' ? `Pipe ${PORT}` : `Port ${PORT}`;
+
+  switch (error.code) {
+    case 'EACCES':
+      console.error(`❌ ${bind} requires elevated privileges.`);
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(`❌ ${bind} is already in use. Please stop the process using it or set a different PORT.`);
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
 
 // Connect to MongoDB using cached connection
 connectDB()
@@ -62,6 +83,8 @@ connectDB()
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`📡 API URL: http://localhost:${PORT}`);
     });
+
+    server.on('error', handleServerError);
   })
   .catch(err => {
     console.error("❌ MongoDB connection error:", err);
