@@ -1,8 +1,13 @@
 // videoCallRoutes.js
 import express from "express";
 import { videoCallController } from "../controllers/videoCallController.js";
+import { getStreamToken } from "../controllers/streamController.js";
+import { authenticateToken } from "../middleware/auth.js";
 
 const router = express.Router();
+
+// Stream token for voice/video calls
+router.get("/stream/token", authenticateToken, getStreamToken);
 
 // Call Request Management
 router.post("/calls/initiate", videoCallController.initiateCall);

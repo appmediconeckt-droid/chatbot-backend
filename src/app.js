@@ -372,4 +372,5 @@ global.io = io;
 const socketHandler = new SocketHandler(io);
 socketHandler.initialize();
 
+export { app };
 export default server;

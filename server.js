@@ -47,21 +47,11 @@ import server from "./src/app.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import dns from "node:dns";
+import connectDB from "./src/config/db.js";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 // IMPORTANT: Load environment variables FIRST
 dotenv.config();
-// if (process.env.JWT_SECRET) {
-//     console.log('JWT_SECRET length:', process.env.JWT_SECRET.length);
-//     console.log('JWT_SECRET first 10 chars:', process.env.JWT_SECRET.substring(0, 10) + '...');
-// } else {
-//     console.error('⚠️ JWT_SECRET is NOT SET in environment variables!');
-// }
-// console.log('MONGO_URI:', process.env.MONGO_URI ? 'SET' : 'NOT SET');
-// console.log('PORT:', process.env.PORT || 5000);
-// console.log('===============================\n');
-
-
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
@@ -86,11 +76,9 @@ function handleServerError(error) {
   }
 }
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
+// Connect to MongoDB using cached connection
+connectDB()
   .then(() => {
-    console.log("✅ MongoDB Connected Successfully");
-    
     server.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`📡 API URL: http://localhost:${PORT}`);
