@@ -745,7 +745,10 @@ export const videoCallController = {
       ).trim();
       const { reason = "declined" } = req.body;
 
-      if (!rejectingUserId || !mongoose.Types.ObjectId.isValid(rejectingUserId)) {
+      if (
+        !rejectingUserId ||
+        !mongoose.Types.ObjectId.isValid(rejectingUserId)
+      ) {
         return res.status(400).json({
           success: false,
           error: "Invalid userId format",
