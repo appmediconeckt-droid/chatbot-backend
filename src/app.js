@@ -280,7 +280,7 @@ const DB_STATE_LABEL = {
 // 1. CORS configuration
 // ---------------------------
 const allowedOrigins = [
-  "https://your-frontend-origin.com",
+  "https://mediconeckt.vercel.app/",
   "http://localhost:4173",
   "http://localhost:3000",
   "http://localhost:5173",
