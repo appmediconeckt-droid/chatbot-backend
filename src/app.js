@@ -296,6 +296,8 @@ const isLocalOrigin = (origin) =>
   /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|[a-z0-9-]+\.local):\d+$/i.test(
     origin,
   );
+const isMediconecktVercelOrigin = (origin) =>
+  /^https:\/\/mediconeckt(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
 
 const isAllowedOrigin = (origin) => {
   const normalized = normalizeOrigin(origin);
@@ -306,7 +308,10 @@ const isAllowedOrigin = (origin) => {
   );
 
   return (
-    exactMatch || isDevTunnelOrigin(normalized) || isLocalOrigin(normalized)
+    exactMatch ||
+    isDevTunnelOrigin(normalized) ||
+    isLocalOrigin(normalized) ||
+    isMediconecktVercelOrigin(normalized)
   );
 };
 
