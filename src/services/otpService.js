@@ -238,7 +238,6 @@ class OTPService {
 
     // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
-<<<<<<< HEAD
         host: process.env.EMAIL_HOST || 'smtp.gmail.com',
         port: parseInt(process.env.EMAIL_PORT) || 587,
         secure: (parseInt(process.env.EMAIL_PORT) === 465), // true for 465 (SSL), false for 587 (TLS)
@@ -258,24 +257,6 @@ class OTPService {
         maxMessages: 100,
         rateDelta: 1000,
         rateLimit: 5
-=======
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
-      auth: {
-        user: emailUser,
-        pass: emailPass,
-      },
-      requireTLS: !smtpSecure,
-      debug: process.env.NODE_ENV !== "production",
-      logger: process.env.NODE_ENV !== "production",
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 10000,
-      socketTimeout: 20000,
->>>>>>> da320608828fea2c0521524fead0f577b8efa4ed
     });
 
     // Verify connection
@@ -352,7 +333,6 @@ class OTPService {
                 `,
       };
 
-<<<<<<< HEAD
             // Retry logic for transient failures
             let retries = 3;
             let lastError;
@@ -387,71 +367,25 @@ class OTPService {
             console.error('❌ Email sending failed:', error.message);
             throw error;
         }
-=======
-      const info = await this.emailTransporter.sendMail(mailOptions);
-      console.log("✅ Email sent successfully!");
-      console.log("Message ID:", info.messageId);
-      console.log("Response:", info.response);
-      return info;
-    } catch (error) {
-      console.error("❌ Error sending email:");
-      console.error("Error code:", error.code);
-      console.error("Error message:", error.message);
-      console.error("Full error:", error);
-      throw new Error(`Failed to send email: ${error.message}`);
-    }
-  }
-
-  async sendPhoneOTP(phone, otp) {
-    try {
-      await this.twilioClient.messages.create({
-        body: `Your MindCruller phone verification OTP is: ${otp}. This OTP will expire in 10 minutes.`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: phone,
-      });
-      console.log("✅ SMS sent successfully");
-    } catch (error) {
-      console.error("❌ SMS sending error:", error);
-      throw new Error("Failed to send SMS. Please check phone number.");
-    }
-  }
-
-  storeOTP(user, type, otp) {
-    const expiresAt = new Date();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 10);
-
-    if (type === "email") {
-      user.emailOTP = { code: otp, expiresAt };
-    } else if (type === "phone") {
-      user.phoneOTP = { code: otp, expiresAt };
-    }
-    console.log(`OTP stored for ${type}: ${otp} (expires at ${expiresAt})`);
-  }
-
-  verifyOTP(user, type, enteredOTP) {
-    const otpData = type === "email" ? user.emailOTP : user.phoneOTP;
-
-    if (!otpData || !otpData.code) {
-      return { valid: false, message: "OTP not found or already verified" };
->>>>>>> da320608828fea2c0521524fead0f577b8efa4ed
     }
 
-    if (new Date() > otpData.expiresAt) {
-      return {
-        valid: false,
-        message: "OTP has expired. Please request a new one.",
-      };
-    }
+    verifyOTP(user, type, enteredOTP) {
+        const otpData = type === 'email' ? user.emailOTP : user.phoneOTP;
+        
+        if (!otpData || !otpData.code) {
+            return { valid: false, message: 'OTP not found or already verified' };
+        }
 
-    if (otpData.code !== enteredOTP) {
-      return {
-        valid: false,
-        message: "Invalid OTP. Please check and try again.",
-      };
-    }
+        if (new Date() > otpData.expiresAt) {
+            return { valid: false, message: 'OTP has expired. Please request a new one.' };
+        }
 
-    return { valid: true, message: "OTP verified successfully" };
-  }
+        if (otpData.code !== enteredOTP) {
+            return { valid: false, message: 'Invalid OTP. Please check and try again.' };
+        }
+
+        return { valid: true, message: 'OTP verified successfully' };
+    }
 
   clearOTP(user, type) {
     if (type === "email") {
