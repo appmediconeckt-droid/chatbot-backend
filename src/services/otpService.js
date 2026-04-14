@@ -228,9 +228,9 @@ class OTPService {
     
     // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 465,
-        secure: true, // Use SSL
+        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.EMAIL_PORT) || 587,
+        secure: (parseInt(process.env.EMAIL_PORT) === 465), // true for 465 (SSL), false for 587 (TLS)
         auth: {
             user: emailUser,
             pass: emailPass
@@ -240,7 +240,13 @@ class OTPService {
         // Add these options
         tls: {
             rejectUnauthorized: false
-        }
+        },
+        connectionTimeout: 10000, // 10 seconds
+        socketTimeout: 10000, // 10 seconds
+        maxConnections: 5,
+        maxMessages: 100,
+        rateDelta: 1000,
+        rateLimit: 5
     });
 
     // Verify connection
@@ -317,17 +323,39 @@ class OTPService {
                 `
             };
 
-            const info = await this.emailTransporter.sendMail(mailOptions);
-            console.log('✅ Email sent successfully!');
-            console.log('Message ID:', info.messageId);
-            console.log('Response:', info.response);
-            return info;
+            // Retry logic for transient failures
+            let retries = 3;
+            let lastError;
+            
+            while (retries > 0) {
+                try {
+                    const info = await this.emailTransporter.sendMail(mailOptions);
+                    console.log('✅ Email sent successfully!');
+                    console.log('Message ID:', info.messageId);
+                    console.log('Response:', info.response);
+                    return info;
+                } catch (error) {
+                    lastError = error;
+                    retries--;
+                    
+                    if (retries > 0 && (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED')) {
+                        console.log(`⏳ Retry attempt ${4 - retries}/3... Error: ${error.code}`);
+                        // Wait before retry (exponential backoff)
+                        await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+                    } else {
+                        break;
+                    }
+                }
+            }
+            
+            // If all retries failed, throw the last error
+            console.error('❌ Error sending email after 3 retries:');
+            console.error('Error code:', lastError.code);
+            console.error('Error message:', lastError.message);
+            throw new Error(`Failed to send email: ${lastError.message}`);
         } catch (error) {
-            console.error('❌ Error sending email:');
-            console.error('Error code:', error.code);
-            console.error('Error message:', error.message);
-            console.error('Full error:', error);
-            throw new Error(`Failed to send email: ${error.message}`);
+            console.error('❌ Email sending failed:', error.message);
+            throw error;
         }
     }
 

@@ -16,14 +16,20 @@ export const sendResetPasswordEmail = async (email, resetUrl) => {
         const transporter = nodemailer.createTransport({
             host: process.env.EMAIL_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.EMAIL_PORT) || 587,
-            secure: false, // true for 465, false for other ports
+            secure: (parseInt(process.env.EMAIL_PORT) === 465), // true for 465 (SSL), false for 587 (TLS)
             auth: {
                 user: process.env.EMAIL_USER,
                 pass: process.env.EMAIL_PASS
             },
             tls: {
                 rejectUnauthorized: false // Only for development
-            }
+            },
+            connectionTimeout: 10000, // 10 seconds
+            socketTimeout: 10000, // 10 seconds
+            maxConnections: 5,
+            maxMessages: 100,
+            rateDelta: 1000,
+            rateLimit: 5
         });
 
         // Verify connection configuration
