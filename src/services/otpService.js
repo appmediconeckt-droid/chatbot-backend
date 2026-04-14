@@ -207,7 +207,7 @@ try {
   dns.setDefaultResultOrder("ipv4first");
 } catch (err) {
   console.warn("Could not set DNS default result order:", err?.message || err);
-}
+z}
 
 class OTPService {
   constructor() {
