@@ -235,28 +235,35 @@ class OTPService {
     const smtpSecure = process.env.EMAIL_SECURE
       ? process.env.EMAIL_SECURE === "true"
       : smtpPort === 465;
+    const forceIPv4 = process.env.EMAIL_FORCE_IPV4 !== "false";
 
     // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.EMAIL_PORT) || 587,
-        secure: (parseInt(process.env.EMAIL_PORT) === 465), // true for 465 (SSL), false for 587 (TLS)
-        auth: {
-            user: emailUser,
-            pass: emailPass
-        },
-        debug: true,
-        logger: true,
-        // Add these options
-        tls: {
-            rejectUnauthorized: false
-        },
-        connectionTimeout: 10000, // 10 seconds
-        socketTimeout: 10000, // 10 seconds
-        maxConnections: 5,
-        maxMessages: 100,
-        rateDelta: 1000,
-        rateLimit: 5
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure, // true for 465 (SSL), false for 587 (STARTTLS)
+      requireTLS: !smtpSecure,
+      auth: {
+        user: emailUser,
+        pass: emailPass,
+      },
+      // IPv6 routing can fail on some Render networks; force IPv4 unless disabled.
+      family: forceIPv4 ? 4 : undefined,
+      debug: process.env.EMAIL_DEBUG === "true",
+      logger: process.env.EMAIL_DEBUG === "true",
+      tls: {
+        rejectUnauthorized:
+          process.env.EMAIL_TLS_REJECT_UNAUTHORIZED !== "false",
+        servername: smtpHost,
+        minVersion: "TLSv1.2",
+      },
+      connectionTimeout: Number(process.env.EMAIL_CONNECTION_TIMEOUT || 15000),
+      greetingTimeout: Number(process.env.EMAIL_GREETING_TIMEOUT || 15000),
+      socketTimeout: Number(process.env.EMAIL_SOCKET_TIMEOUT || 20000),
+      maxConnections: 5,
+      maxMessages: 100,
+      rateDelta: 1000,
+      rateLimit: 5,
     });
 
     // Verify connection
@@ -333,59 +340,86 @@ class OTPService {
                 `,
       };
 
-            // Retry logic for transient failures
-            let retries = 3;
-            let lastError;
-            
-            while (retries > 0) {
-                try {
-                    const info = await this.emailTransporter.sendMail(mailOptions);
-                    console.log('✅ Email sent successfully!');
-                    console.log('Message ID:', info.messageId);
-                    console.log('Response:', info.response);
-                    return info;
-                } catch (error) {
-                    lastError = error;
-                    retries--;
-                    
-                    if (retries > 0 && (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED')) {
-                        console.log(`⏳ Retry attempt ${4 - retries}/3... Error: ${error.code}`);
-                        // Wait before retry (exponential backoff)
-                        await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
-                    } else {
-                        break;
-                    }
-                }
-            }
-            
-            // If all retries failed, throw the last error
-            console.error('❌ Error sending email after 3 retries:');
-            console.error('Error code:', lastError.code);
-            console.error('Error message:', lastError.message);
-            throw new Error(`Failed to send email: ${lastError.message}`);
+      // Retry logic for transient failures
+      const maxRetries = 3;
+      let retriesLeft = maxRetries;
+      let lastError;
+
+      while (retriesLeft > 0) {
+        try {
+          const info = await this.emailTransporter.sendMail(mailOptions);
+          console.log("✅ Email sent successfully!");
+          console.log("Message ID:", info.messageId);
+          console.log("Response:", info.response);
+          return info;
         } catch (error) {
-            console.error('❌ Email sending failed:', error.message);
-            throw error;
+          lastError = error;
+          retriesLeft -= 1;
+
+          const errorCode = String(error?.code || "").toUpperCase();
+          const errorMessage = String(error?.message || "").toUpperCase();
+          const isRetryableNetworkError =
+            [
+              "ETIMEDOUT",
+              "ECONNREFUSED",
+              "ENETUNREACH",
+              "EAI_AGAIN",
+              "ESOCKET",
+            ].includes(errorCode) ||
+            errorMessage.includes("ENETUNREACH") ||
+            errorMessage.includes("ETIMEDOUT");
+
+          if (retriesLeft > 0 && isRetryableNetworkError) {
+            const attemptNumber = maxRetries - retriesLeft;
+            console.log(
+              `⏳ Retry attempt ${attemptNumber + 1}/${maxRetries}... Error: ${errorCode || "UNKNOWN"}`,
+            );
+            // Exponential backoff: 2s, 4s
+            await new Promise((resolve) =>
+              setTimeout(resolve, 2000 * Math.max(1, attemptNumber)),
+            );
+          } else {
+            break;
+          }
         }
+      }
+
+      // If all retries failed, throw the last error
+      console.error(`❌ Error sending email after ${maxRetries} retries:`);
+      console.error("Error code:", lastError?.code);
+      console.error("Error message:", lastError?.message);
+      throw new Error(
+        `Failed to send email: ${lastError?.message || "Unknown SMTP error"}`,
+      );
+    } catch (error) {
+      console.error("❌ Email sending failed:", error.message);
+      throw error;
+    }
+  }
+
+  verifyOTP(user, type, enteredOTP) {
+    const otpData = type === "email" ? user.emailOTP : user.phoneOTP;
+
+    if (!otpData || !otpData.code) {
+      return { valid: false, message: "OTP not found or already verified" };
     }
 
-    verifyOTP(user, type, enteredOTP) {
-        const otpData = type === 'email' ? user.emailOTP : user.phoneOTP;
-        
-        if (!otpData || !otpData.code) {
-            return { valid: false, message: 'OTP not found or already verified' };
-        }
-
-        if (new Date() > otpData.expiresAt) {
-            return { valid: false, message: 'OTP has expired. Please request a new one.' };
-        }
-
-        if (otpData.code !== enteredOTP) {
-            return { valid: false, message: 'Invalid OTP. Please check and try again.' };
-        }
-
-        return { valid: true, message: 'OTP verified successfully' };
+    if (new Date() > otpData.expiresAt) {
+      return {
+        valid: false,
+        message: "OTP has expired. Please request a new one.",
+      };
     }
+
+    if (otpData.code !== enteredOTP) {
+      return {
+        valid: false,
+        message: "Invalid OTP. Please check and try again.",
+      };
+    }
+
+    return { valid: true, message: "OTP verified successfully" };
+  }
 
   clearOTP(user, type) {
     if (type === "email") {
