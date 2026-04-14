@@ -251,6 +251,7 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import cookieParser from "cookie-parser";
+import mongoose from "mongoose";
 import path from "path";
 import { fileURLToPath } from "url";
 import http from "http";
@@ -268,11 +269,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
+const DB_STATE_LABEL = {
+  0: "disconnected",
+  1: "connected",
+  2: "connecting",
+  3: "disconnecting",
+};
+
 // ---------------------------
 // 1. CORS configuration
 // ---------------------------
 const allowedOrigins = [
-  "https://your-frontend-origin.com",
+  "https://mediconeckt.vercel.app/",
   "http://localhost:4173",
   "http://localhost:3000",
   "http://localhost:5173",
@@ -330,7 +338,6 @@ app.use(cookieParser());
 // 3. Static files
 // ---------------------------
 
-
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Serve password reset HTML page
@@ -341,6 +348,25 @@ app.get("/reset-password/:token", (req, res) => {
 // ---------------------------
 // 4. Routes
 // ---------------------------
+app.get("/api/health", (_req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = DB_STATE_LABEL[dbState] || "unknown";
+  const isHealthy = dbState === 1;
+
+  res.status(isHealthy ? 200 : 503).json({
+    success: isHealthy,
+    status: isHealthy ? "ok" : "degraded",
+    service: "mindcrawller-backend",
+    environment: process.env.NODE_ENV || "development",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    db: {
+      state: dbStatus,
+      readyState: dbState,
+    },
+  });
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", messageRoutes);
 app.use("/api/call", callRoutes);
