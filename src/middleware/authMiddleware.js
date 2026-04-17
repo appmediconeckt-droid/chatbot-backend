@@ -197,6 +197,42 @@ export const authMiddleware = async (req, res, next) => {
   }
 };
 
+// Optional auth middleware: identifies user if token exists, but doesn't block guests
+export const optionalAuth = async (req, res, next) => {
+  try {
+    let token = req.headers.authorization;
+    if (token && token.startsWith("Bearer ")) {
+      token = token.split(" ")[1];
+    } else if (req.cookies?.accessToken) {
+      token = req.cookies.accessToken;
+    }
+
+    if (!token) {
+      return next();
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+    } catch (error) {
+      // If token is invalid/expired, we just treat them as a guest instead of erroring
+      return next();
+    }
+
+    const user = await User.findById(decoded.userId || decoded._id);
+    if (user && user.isActive) {
+      req.user = user;
+      req.userId = user._id;
+      req.userRole = user.role;
+    }
+
+    next();
+  } catch (error) {
+    // Fail silently for optional auth
+    next();
+  }
+};
+
 // Optional: Role-based middleware
 export const requireRole = (...roles) => {
   return (req, res, next) => {
