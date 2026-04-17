@@ -2,6 +2,11 @@ import mongoose from "mongoose";
 
 const chatSchema = new mongoose.Schema(
   {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // Optional for guest/landing page chats
+    },
     userMessage: String,
     aiResponse: String,
   },
