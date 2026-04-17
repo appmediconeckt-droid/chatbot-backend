@@ -260,6 +260,7 @@ import authRoutes from "./routes/authRoutes.js";
 import videoRoutes from "./routes/videoRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
+import chatRoutes from "./routes/chatRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 
@@ -369,6 +370,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", messageRoutes);
+app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
 

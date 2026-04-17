@@ -1,8 +1,11 @@
 import mongoose from "mongoose";
 
-const chatSchema = new mongoose.Schema({
+const chatSchema = new mongoose.Schema(
+  {
     userMessage: String,
-    aiResponse: String
-}, { timestamps: true });
+    aiResponse: String,
+  },
+  { timestamps: true },
+);
 
-export default mongoose.model("Chat", chatSchema);
+export default mongoose.models.AIChat || mongoose.model("AIChat", chatSchema);
