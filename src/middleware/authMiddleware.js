@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
 import Session from "../models/sessionModel.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
+import mongoose from "mongoose";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helper: attempt silent token refresh and continue the request
@@ -18,6 +19,14 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
         success: false,
         error: "Refresh token invalid or expired. Please log in again.",
         code: "REFRESH_INVALID",
+      });
+    }
+
+    if (!mongoose.isValidObjectId(decoded.sessionId)) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid session. Please log in again.",
+        code: "SESSION_INVALID",
       });
     }
 
@@ -147,6 +156,14 @@ export const authMiddleware = async (req, res, next) => {
       });
     }
 
+    if (!mongoose.isValidObjectId(decoded.sessionId)) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid session. Please log in again.",
+        code: "SESSION_INVALID",
+      });
+    }
+
     const session = await Session.findOne({
       _id: decoded.sessionId,
       userId: decoded.userId || decoded._id,
@@ -164,22 +181,18 @@ export const authMiddleware = async (req, res, next) => {
     // ── 4. Load user ──
     const user = await User.findById(decoded.userId || decoded._id);
     if (!user) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-          error: "User not found",
-          code: "USER_NOT_FOUND",
-        });
+      return res.status(401).json({
+        success: false,
+        error: "User not found",
+        code: "USER_NOT_FOUND",
+      });
     }
     if (!user.isActive) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-          error: "Account is deactivated",
-          code: "ACCOUNT_DEACTIVATED",
-        });
+      return res.status(401).json({
+        success: false,
+        error: "Account is deactivated",
+        code: "ACCOUNT_DEACTIVATED",
+      });
     }
 
     // ── 5. Attach user to request ──

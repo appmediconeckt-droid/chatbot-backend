@@ -17,7 +17,6 @@ import {
 } from "../utils/uploadHelper.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
-const loginOTPStore = new Map();
 
 // Initialize Twilio client
 const twilioClient = twilio(
@@ -30,6 +29,8 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const verifiedUsersStore = new Map();
 const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
+// Store OTPs used for the "logout other devices" login flow
+const loginOTPStore = new Map();
 
 // Clean up expired data every hour
 setInterval(
@@ -43,6 +44,10 @@ setInterval(
     }
     for (const [email, data] of phoneOTPStore.entries()) {
       if (data.expiresAt < now) phoneOTPStore.delete(email);
+    }
+    // Clean up login OTPs as well
+    for (const [email, data] of loginOTPStore.entries()) {
+      if (data.expiresAt < now) loginOTPStore.delete(email);
     }
   },
   60 * 60 * 1000,
@@ -1457,12 +1462,13 @@ export const loginUser = async (req, res) => {
     }
 
     // ---- No other session → normal login (same as before) ----
-    const sessionId = crypto.randomUUID();
-    const accessToken = generateAccessToken(user._id, sessionId);
-    const refreshToken = generateRefreshToken(user._id, sessionId);
+    const sessionId = new mongoose.Types.ObjectId();
+    const accessToken = generateAccessToken(user._id, sessionId.toString());
+    const refreshToken = generateRefreshToken(user._id, sessionId.toString());
 
-    // Persist the new session
+    // Persist the new session with the same id embedded in JWTs
     await Session.create({
+      _id: sessionId,
       userId: user._id,
       refreshToken,
       isActive: true,
@@ -1492,13 +1498,11 @@ export const loginUser = async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error in login",
-        success: false,
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error in login",
+      success: false,
+      error: error.message,
+    });
   }
 };
 
@@ -1576,11 +1580,18 @@ export const verifyLoginOTP = async (req, res) => {
     }
 
     // OTP is valid → create a **new** session for this device
-    const sessionId = crypto.randomUUID();
-    const accessToken = generateAccessToken(stored.userId, sessionId);
-    const refreshToken = generateRefreshToken(stored.userId, sessionId);
+    const sessionId = new mongoose.Types.ObjectId();
+    const accessToken = generateAccessToken(
+      stored.userId,
+      sessionId.toString(),
+    );
+    const refreshToken = generateRefreshToken(
+      stored.userId,
+      sessionId.toString(),
+    );
 
     await Session.create({
+      _id: sessionId,
       userId: stored.userId,
       refreshToken,
       isActive: true,
@@ -1631,6 +1642,10 @@ export const refreshAccessToken = async (req, res) => {
       decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET);
     } catch (err) {
       return res.status(401).json({ message: "Invalid refresh token" });
+    }
+
+    if (!mongoose.isValidObjectId(decoded.sessionId)) {
+      return res.status(401).json({ message: "Invalid session" });
     }
 
     // Find session using sessionId from refresh token

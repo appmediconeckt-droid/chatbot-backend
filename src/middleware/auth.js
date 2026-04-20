@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
 import Session from "../models/sessionModel.js";
+import mongoose from "mongoose";
 
 export const authenticateToken = async (req, res, next) => {
   try {
@@ -25,6 +26,12 @@ export const authenticateToken = async (req, res, next) => {
       return res
         .status(401)
         .json({ error: "Session is required. Please login again." });
+    }
+
+    if (!mongoose.isValidObjectId(decoded.sessionId)) {
+      return res
+        .status(401)
+        .json({ error: "Invalid session. Please login again." });
     }
 
     const activeSession = await Session.findOne({
