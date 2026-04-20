@@ -1686,8 +1686,8 @@ export const logout = async (req, res) => {
     let userId = req.userId || req.user?._id;
     const refreshToken = req.cookies?.refreshToken;
 
-    console.log("🔓 Logout - UserId from request:", userId);
-    console.log("🔓 Logout - Refresh token present:", !!refreshToken);
+    // console.log("🔓 Logout - UserId from request:", userId);
+    // console.log("🔓 Logout - Refresh token present:", !!refreshToken);
 
     // If no userId but we have refresh token, try to decode it
     if (!userId && refreshToken) {
