@@ -133,9 +133,6 @@ const callSchema = new mongoose.Schema({
 });
 
 // Indexes for better query performance
-callSchema.index({ chatId: 1 });
-callSchema.index({ callerId: 1 });
-callSchema.index({ receiverId: 1 });
 callSchema.index({ status: 1 });
 callSchema.index({ createdAt: -1 });
 

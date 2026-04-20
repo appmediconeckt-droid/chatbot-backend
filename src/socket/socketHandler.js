@@ -24,7 +24,7 @@ class SocketHandler {
 
   initialize() {
     this.io.on("connection", async (socket) => {
-      console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
+      // console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
 
       // Get user details
       const user = await User.findById(socket.userId);
@@ -144,7 +144,7 @@ class SocketHandler {
 
       // Handle disconnection — clean up all call signaling
       socket.on("disconnect", () => {
-        console.log(`📱 User disconnected: ${socket.userId}`);
+        // console.log(`📱 User disconnected: ${socket.userId}`);
 
         // Tear down all call signaling listeners
         if (socket.data.callSignalingCalls) {
@@ -172,7 +172,7 @@ class SocketHandler {
         chats.forEach((chat) => {
           const chatRoom = `chat_${chat.chatId}`;
           socket.join(chatRoom);
-          console.log(`Joined existing chat room: ${chatRoom}`);
+          // console.log(`Joined existing chat room: ${chatRoom}`);
         });
       }
     } catch (error) {

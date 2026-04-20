@@ -3,7 +3,7 @@ import { setupEventHandlers } from './eventHandlers.js';
 import { handleUserLeave } from '../utils/roomHelpers.js';
 
 export const handleConnection = (socket, io) => {
-  console.log(`🔌 User connected: ${socket.userId} (${socket.id})`);
+  // console.log(`🔌 User connected: ${socket.userId} (${socket.id})`);
   
   // Store user connection
   userSockets.set(socket.userId, socket.id);
@@ -14,7 +14,7 @@ export const handleConnection = (socket, io) => {
   
   // Handle disconnect
   socket.on('disconnect', () => {
-    console.log(`🔌 User disconnected: ${socket.userId} (${socket.id})`);
+    // console.log(`🔌 User disconnected: ${socket.userId} (${socket.id})`);
     
     const userId = socket.userId;
     

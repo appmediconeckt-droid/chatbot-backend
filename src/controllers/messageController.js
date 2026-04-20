@@ -27,8 +27,8 @@ export const startChat = async (req, res) => {
         .json({ error: "Only users can request chats with counselors" });
     }
 
-    console.log("User ID:", req.user._id);
-    console.log("Counselor ID:", counselorId);
+    // console.log("User ID:", req.user._id);
+    // console.log("Counselor ID:", counselorId);
 
     // Check if counselor exists
     const counselor = await User.findOne({
@@ -801,7 +801,7 @@ export const getPendingRequests = async (req, res) => {
     }
 
     const counselorId = req.user._id;
-    console.log("Counselor ID:", counselorId);
+    // console.log("Counselor ID:", counselorId);
 
     // First, fix any legacy chats without status
     await Chat.updateMany(
@@ -815,7 +815,7 @@ export const getPendingRequests = async (req, res) => {
 
     // Get pending chats that haven't expired - ADD 'anonymous' to populate
     const pendingChats = await Chat.find({
-      counselorId: counselorId,
+      counselorId: String(counselorId), // Convert to string in case counselorId is ObjectId
       status: "pending",
       isActive: true,
       $or: [
@@ -826,7 +826,7 @@ export const getPendingRequests = async (req, res) => {
       .populate("userId", "fullName email profilePhoto anonymous") // ADD anonymous here
       .sort({ startedAt: -1 });
 
-    console.log("Pending chats found:", pendingChats.length);
+    // console.log("Pending chats found:", pendingChats.length);
 
     const requests = await Promise.all(
       pendingChats.map(async (chat) => {

@@ -6,8 +6,6 @@ import Session from "../models/sessionModel.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
-import twilio from "twilio";
-import crypto from "crypto";
 import { validationResult } from "express-validator";
 import { sendResetPasswordEmail } from "../utils/emailService.js";
 import cloudinary from "../config/cloudinary.js";
@@ -18,12 +16,7 @@ import {
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 
-// Initialize Twilio client
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN,
-);
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+// Twilio client is not used in this controller; removed to reduce bundle size.
 
 // ================= TEMPORARY STORAGE =================
 const verifiedUsersStore = new Map();
@@ -57,25 +50,12 @@ export const updateUserById = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    console.log("=== UPDATE USER REQUEST ===");
-    // console.log("User ID:", userId);
-    console.log(
-      "Files received:",
-      req.files ? JSON.stringify(Object.keys(req.files)) : "No files",
-    );
-    // console.log("Body keys:", Object.keys(req.body));
+    // Removed verbose console logs for production
 
     // Log all files with their paths
     if (req.files) {
       Object.keys(req.files).forEach((field) => {
-        req.files[field].forEach((file, idx) => {
-          console.log(`File ${field}[${idx}]:`, {
-            originalname: file.originalname,
-            path: file.path,
-            filename: file.filename,
-            fieldname: file.fieldname,
-          });
-        });
+        // Removed per-file console logging to reduce noise
       });
     }
 
