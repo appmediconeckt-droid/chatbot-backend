@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/userModel.js";
+import Call from "../models/Call.js";
 
 // In-memory storage (replace with database in production)
 const callHistory = [];
@@ -407,6 +408,23 @@ export const videoCallController = {
         );
       }
 
+      // Create new call record in DB
+      await Call.create({
+        callId,
+        roomId,
+        callType: callType === "voice" ? "voice" : "video",
+        status: "pending",
+        callerId: initiatorId,
+        initiatorType: initiatorType,
+        receiverId: receiverId,
+        receiverType: receiverType,
+        callerName: initiatorDetails.fullName,
+        receiverName: receiverDetails.fullName,
+        callerAvatar: initiatorDetails.profilePhoto,
+        receiverAvatar: receiverDetails.profilePhoto,
+        isActive: true
+      });
+
       res.status(201).json({
         success: true,
         message: "Call request sent successfully",
@@ -640,6 +658,16 @@ export const videoCallController = {
 
       activeCalls.set(callId, call);
 
+      // Update call in DB
+      await Call.findOneAndUpdate(
+        { callId: callId },
+        { 
+          status: "active",
+          acceptedAt: new Date(),
+          isActive: true
+        }
+      );
+
       // Notify initiator that call was accepted with appropriate display name
       if (global.io) {
         const acceptorDisplayName = videoCallController.getDisplayName(
@@ -801,6 +829,16 @@ export const videoCallController = {
         reason,
         rejectedBy: rejectingUserId,
       };
+
+      // Save to history (DB)
+      await Call.findOneAndUpdate(
+        { callId: callId },
+        { 
+          status: "rejected",
+          rejectedAt: new Date(),
+          isActive: false
+        }
+      );
 
       call.status = "rejected";
       call.rejectedAt = historyEntry.rejectedAt;
@@ -1133,6 +1171,18 @@ export const videoCallController = {
         participants: Array.from(call.participants.values()),
       };
 
+      // Save to history (DB)
+      await Call.findOneAndUpdate(
+        { callId: callId },
+        { 
+          status: "ended",
+          endedAt: endTime,
+          duration: duration,
+          isActive: false,
+          endedBy: endedBy.id
+        }
+      );
+
       callHistory.unshift(historyEntry);
 
       [call.initiator.id, call.receiver.id].forEach((uid) => {
@@ -1342,6 +1392,17 @@ export const videoCallController = {
           call.isActive = false;
           call.cancelledAt = now;
           activeCalls.set(callId, call);
+          
+          // Update in DB
+          await Call.findOneAndUpdate(
+            { callId: callId },
+            { 
+              status: "cancelled",
+              cancelledAt: now,
+              isActive: false
+            }
+          );
+
           cancelledCount++;
 
           console.log(`Cancelled expired call request: ${callId}`);
@@ -1451,41 +1512,46 @@ export const videoCallController = {
       const { userId } = req.params;
       const { page = 1, limit = 20, status = "all", type = "all" } = req.query;
 
-      let userCalls = userCallHistory.get(userId) || [];
+      const query = {
+        $or: [{ callerId: userId }, { receiverId: userId }],
+        isActive: false
+      };
 
       if (status !== "all") {
-        userCalls = userCalls.filter((call) => call.status === status);
+        query.status = status;
       }
 
       if (type === "initiated") {
-        userCalls = userCalls.filter((call) => call.initiator.id === userId);
+        query.callerId = userId;
       } else if (type === "received") {
-        userCalls = userCalls.filter((call) => call.receiver.id === userId);
+        query.receiverId = userId;
       }
 
-      userCalls.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const total = await Call.countDocuments(query);
+      const calls = await Call.find(query)
+        .sort({ createdAt: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit));
 
-      const start = (parseInt(page) - 1) * parseInt(limit);
-      const end = start + parseInt(limit);
-      const paginatedCalls = userCalls.slice(start, end);
-
-      const formattedCalls = paginatedCalls.map((call) => {
-        const isInitiator = call.initiator.id === userId;
-        const otherParticipant = isInitiator ? call.receiver : call.initiator;
+      const formattedCalls = calls.map((call) => {
+        const isInitiator = call.callerId.toString() === userId.toString();
+        const otherParticipantName = isInitiator ? call.receiverName : call.callerName;
+        const otherParticipantId = isInitiator ? call.receiverId : call.callerId;
+        const otherParticipantType = isInitiator ? call.receiverType : call.initiatorType;
+        const otherParticipantAvatar = isInitiator ? call.receiverAvatar : call.callerAvatar;
 
         return {
-          id: call.id,
-          with: otherParticipant.fullName,
-          withId: otherParticipant.id,
-          withType: otherParticipant.type,
-          withProfilePhoto: otherParticipant.profilePhoto,
-          type: call.type,
+          id: call.callId,
+          with: otherParticipantName,
+          withId: otherParticipantId,
+          withType: otherParticipantType,
+          withProfilePhoto: otherParticipantAvatar,
+          type: call.callType,
           duration: call.duration,
           timestamp: call.createdAt,
           status: call.status,
           role: isInitiator ? "initiator" : "receiver",
           endedBy: call.endedBy,
-          reason: call.reason,
           acceptedAt: call.acceptedAt,
           rejectedAt: call.rejectedAt,
         };
@@ -1494,9 +1560,9 @@ export const videoCallController = {
       res.json({
         success: true,
         history: formattedCalls,
-        total: userCalls.length,
+        total,
         page: parseInt(page),
-        totalPages: Math.ceil(userCalls.length / parseInt(limit)),
+        totalPages: Math.ceil(total / parseInt(limit)),
       });
     } catch (error) {
       console.error("Error fetching history:", error);

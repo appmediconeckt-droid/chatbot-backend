@@ -10,7 +10,12 @@ const callSchema = new mongoose.Schema({
   chatId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Chat',
-    required: true,
+    required: false, // Make optional as videoCallController doesn't use it yet
+    index: true
+  },
+  roomId: {
+    type: String,
+    required: false,
     index: true
   },
   callerId: {
@@ -19,20 +24,30 @@ const callSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  initiatorType: {
+    type: String,
+    enum: ['user', 'counsellor', 'counselor'],
+    default: 'user'
+  },
   receiverId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
     index: true
   },
+  receiverType: {
+    type: String,
+    enum: ['user', 'counsellor', 'counselor'],
+    default: 'counsellor'
+  },
   callType: {
     type: String,
-    enum: ['audio', 'video'],
+    enum: ['audio', 'video', 'voice'],
     required: true
   },
   status: {
     type: String,
-    enum: ['initiated', 'ringing', 'connected', 'ended', 'missed', 'rejected', 'busy', 'on-hold'],
+    enum: ['initiated', 'ringing', 'connected', 'ended', 'missed', 'rejected', 'busy', 'on-hold', 'pending', 'active', 'cancelled'],
     default: 'initiated'
   },
   startedAt: {
@@ -40,6 +55,18 @@ const callSchema = new mongoose.Schema({
     default: null
   },
   endedAt: {
+    type: Date,
+    default: null
+  },
+  acceptedAt: {
+    type: Date,
+    default: null
+  },
+  rejectedAt: {
+    type: Date,
+    default: null
+  },
+  cancelledAt: {
     type: Date,
     default: null
   },
