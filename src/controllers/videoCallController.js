@@ -21,6 +21,8 @@ const normalizeParticipantType = (type) => {
   return normalized;
 };
 
+const TERMINAL_CALL_STATUSES = ["ended", "rejected", "missed", "cancelled"];
+
 export const videoCallController = {
   emitToParticipant(io, participantId, participantType, eventName, payload) {
     if (!io || !participantId) return;
@@ -422,7 +424,7 @@ export const videoCallController = {
         receiverName: receiverDetails.fullName,
         callerAvatar: initiatorDetails.profilePhoto,
         receiverAvatar: receiverDetails.profilePhoto,
-        isActive: true
+        isActive: true,
       });
 
       res.status(201).json({
@@ -594,6 +596,15 @@ export const videoCallController = {
         call.cancelledAt = new Date();
         activeCalls.set(callId, call);
 
+        await Call.findOneAndUpdate(
+          { callId },
+          {
+            status: "cancelled",
+            cancelledAt: call.cancelledAt,
+            isActive: false,
+          },
+        );
+
         return res.status(400).json({
           success: false,
           error: "Call request has expired. User needs to send a new request.",
@@ -661,11 +672,11 @@ export const videoCallController = {
       // Update call in DB
       await Call.findOneAndUpdate(
         { callId: callId },
-        { 
+        {
           status: "active",
           acceptedAt: new Date(),
-          isActive: true
-        }
+          isActive: true,
+        },
       );
 
       // Notify initiator that call was accepted with appropriate display name
@@ -833,11 +844,11 @@ export const videoCallController = {
       // Save to history (DB)
       await Call.findOneAndUpdate(
         { callId: callId },
-        { 
+        {
           status: "rejected",
           rejectedAt: new Date(),
-          isActive: false
-        }
+          isActive: false,
+        },
       );
 
       call.status = "rejected";
@@ -966,7 +977,18 @@ export const videoCallController = {
       ) {
         call.status = "cancelled";
         call.isActive = false;
+        call.cancelledAt = new Date();
         activeCalls.set(callId, call);
+
+        await Call.findOneAndUpdate(
+          { callId },
+          {
+            status: "cancelled",
+            cancelledAt: call.cancelledAt,
+            isActive: false,
+          },
+        );
+
         return res.status(400).json({
           success: false,
           error: "Call request has expired",
@@ -1174,13 +1196,13 @@ export const videoCallController = {
       // Save to history (DB)
       await Call.findOneAndUpdate(
         { callId: callId },
-        { 
+        {
           status: "ended",
           endedAt: endTime,
           duration: duration,
           isActive: false,
-          endedBy: endedBy.id
-        }
+          endedBy: endedBy.id,
+        },
       );
 
       callHistory.unshift(historyEntry);
@@ -1392,15 +1414,15 @@ export const videoCallController = {
           call.isActive = false;
           call.cancelledAt = now;
           activeCalls.set(callId, call);
-          
+
           // Update in DB
           await Call.findOneAndUpdate(
             { callId: callId },
-            { 
+            {
               status: "cancelled",
               cancelledAt: now,
-              isActive: false
-            }
+              isActive: false,
+            },
           );
 
           cancelledCount++;
@@ -1512,33 +1534,56 @@ export const videoCallController = {
       const { userId } = req.params;
       const { page = 1, limit = 20, status = "all", type = "all" } = req.query;
 
+      const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+      const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
       const query = {
-        $or: [{ callerId: userId }, { receiverId: userId }],
-        isActive: false
+        $and: [
+          {
+            $or: [{ callerId: userId }, { receiverId: userId }],
+          },
+          {
+            $or: [
+              { isActive: false },
+              { status: { $in: TERMINAL_CALL_STATUSES } },
+              { endedAt: { $ne: null } },
+              { rejectedAt: { $ne: null } },
+              { cancelledAt: { $ne: null } },
+            ],
+          },
+        ],
       };
 
       if (status !== "all") {
-        query.status = status;
+        query.$and.push({ status });
       }
 
       if (type === "initiated") {
-        query.callerId = userId;
+        query.$and.push({ callerId: userId });
       } else if (type === "received") {
-        query.receiverId = userId;
+        query.$and.push({ receiverId: userId });
       }
 
       const total = await Call.countDocuments(query);
       const calls = await Call.find(query)
         .sort({ createdAt: -1 })
-        .skip((parseInt(page) - 1) * parseInt(limit))
-        .limit(parseInt(limit));
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit);
 
       const formattedCalls = calls.map((call) => {
         const isInitiator = call.callerId.toString() === userId.toString();
-        const otherParticipantName = isInitiator ? call.receiverName : call.callerName;
-        const otherParticipantId = isInitiator ? call.receiverId : call.callerId;
-        const otherParticipantType = isInitiator ? call.receiverType : call.initiatorType;
-        const otherParticipantAvatar = isInitiator ? call.receiverAvatar : call.callerAvatar;
+        const otherParticipantName = isInitiator
+          ? call.receiverName
+          : call.callerName;
+        const otherParticipantId = isInitiator
+          ? call.receiverId
+          : call.callerId;
+        const otherParticipantType = isInitiator
+          ? call.receiverType
+          : call.initiatorType;
+        const otherParticipantAvatar = isInitiator
+          ? call.receiverAvatar
+          : call.callerAvatar;
 
         return {
           id: call.callId,
@@ -1561,8 +1606,8 @@ export const videoCallController = {
         success: true,
         history: formattedCalls,
         total,
-        page: parseInt(page),
-        totalPages: Math.ceil(total / parseInt(limit)),
+        page: parsedPage,
+        totalPages: Math.ceil(total / parsedLimit),
       });
     } catch (error) {
       console.error("Error fetching history:", error);
