@@ -473,6 +473,10 @@ const userSchema = new mongoose.Schema({
     },
     refreshToken:{
         type: String
+    },
+    walletBalance: {
+        type: Number,
+        default: 0
     }
 }, { timestamps: true });
 

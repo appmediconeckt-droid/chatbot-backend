@@ -261,6 +261,8 @@ import videoRoutes from "./routes/videoRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
+import appointmentRoutes from "./routes/appointmentRoutes.js";
+import walletRoutes from "./routes/walletRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 
@@ -373,6 +375,8 @@ app.use("/api/chat", messageRoutes);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
+app.use("/api/appointments", appointmentRoutes);
+app.use("/api/wallet", walletRoutes);
 
 // ---------------------------
 // 5. HTTP & Socket.IO server
