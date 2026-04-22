@@ -37,8 +37,8 @@ export const verifyOtp = async (req, res) => {
     });
 
     // 5. Generate tokens WITH the session ID
-    const accessToken = generateAccessToken(user._id, newSession._id);
-    const refreshToken = generateRefreshToken(user._id, newSession._id);
+    const accessToken = generateAccessToken(user._id, newSession._id, user.role);
+    const refreshToken = generateRefreshToken(user._id, newSession._id, user.role);
 
     // 6. Now save the refreshToken into the session
     newSession.refreshToken = refreshToken;

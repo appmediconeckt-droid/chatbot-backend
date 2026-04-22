@@ -801,6 +801,9 @@ export const getPendingRequests = async (req, res) => {
     }
 
     const counselorId = req.user._id;
+    if (!counselorId) {
+      return res.status(401).json({ error: "Unauthorized: Counsellor ID not found" });
+    }
     // console.log("Counselor ID:", counselorId);
 
     // First, fix any legacy chats without status
@@ -815,7 +818,7 @@ export const getPendingRequests = async (req, res) => {
 
     // Get pending chats that haven't expired - ADD 'anonymous' to populate
     const pendingChats = await Chat.find({
-      counselorId: String(counselorId), // Convert to string in case counselorId is ObjectId
+      counselorId: counselorId,
       status: "pending",
       isActive: true,
       $or: [

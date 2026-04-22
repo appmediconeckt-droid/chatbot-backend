@@ -23,6 +23,7 @@ import {
   verifyLoginOTP,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
+import { authorizeRoles } from "../middleware/authorizeRoles.js";
 import { verifyOtp } from "../middleware/verifyOtp.js";
 // refreshToken middleware import removed — route uses refreshAccessTokenHandler from authController
 import { authMiddleware } from "../middleware/authMiddleware.js";
@@ -55,7 +56,13 @@ authRoutes.post("/verify-login-otp", verifyLoginOTP);
 authRoutes.post("/logout", authMiddleware, logout);
 authRoutes.post("/refresh-token", refreshAccessTokenHandler);
 authRoutes.post("/logout-all", authMiddleware, logoutAllDevices);
-authRoutes.get("/my-sessions", authMiddleware, getMySessions);
+
+authRoutes.get(
+  "/my-sessions",
+  authMiddleware,
+  authorizeRoles("counsellor"),
+  getMySessions,
+);
 
 // OTP ROUTES For Login
 authRoutes.post("/generateOtp", generateOtp);
@@ -67,9 +74,20 @@ authRoutes.get("/counsellors", getAllCounsellors);
 authRoutes.get("/counsellors/:counsellorId", getCounsellorById);
 
 // PROTECTED ROUTES
-authRoutes.get("/me", authMiddleware, getMyProfile);
+authRoutes.get(
+  "/me",
+  authMiddleware,
+  authorizeRoles("patient", "counsellor"), // both allowed
+  getMyProfile,
+);
 authRoutes.get("/getUser/:userId", getUser);
-authRoutes.get("/getAllUser", authMiddleware, getAlluser);
+
+authRoutes.get(
+  "/getAllUser",
+  authMiddleware,
+  authorizeRoles("counsellor"),
+  getAlluser,
+);;
 
 // UPDATE ROUTE - Uses handleUserUpload for both profile photo and certifications
 authRoutes.patch(

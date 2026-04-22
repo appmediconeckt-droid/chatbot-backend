@@ -12,52 +12,38 @@ export const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ error: "Access token required" });
     }
 
-    // Use ACCESS_SECRET (or JWT_SECRET as fallback)
     const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
     const decoded = jwt.verify(token, secret);
 
-    // Support both 'userId' and 'id' fields
     const userId = decoded.userId || decoded.id;
-    if (!userId) {
+    const sessionId = decoded.sessionId;
+    const role = decoded.role;
+
+    if (!userId || !sessionId || !role) {
       return res.status(401).json({ error: "Invalid token payload" });
     }
 
-    if (!decoded.sessionId) {
-      return res
-        .status(401)
-        .json({ error: "Session is required. Please login again." });
-    }
-
-    if (!mongoose.isValidObjectId(decoded.sessionId)) {
-      return res
-        .status(401)
-        .json({ error: "Invalid session. Please login again." });
-    }
-
+    // ✅ Validate session only (important for one-device policy)
     const activeSession = await Session.findOne({
-      _id: decoded.sessionId,
+      _id: sessionId,
       userId,
       isActive: true,
     });
 
     if (!activeSession) {
-      return res
-        .status(401)
-        .json({ error: "Session expired or logged out from another device" });
+      return res.status(401).json({
+        error: "Session expired or logged out from another device",
+      });
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(401).json({ error: "User not found" });
-    }
+    // ✅ Attach clean user info (NO extra DB call)
+    req.user = {
+      _id: userId,
+      userId,
+      role,
+      sessionId,
+    };
 
-    if (!user.isActive) {
-      return res.status(401).json({ error: "Account is deactivated" });
-    }
-
-    req.user = user;
-    req.userId = user._id;
-    req.userType = user.role;
     next();
   } catch (error) {
     if (error.name === "JsonWebTokenError") {
@@ -66,6 +52,7 @@ export const authenticateToken = async (req, res, next) => {
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Token expired" });
     }
+
     console.error("Auth error:", error);
     return res.status(500).json({ error: "Authentication error" });
   }
@@ -105,3 +92,4 @@ export const authenticateSocket = async (socket, next) => {
     next(new Error("Authentication failed"));
   }
 };
+

@@ -1398,19 +1398,22 @@ export const completeRegistration = async (req, res) => {
 /// ================= LOGIN USER (One‑device policy – now only *detect*) =================
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ message: "Email and password are required", success: false });
+    if (!email || !password || !role) {
+      return res.status(400).json({
+        message: "Email, password and role are required",
+        success: false,
+      });
     }
 
     const user = await User.findOne({ email });
-    if (!user) {
-      return res
-        .status(404)
-        .json({ message: "User not found", success: false });
+
+    if (!user || user.role !== role) {
+      return res.status(401).json({
+        message: "Invalid credentials or role mismatch",
+        success: false,
+      });
     }
 
     if (!user.isActive) {
@@ -1443,8 +1446,16 @@ export const loginUser = async (req, res) => {
 
     // ---- No other session → normal login (same as before) ----
     const sessionId = new mongoose.Types.ObjectId();
-    const accessToken = generateAccessToken(user._id, sessionId.toString());
-    const refreshToken = generateRefreshToken(user._id, sessionId.toString());
+    const accessToken = generateAccessToken(
+      user._id,
+      sessionId.toString(),
+      user.role,
+    );
+    const refreshToken = generateRefreshToken(
+      user._id,
+      sessionId.toString(),
+      user.role,
+    );
 
     // Persist the new session with the same id embedded in JWTs
     await Session.create({
@@ -1519,8 +1530,8 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
       userId: user._id,
     });
 
-    // 4️⃣ Send the OTP by email (you already have `otpService.sendEmailOTP`)
-    await otpService.sendEmailOTP(email, otp, user.fullName || "User");
+    // 4️⃣ Send the OTP by email
+    await otpService.sendLoginOTP(email, otp);
 
     return res.status(200).json({
       message: "All other sessions logged out. OTP sent to email.",
@@ -1559,20 +1570,27 @@ export const verifyLoginOTP = async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
+    const user = await User.findById(stored.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found", success: false });
+    }
+
     // OTP is valid → create a **new** session for this device
     const sessionId = new mongoose.Types.ObjectId();
     const accessToken = generateAccessToken(
-      stored.userId,
+      user._id,
       sessionId.toString(),
+      user.role,
     );
     const refreshToken = generateRefreshToken(
-      stored.userId,
+      user._id,
       sessionId.toString(),
+      user.role,
     );
 
     await Session.create({
       _id: sessionId,
-      userId: stored.userId,
+      userId: user._id,
       refreshToken,
       isActive: true,
     });
@@ -1594,12 +1612,14 @@ export const verifyLoginOTP = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    // Return the tokens (useful for Postman or SPA)
+    // Return the tokens and user info (useful for Postman or SPA)
     return res.status(200).json({
       message: "Login successful",
       success: true,
       accessToken,
       refreshToken,
+      user: user.toJSON(),
+      role: user.role,
     });
   } catch (err) {
     console.error("verifyLoginOTP error:", err);

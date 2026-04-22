@@ -284,6 +284,61 @@ class OTPService {
     return crypto.randomInt(100000, 999999).toString();
   }
 
+  async sendLoginOTP(email, otp) {
+    try {
+      const mailOptions = {
+        from: `"Mindcrawller Global Pvt Ltd" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Login Verification OTP - Mindcrawller",
+        html: `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
+                    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
+                        <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
+                    </div>
+                    <div style="padding: 20px;">
+                        <h3 style="color: #333;">Login Security Check</h3>
+                        <p style="color: #555;">
+                            We received a request to log in to your account from a new session. Since you were already logged in elsewhere, we've deactivated other sessions for your security.
+                        </p>
+                        <p style="color: #555;">
+                            Please use the verification code below to complete your login:
+                        </p>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <span style="
+                                font-size: 30px;
+                                letter-spacing: 6px;
+                                font-weight: bold;
+                                color: #4CAF50;
+                                padding: 15px 25px;
+                                background: #f4f4f4;
+                                border-radius: 8px;
+                                display: inline-block;
+                            ">
+                                ${otp}
+                            </span>
+                        </div>
+                        <p style="color: #555;">
+                            ⏳ This OTP is valid for <strong>10 minutes</strong>.
+                        </p>
+                        <p style="color: #555;">
+                            If you did not request this login, please change your password immediately.
+                        </p>
+                        <hr/>
+                        <p style="font-size: 12px; color: #999;">
+                            © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd <br/>
+                            This is an automated email. Please do not reply.
+                        </p>
+                    </div>
+                </div>
+                `,
+      };
+      return await this.emailTransporter.sendMail(mailOptions);
+    } catch (error) {
+      console.error("❌ Login OTP sending failed:", error.message);
+      throw error;
+    }
+  }
+
   async sendEmailOTP(email, otp) {
     try {
       console.log(`Attempting to send OTP ${otp} to ${email}`);
