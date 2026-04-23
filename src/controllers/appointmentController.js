@@ -13,7 +13,7 @@ export const book = async (req, res) => {
     }
 
     const appointment = await Appointment.create({
-      patient: req.user.id, // `auth` middleware puts the logged‑in user on req.user
+      patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
       counselor: counselorId,
       date,
       notes,
@@ -40,14 +40,14 @@ export const book = async (req, res) => {
 
 export const getAppointments = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user._id;
     // Find appointments where the user is either the patient or the counselor
     const appointments = await Appointment.find({
       $or: [{ patient: userId }, { counselor: userId }],
     })
       .populate("patient", "fullName profilePhoto")
       .populate("counselor", "fullName profilePhoto")
-      .sort({ date: 1 });
+      .sort({ date: -1 });
 
     return res.json(appointments);
   } catch (err) {
@@ -60,7 +60,7 @@ export const updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const userId = req.user.id;
+    const userId = req.user._id;
 
     const appointment = await Appointment.findById(id);
     if (!appointment) {
