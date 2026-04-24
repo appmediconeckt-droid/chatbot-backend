@@ -42,11 +42,12 @@ export const getAppointments = async (req, res) => {
   try {
     const userId = req.user._id;
     // Find appointments where the user is either the patient or the counselor
+
     const appointments = await Appointment.find({
       $or: [{ patient: userId }, { counselor: userId }],
     })
-      .populate("patient", "fullName profilePhoto")
-      .populate("counselor", "fullName profilePhoto")
+      .populate("patient", "fullName profilePhoto anonymous")
+      .populate("counselor", "fullName profilePhoto anonymous")
       .sort({ date: -1 });
 
     return res.json(appointments);
@@ -68,14 +69,20 @@ export const updateStatus = async (req, res) => {
     }
 
     // Basic authorization: user must be either patient or counselor
-    if (appointment.patient.toString() !== userId && appointment.counselor.toString() !== userId) {
+    if (
+      appointment.patient.toString() !== userId &&
+      appointment.counselor.toString() !== userId
+    ) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     appointment.status = status;
     await appointment.save();
 
-    return res.json({ message: `Appointment ${status} successfully`, appointment });
+    return res.json({
+      message: `Appointment ${status} successfully`,
+      appointment,
+    });
   } catch (err) {
     console.error("❌ update status error", err);
     return res.status(500).json({ message: "Server error" });

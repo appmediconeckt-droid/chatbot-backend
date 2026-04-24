@@ -2,10 +2,40 @@ import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
+import mongoose from "mongoose";
 
 class SocketHandler {
   constructor(io) {
     this.io = io;
+  }
+
+  normalizeChatIdentifier(chatId) {
+    if (!chatId || typeof chatId !== "string") return chatId;
+
+    const trimmedChatId = chatId.trim();
+
+    if (trimmedChatId.startsWith("chat_")) {
+      return trimmedChatId;
+    }
+
+    if (trimmedChatId.startsWith("room_chat_")) {
+      return trimmedChatId.replace("room_", "");
+    }
+
+    return trimmedChatId;
+  }
+
+  async findChatByIdentifier(chatId) {
+    const normalizedChatId = this.normalizeChatIdentifier(chatId);
+
+    if (!normalizedChatId) return null;
+
+    if (mongoose.Types.ObjectId.isValid(normalizedChatId)) {
+      const chat = await Chat.findById(normalizedChatId);
+      if (chat) return chat;
+    }
+
+    return Chat.findOne({ chatId: normalizedChatId });
   }
 
   emitToUserRooms(userId, eventName, payload) {
@@ -53,9 +83,7 @@ class SocketHandler {
       socket.on("join-chat", (data) => this.handleJoinChat(socket, data));
 
       // Handle sending message
-      socket.on("send-message", (data) =>
-        this.handleSendMessage(socket, data),
-      );
+      socket.on("send-message", (data) => this.handleSendMessage(socket, data));
 
       // Handle typing indicator
       socket.on("typing", (data) => this.handleTyping(socket, data));
@@ -182,7 +210,7 @@ class SocketHandler {
 
   async handleJoinChat(socket, { chatId }) {
     try {
-      const chat = await Chat.findById(chatId);
+      const chat = await this.findChatByIdentifier(chatId);
 
       if (!chat) {
         socket.emit("error", { message: "Chat not found" });
@@ -234,14 +262,18 @@ class SocketHandler {
 
   async handleSendMessage(socket, { chatId, content, contentType = "TEXT" }) {
     try {
-      const chat = await Chat.findById(chatId)
-        .populate("userId", "fullName email profilePhoto")
-        .populate(
+      const chat = await this.findChatByIdentifier(chatId);
+
+      if (chat) {
+        await chat.populate("userId", "fullName email profilePhoto");
+        await chat.populate(
           "counselorId",
           "fullName specialization profilePhoto rating",
         );
+      }
+      const populatedChat = chat;
 
-      if (!chat) {
+      if (!populatedChat) {
         socket.emit("error", { message: "Chat not found" });
         return;
       }
@@ -249,9 +281,9 @@ class SocketHandler {
       // Verify authorization
       const isAuthorized =
         (socket.userRole === "user" &&
-          chat.userId._id.toString() === socket.userId) ||
+          populatedChat.userId._id.toString() === socket.userId) ||
         (socket.userRole === "counsellor" &&
-          chat.counselorId._id.toString() === socket.userId);
+          populatedChat.counselorId._id.toString() === socket.userId);
 
       if (!isAuthorized) {
         socket.emit("error", { message: "Unauthorized" });
@@ -260,7 +292,7 @@ class SocketHandler {
 
       // Create message
       const message = await Message.create({
-        chatId: chat._id,
+        chatId: populatedChat._id,
         senderId: socket.userId,
         senderRole: socket.userRole,
         content: content,
@@ -268,7 +300,7 @@ class SocketHandler {
       });
 
       // Update chat
-      await Chat.findByIdAndUpdate(chat._id, {
+      await Chat.findByIdAndUpdate(populatedChat._id, {
         lastMessage: content,
         lastMessageAt: new Date(),
         updatedAt: new Date(),
@@ -286,20 +318,22 @@ class SocketHandler {
       };
 
       // Emit to chat room
-      const chatRoom = `chat_${chat.chatId}`;
+      const chatRoom = `chat_${populatedChat.chatId}`;
       this.io.to(chatRoom).emit("new-message", messageData);
 
       // Notify other user
       const otherUserRoom =
         socket.userRole === "user"
-          ? `counsellor_${chat.counselorId._id}`
-          : `user_${chat.userId._id}`;
+          ? `counsellor_${populatedChat.counselorId._id}`
+          : `user_${populatedChat.userId._id}`;
 
       const senderInfo =
-        socket.userRole === "user" ? chat.userId : chat.counselorId;
+        socket.userRole === "user"
+          ? populatedChat.userId
+          : populatedChat.counselorId;
 
       this.io.to(otherUserRoom).emit("message-notification", {
-        chatId: chat._id,
+        chatId: populatedChat._id,
         message: messageData,
         sender: {
           id: senderInfo._id,
@@ -309,7 +343,7 @@ class SocketHandler {
       });
 
       console.log(
-        `Message sent in chat ${chat._id} by ${socket.userRole}_${socket.userId}`,
+        `Message sent in chat ${populatedChat._id} by ${socket.userRole}_${socket.userId}`,
       );
     } catch (error) {
       console.error("Error sending message:", error);
@@ -317,20 +351,31 @@ class SocketHandler {
     }
   }
 
-  handleTyping(socket, { chatId, isTyping }) {
-    const chatRoom = `chat_${chatId}`;
-    socket.to(chatRoom).emit("user-typing", {
-      userId: socket.userId,
-      userRole: socket.userRole,
-      isTyping,
-    });
+  async handleTyping(socket, { chatId, isTyping }) {
+    try {
+      const chat = await this.findChatByIdentifier(chatId);
+      if (!chat) return;
+
+      const chatRoom = `chat_${chat.chatId}`;
+
+      socket.to(chatRoom).emit("user-typing", {
+        userId: socket.userId,
+        userRole: socket.userRole,
+        isTyping,
+      });
+    } catch (error) {
+      console.error("Error handling typing event:", error);
+    }
   }
 
   async handleMarkRead(socket, { chatId }) {
     try {
+      const chat = await this.findChatByIdentifier(chatId);
+      if (!chat) return;
+
       const updateResult = await Message.updateMany(
         {
-          chatId: chatId,
+          chatId: chat._id,
           senderRole: socket.userRole === "user" ? "counsellor" : "user",
           isRead: false,
         },
@@ -341,11 +386,8 @@ class SocketHandler {
       );
 
       if (updateResult.modifiedCount > 0) {
-        const chat = await Chat.findById(chatId);
-        if (chat) {
-          const chatRoom = `chat_${chat.chatId}`;
-          this.io.to(chatRoom).emit("messages-read", { chatId: chatId });
-        }
+        const chatRoom = `chat_${chat.chatId}`;
+        this.io.to(chatRoom).emit("messages-read", { chatId: chat._id });
       }
     } catch (error) {
       console.error("Error marking messages as read:", error);
@@ -436,11 +478,7 @@ class SocketHandler {
     };
 
     // Call status updates
-    handlers["call-status-update"] = ({
-      callId: callIdParam,
-      status,
-      to,
-    }) => {
+    handlers["call-status-update"] = ({ callId: callIdParam, status, to }) => {
       if (callIdParam !== callId) return;
       socket.to(callRoom).emit("call-status-update", {
         callId: callIdParam,
@@ -452,11 +490,7 @@ class SocketHandler {
     };
 
     // Mute/Unmute
-    handlers["call-mute-toggle"] = ({
-      callId: callIdParam,
-      isMuted,
-      to,
-    }) => {
+    handlers["call-mute-toggle"] = ({ callId: callIdParam, isMuted, to }) => {
       if (callIdParam !== callId) return;
       socket.to(callRoom).emit("call-mute-toggle", {
         callId: callIdParam,
@@ -482,11 +516,7 @@ class SocketHandler {
     };
 
     // Hold/Resume
-    handlers["call-hold-toggle"] = ({
-      callId: callIdParam,
-      isOnHold,
-      to,
-    }) => {
+    handlers["call-hold-toggle"] = ({ callId: callIdParam, isOnHold, to }) => {
       if (callIdParam !== callId) return;
       socket.to(callRoom).emit("call-hold-toggle", {
         callId: callIdParam,
