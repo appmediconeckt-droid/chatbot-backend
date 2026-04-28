@@ -41,10 +41,49 @@ export const book = async (req, res) => {
 export const getAppointments = async (req, res) => {
   try {
     const userId = req.user._id;
-    // Find appointments where the user is either the patient or the counselor
+    const { filter, date } = req.query;
+
+    let dateFilter = {};
+    const now = new Date();
+
+    // ✅ DATE-WISE FILTER (NEW)
+    if (date) {
+      const selectedDate = new Date(date);
+
+      const startOfDay = new Date(selectedDate);
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date(selectedDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      dateFilter = {
+        date: { $gte: startOfDay, $lte: endOfDay },
+      };
+    }
+
+    // ✅ EXISTING FILTERS
+    else if (filter === "today") {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+
+      dateFilter = {
+        date: { $gte: startOfDay, $lte: endOfDay },
+      };
+    } else if (filter === "last7days") {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(now.getDate() - 7);
+
+      dateFilter = {
+        date: { $gte: sevenDaysAgo, $lte: now },
+      };
+    }
 
     const appointments = await Appointment.find({
       $or: [{ patient: userId }, { counselor: userId }],
+      ...dateFilter,
     })
       .populate("patient", "fullName profilePhoto anonymous")
       .populate("counselor", "fullName profilePhoto anonymous")

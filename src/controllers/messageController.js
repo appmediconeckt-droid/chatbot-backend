@@ -980,10 +980,13 @@ export const getChats = async (req, res) => {
     }
 
     chats = await Chat.find(query)
-      .populate("userId", "fullName email profilePhoto anonymous isActive")
+      .populate(
+        "userId",
+        "fullName email profilePhoto anonymous isActive isOnline lastSeen",
+      )
       .populate(
         "counselorId",
-        "fullName specialization profilePhoto rating isActive",
+        "fullName specialization profilePhoto rating isActive isOnline lastSeen",
       )
       .sort({ updatedAt: -1 });
 
@@ -1041,6 +1044,8 @@ export const getChats = async (req, res) => {
             name: otherParty.fullName,
             anonymous: otherParty.anonymous,
             avatar: otherParty.profilePhoto?.url || null,
+            isOnline: otherParty.isOnline || false,
+            lastSeen: otherParty.lastSeen || null,
             ...(req.user.role === "user" && {
               specialization: otherParty.specialization,
               rating: otherParty.rating,
@@ -1530,7 +1535,7 @@ export const getCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location",
+        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location isOnline lastSeen",
       )
       .sort({ rating: -1, fullName: 1 });
 
@@ -1625,7 +1630,7 @@ export const searchCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location",
+        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location isOnline lastSeen",
       )
       .sort({ rating: -1, fullName: 1 });
 

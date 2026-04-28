@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 class SocketHandler {
   constructor(io) {
     this.io = io;
+    this.onlineUsers = new Map();
   }
 
   normalizeChatIdentifier(chatId) {
@@ -52,6 +53,63 @@ class SocketHandler {
     });
   }
 
+  async markUserOnline(socket) {
+    const userId = socket.userId?.toString();
+    if (!userId) return;
+
+    if (!this.onlineUsers.has(userId)) {
+      this.onlineUsers.set(userId, new Set());
+    }
+
+    const userSockets = this.onlineUsers.get(userId);
+    const wasOffline = userSockets.size === 0;
+    userSockets.add(socket.id);
+
+    if (!wasOffline) return;
+
+    await User.findByIdAndUpdate(userId, {
+      isOnline: true,
+      lastSeen: null,
+    });
+
+    this.io.emit("presence-update", {
+      userId,
+      role: socket.userRole,
+      isOnline: true,
+      lastSeen: null,
+    });
+    console.log("PRESENCE ONLINE", userId);
+   
+
+
+  }
+
+  async markUserOffline(socket) {
+    const userId = socket.userId?.toString();
+    if (!userId || !this.onlineUsers.has(userId)) return;
+
+    const userSockets = this.onlineUsers.get(userId);
+    userSockets.delete(socket.id);
+
+    if (userSockets.size > 0) return;
+
+    this.onlineUsers.delete(userId);
+    const lastSeen = new Date();
+
+    await User.findByIdAndUpdate(userId, {
+      isOnline: false,
+      lastSeen,
+    });
+
+    this.io.emit("presence-update", {
+      userId,
+      role: socket.userRole,
+      isOnline: false,
+      lastSeen,
+    });
+     console.log("PRESENCE OFFLINE", userId);
+  }
+
   initialize() {
     this.io.on("connection", async (socket) => {
       // console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
@@ -63,6 +121,8 @@ class SocketHandler {
         socket.disconnect();
         return;
       }
+
+      await this.markUserOnline(socket);
 
       // Join the role-specific room and a stable fallback room so
       // call notifications can be delivered regardless of role spelling.
@@ -171,7 +231,7 @@ class SocketHandler {
       });
 
       // Handle disconnection — clean up all call signaling
-      socket.on("disconnect", () => {
+      socket.on("disconnect", async () => {
         // console.log(`📱 User disconnected: ${socket.userId}`);
 
         // Tear down all call signaling listeners
@@ -179,6 +239,12 @@ class SocketHandler {
           for (const callId of socket.data.callSignalingCalls) {
             this.teardownCallSignaling(socket, callId);
           }
+        }
+
+        try {
+          await this.markUserOffline(socket);
+        } catch (error) {
+          console.error("Error updating offline presence:", error);
         }
       });
     });
