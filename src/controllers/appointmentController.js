@@ -87,7 +87,8 @@ export const getAppointments = async (req, res) => {
     })
       .populate("patient", "fullName profilePhoto anonymous")
       .populate("counselor", "fullName profilePhoto anonymous")
-      .sort({ date: -1 });
+      .sort({ date: -1 })
+      .lean();
 
     return res.json(appointments);
   } catch (err) {

@@ -359,80 +359,6 @@ export const startChat = async (req, res) => {
 };
 
 // Accept chat request (counselor only)
-// export const acceptChat = async (req, res) => {
-//   try {
-//     const { chatId } = req.params;
-
-//     console.log('Accepting chat with identifier:', chatId);
-
-//     // Use helper function to find chat by either _id or chatId
-//     const chat = await findChatByIdentifier(chatId);
-
-//     if (!chat) {
-//       return res.status(404).json({ error: 'Chat not found' });
-//     }
-
-//     console.log('Found chat:', {
-//       id: chat._id,
-//       chatId: chat.chatId,
-//       status: chat.status,
-//       counselorId: chat.counselorId,
-//       expiresAt: chat.expiresAt
-//     });
-
-//     // Check if counselor is authorized
-//     if (req.user.role !== 'counsellor' || chat.counselorId.toString() !== req.user._id.toString()) {
-//       return res.status(403).json({ error: 'Only the assigned counselor can accept this chat' });
-//     }
-
-//     // Check if request has expired
-//     if (chat.status === 'pending' && chat.expiresAt && new Date() > chat.expiresAt) {
-//       chat.status = 'cancelled';
-//       chat.cancelledAt = new Date();
-//       await chat.save();
-
-//       return res.status(400).json({
-//         error: 'Chat request has expired. User needs to send a new request.',
-//         status: 'expired'
-//       });
-//     }
-
-//     if (chat.status !== 'pending') {
-//       return res.status(400).json({ error: `Chat is already ${chat.status}` });
-//     }
-
-//     // Accept the chat
-//     chat.status = 'accepted';
-//     chat.acceptedAt = new Date();
-//     chat.expiresAt = null; // Clear expiration
-//     chat.updatedAt = new Date();
-//     await chat.save();
-
-//     // Add acceptance message
-//     await Message.create({
-//       chatId: chat._id,
-//       senderId: req.user._id,
-//       senderRole: 'counsellor',
-//       content: `✅ I've accepted your request. How can I help you today?`,
-//       contentType: 'TEXT'
-//     });
-
-//     res.json({
-//       success: true,
-//       message: 'Chat request accepted',
-//       chat: {
-//         id: chat._id,
-//         chatId: chat.chatId,
-//         status: chat.status,
-//         acceptedAt: chat.acceptedAt
-//       }
-//     });
-//   } catch (error) {
-//     console.error('Error accepting chat:', error);
-//     res.status(500).json({ error: 'Error accepting chat' });
-//   }
-// };
-// Accept chat request (counselor only)
 export const acceptChat = async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -720,78 +646,6 @@ export const rejectChat = async (req, res) => {
 };
 
 // Get pending chat requests (counselor only) - Filter out expired requests
-// export const getPendingRequests = async (req, res) => {
-//   try {
-//     if (req.user.role !== 'counsellor') {
-//       return res.status(403).json({ error: 'Only counselors can view pending requests' });
-//     }
-
-//     const counselorId = req.user._id;
-//     console.log('Counselor ID:', counselorId);
-
-//     // First, fix any legacy chats without status
-//     await Chat.updateMany(
-//       {
-//         counselorId: counselorId,
-//         status: { $exists: false },
-//         isActive: true
-//       },
-//       { $set: { status: 'pending' } }
-//     );
-
-//     // Get pending chats that haven't expired
-//     const pendingChats = await Chat.find({
-//       counselorId: counselorId,
-//       status: 'pending',
-//       isActive: true,
-//       $or: [
-//         { expiresAt: { $gt: new Date() } }, // Not expired yet
-//         { expiresAt: { $exists: false } }   // No expiration set (legacy)
-//       ]
-//     })
-//     .populate('userId', 'fullName email profilePhoto')
-//     .sort({ startedAt: -1 });
-
-//     console.log('Pending chats found:', pendingChats.length);
-
-//     const requests = await Promise.all(pendingChats.map(async (chat) => {
-//       const requestMessage = await Message.findOne({
-//         chatId: chat._id,
-//         senderRole: 'user'
-//       }).sort({ createdAt: 1 });
-
-//       // Calculate remaining time
-//       let remainingSeconds = null;
-//       if (chat.expiresAt) {
-//         remainingSeconds = Math.max(0, Math.floor((chat.expiresAt - new Date()) / 1000));
-//       }
-
-//       return {
-//         id: chat._id,
-//         chatId: chat.chatId,
-//         user: {
-//           id: chat.userId._id,
-//           name: chat.userId.fullName,
-//           anonymous: chat.userId.anonymous,
-
-//           email: chat.userId.email,
-//           Image: chat.userId.profilePhoto?.url || null
-//         },
-//         requestMessage: requestMessage?.content || 'No message',
-//         requestedAt: chat.startedAt,
-//         status: chat.status,
-//         expiresAt: chat.expiresAt,
-//         remainingSeconds: remainingSeconds
-//       };
-//     }));
-
-//     res.json({ requests, count: requests.length });
-//   } catch (error) {
-//     console.error('Error fetching pending requests:', error);
-//     res.status(500).json({ error: 'Error fetching pending requests' });
-//   }
-// };
-// Get pending chat requests (counselor only) - Filter out expired requests
 export const getPendingRequests = async (req, res) => {
   try {
     if (req.user.role !== "counsellor") {
@@ -801,171 +655,76 @@ export const getPendingRequests = async (req, res) => {
     }
 
     const counselorId = req.user._id;
-    if (!counselorId) {
-      return res.status(401).json({ error: "Unauthorized: Counsellor ID not found" });
-    }
-    // console.log("Counselor ID:", counselorId);
+    const now = new Date();
 
-    // First, fix any legacy chats without status
-    await Chat.updateMany(
-      {
-        counselorId: counselorId,
-        status: { $exists: false },
-        isActive: true,
-      },
-      { $set: { status: "pending" } },
-    );
-
-    // Get pending chats that haven't expired - ADD 'anonymous' to populate
+    // 1. Fetch pending chats that haven't expired using .lean() for performance
     const pendingChats = await Chat.find({
-      counselorId: counselorId,
+      counselorId,
       status: "pending",
       isActive: true,
-      $or: [
-        { expiresAt: { $gt: new Date() } }, // Not expired yet
-        { expiresAt: { $exists: false } }, // No expiration set (legacy)
-      ],
+      $or: [{ expiresAt: { $gt: now } }, { expiresAt: { $exists: false } }],
     })
-      .populate("userId", "fullName email profilePhoto anonymous") // ADD anonymous here
-      .sort({ startedAt: -1 });
+      .populate("userId", "fullName email profilePhoto anonymous")
+      .sort({ startedAt: -1 })
+      .lean();
 
-    // console.log("Pending chats found:", pendingChats.length);
+    if (!pendingChats.length) {
+      return res.json({ requests: [] });
+    }
 
-    const requests = await Promise.all(
-      pendingChats.map(async (chat) => {
-        const requestMessage = await Message.findOne({
-          chatId: chat._id,
-          senderRole: "user",
-        }).sort({ createdAt: 1 });
+    // 2. Optimized: Bulk fetch the FIRST message for all found chats in one query
+    const chatIds = pendingChats.map((c) => c._id);
+    const messages = await Message.find({
+      chatId: { $in: chatIds },
+      senderRole: "user",
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
-        // Calculate remaining time
-        let remainingSeconds = null;
-        if (chat.expiresAt) {
-          remainingSeconds = Math.max(
-            0,
-            Math.floor((chat.expiresAt - new Date()) / 1000),
-          );
-        }
+    // Create a map for O(1) lookup
+    const messageMap = {};
+    messages.forEach((msg) => {
+      // Since we sorted by createdAt: 1, the first message encountered for a chatId is the oldest
+      if (!messageMap[msg.chatId.toString()]) {
+        messageMap[msg.chatId.toString()] = msg.content;
+      }
+    });
 
-        // Handle anonymous the same way as in startChat
-        // Since anonymous is stored as string in your database
-        return {
-          id: chat._id,
-          chatId: chat.chatId,
-          user: {
-            id: chat.userId._id,
-            name: chat.userId.fullName,
-            anonymous: chat.userId.anonymous, // Pass the raw value (string "true"/"false")
-            email: chat.userId.email,
-            avatar: chat.userId.profilePhoto?.url || null,
-          },
-          requestMessage: requestMessage?.content || "No message",
-          requestedAt: chat.startedAt,
-          status: chat.status,
-          expiresAt: chat.expiresAt,
-          remainingSeconds: remainingSeconds,
-        };
-      }),
-    );
+    // 3. Construct the response
+    const requests = pendingChats.map((chat) => {
+      const remainingSeconds = chat.expiresAt
+        ? Math.max(0, Math.floor((new Date(chat.expiresAt) - now) / 1000))
+        : null;
 
-    res.json({ requests, count: requests.length });
+      return {
+        id: chat._id,
+        chatId: chat.chatId,
+        user: {
+          id: chat.userId._id,
+          name: chat.userId.fullName,
+          anonymous: chat.userId.anonymous,
+          email: chat.userId.email,
+          Image: chat.userId.profilePhoto?.url || null,
+        },
+        requestMessage: messageMap[chat._id.toString()] || "No message",
+        requestedAt: chat.startedAt,
+        status: chat.status,
+        expiresAt: chat.expiresAt,
+        remainingSeconds,
+      };
+    });
+
+    res.json({ requests });
   } catch (error) {
     console.error("Error fetching pending requests:", error);
     res.status(500).json({ error: "Error fetching pending requests" });
   }
 };
 
-// Resend/Retry cancelled chat request (user only)
-export const resendRequest = async (req, res) => {
-  try {
-    const { chatId } = req.params;
-
-    if (req.user.role !== "user") {
-      return res.status(403).json({ error: "Only users can resend requests" });
-    }
-
-    const chat = await Chat.findById(chatId);
-
-    if (!chat) {
-      return res.status(404).json({ error: "Chat not found" });
-    }
-
-    // Check authorization
-    if (chat.userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "Unauthorized" });
-    }
-
-    // Only allow resend if chat is cancelled or expired
-    if (chat.status !== "cancelled") {
-      return res
-        .status(400)
-        .json({ error: `Cannot resend. Chat is ${chat.status}` });
-    }
-
-    // Reset the chat for new request
-    chat.status = "pending";
-    chat.isActive = true;
-    chat.cancelledAt = null;
-
-    // Set new expiration time (10 seconds from now)
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + 10);
-    chat.expiresAt = expiresAt;
-
-    chat.updatedAt = new Date();
-    await chat.save();
-
-    // Add new request message
-    await Message.create({
-      chatId: chat._id,
-      senderId: req.user._id,
-      senderRole: "user",
-      content: `🔄 I'm sending a new request. (Request will expire in 10 seconds)`,
-      contentType: "TEXT",
-    });
-
-    const populatedChat = await Chat.findById(chat._id)
-      .populate("userId", "fullName email profilePhoto")
-      .populate(
-        "counselorId",
-        "fullName specialization profilePhoto rating isActive",
-      );
-
-    res.json({
-      success: true,
-      message: "Request resent successfully",
-      chat: {
-        id: populatedChat._id,
-        chatId: populatedChat.chatId,
-        status: populatedChat.status,
-        expiresAt: populatedChat.expiresAt,
-        counselor: {
-          id: populatedChat.counselorId._id,
-          name: populatedChat.counselorId.fullName,
-          specialization: populatedChat.counselorId.specialization,
-          avatar: populatedChat.counselorId.profilePhoto?.url || null,
-        },
-        user: {
-          id: populatedChat.userId._id,
-          name: populatedChat.userId.fullName,
-          email: populatedChat.userId.email,
-        },
-        startedAt: populatedChat.startedAt,
-      },
-    });
-  } catch (error) {
-    console.error("Error resending request:", error);
-    res.status(500).json({ error: "Error resending request" });
-  }
-};
-
-// ==================== CHAT MANAGEMENT ====================
-
-// Get all chats for current user
+// Get all chats for current user/counselor
 export const getChats = async (req, res) => {
   try {
     let chats;
-    // let query = { isActive: true };
     let query = {
       isActive: true,
       status: { $in: ["accepted", "active"] },
@@ -1166,68 +925,6 @@ export const getChatMessages = async (req, res) => {
   }
 };
 
-// Send message (only if chat is accepted)
-// export const sendMessage = async (req, res) => {
-//   try {
-//     const { chatId } = req.params;
-//     const { content } = req.body;
-
-//     if (!content || content.trim() === '') {
-//       return res.status(400).json({ error: 'Message content is required' });
-//     }
-
-//     const chat = await Chat.findById(chatId);
-
-//     if (!chat) {
-//       return res.status(404).json({ error: 'Chat not found' });
-//     }
-
-//     // Check authorization
-//     const isAuthorized = (req.user.role === 'user' && chat.userId.toString() === req.user._id.toString()) ||
-//                         (req.user.role === 'counsellor' && chat.counselorId.toString() === req.user._id.toString());
-
-//     if (!isAuthorized) {
-//       return res.status(403).json({ error: 'Unauthorized' });
-//     }
-
-//     // Only allow messaging if chat is accepted
-//     if (chat.status !== 'accepted' && chat.status !== 'active') {
-//       return res.status(403).json({
-//         error: `Cannot send messages. Chat is ${chat.status}.`,
-//         status: chat.status
-//       });
-//     }
-
-//     // Create message
-//     const message = await Message.create({
-//       chatId: chat._id,
-//       senderId: req.user._id,
-//       senderRole: req.user.role,
-//       content: content.trim(),
-//       contentType: 'TEXT'
-//     });
-
-//     // Update chat's last message
-//     chat.lastMessage = content.trim();
-//     chat.lastMessageAt = new Date();
-//     chat.updatedAt = new Date();
-//     await chat.save();
-
-//     res.json({
-//       success: true,
-//       message: {
-//         id: message._id,
-//         messageId: message.messageId,
-//         content: message.content,
-//         senderRole: message.senderRole,
-//         createdAt: message.createdAt
-//       }
-//     });
-//   } catch (error) {
-//     console.error('Error sending message:', error);
-//     res.status(500).json({ error: 'Error sending message' });
-//   }
-// };
 // Send message (only if chat is accepted)
 export const sendMessage = async (req, res) => {
   try {
@@ -1436,45 +1133,6 @@ export const clearChat = async (req, res) => {
     res.status(500).json({ error: "Error clearing chat" });
   }
 };
-
-// Mark all messages as read
-// export const markAllRead = async (req, res) => {
-//   try {
-//     const { chatId } = req.body;
-
-//     const chat = await Chat.findById(chatId);
-//     if (!chat) {
-//       return res.status(404).json({ error: 'Chat not found' });
-//     }
-
-//     // Check authorization
-//     const isAuthorized = (req.user.role === 'user' && chat.userId.toString() === req.user._id.toString()) ||
-//                         (req.user.role === 'counsellor' && chat.counselorId.toString() === req.user._id.toString());
-
-//     if (!isAuthorized) {
-//       return res.status(403).json({ error: 'Unauthorized' });
-//     }
-
-//     // Mark messages as read
-//     const result = await Message.updateMany(
-//       {
-//         chatId: chat._id,
-//         senderRole: req.user.role === 'user' ? 'counsellor' : 'user',
-//         isRead: false
-//       },
-//       { isRead: true, readAt: new Date() }
-//     );
-
-//     res.json({
-//       success: true,
-//       message: 'All messages marked as read',
-//       modifiedCount: result.modifiedCount
-//     });
-//   } catch (error) {
-//     console.error('Error marking messages as read:', error);
-//     res.status(500).json({ error: 'Error marking messages as read' });
-//   }
-// };
 
 // Get unread count
 export const getUnreadCount = async (req, res) => {
