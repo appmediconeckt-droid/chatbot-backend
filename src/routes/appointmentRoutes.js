@@ -1,11 +1,15 @@
-// mindCrawller/src/routes/appointmentRoutes.js
 import express from "express";
 const router = express.Router();
 import * as appointmentCtrl from "../controllers/appointmentController.js";
-import { authenticateToken } from "../middleware/auth.js";
+import { authenticateToken, authorizeRoles } from "../middleware/auth.js";
 
-router.post("/", authenticateToken, appointmentCtrl.book);
+// Users can book appointments
+router.post("/", authenticateToken, authorizeRoles("user"), appointmentCtrl.book);
+
+// Both can see their appointments
 router.get("/", authenticateToken, appointmentCtrl.getAppointments);
-router.patch("/:id/status", authenticateToken, appointmentCtrl.updateStatus);
+
+// Counsellors can update appointment status
+router.patch("/:id/status", authenticateToken, authorizeRoles("counsellor"), appointmentCtrl.updateStatus);
 
 export default router;

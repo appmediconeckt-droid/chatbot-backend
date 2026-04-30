@@ -77,7 +77,7 @@ authRoutes.get("/counsellors/:counsellorId", getCounsellorById);
 authRoutes.get(
   "/me",
   authMiddleware,
-  authorizeRoles("patient", "counsellor"), // both allowed
+  authorizeRoles("user", "counsellor"), // both allowed
   getMyProfile,
 );
 authRoutes.get("/getUser/:userId", getUser);
