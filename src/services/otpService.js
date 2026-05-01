@@ -20,20 +20,7 @@ class OTPService {
     const emailUser = process.env.EMAIL_USER;
     const emailPass = process.env.EMAIL_PASS;
 
-    // console.log('EMAIL_USER type:', typeof emailUser);
-    // console.log('EMAIL_USER length:', emailUser ? emailUser.length : 0);
-    // console.log('EMAIL_USER value:', emailUser);
-    // console.log('EMAIL_PASS type:', typeof emailPass);
-    // console.log('EMAIL_PASS length:', emailPass ? emailPass.length : 0);
-    // console.log('EMAIL_PASS first 4 chars:', emailPass ? emailPass.substring(0, 4) : 'undefined');
-
-    // Check if credentials are actually empty strings
-    // if (emailUser === '' || emailUser === undefined || emailUser === null) {
-    //     console.error('❌ EMAIL_USER is empty or undefined!');
-    // }
-    // if (emailPass === '' || emailPass === undefined || emailPass === null) {
-    //     console.error('❌ EMAIL_PASS is empty or undefined!');
-    // }
+   
 
     const smtpHost = process.env.EMAIL_HOST || "smtp.gmail.com";
     const smtpPort = Number(process.env.EMAIL_PORT || 587);
