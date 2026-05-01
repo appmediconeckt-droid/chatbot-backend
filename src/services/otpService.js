@@ -4,7 +4,6 @@ dotenv.config();
 
 import crypto from "crypto";
 import dns from "node:dns";
-import net from "node:net";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
 
@@ -33,23 +32,21 @@ class OTPService {
    
 
     const smtpHost = process.env.EMAIL_HOST || "smtp.gmail.com";
-    const smtpPort = Number(process.env.EMAIL_PORT || 587);
-    const smtpSecure = false;
-    
+    const smtpPort = Number(process.env.EMAIL_PORT || 465);
+    const smtpSecure = smtpPort === 465;
+
     // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort,
-      secure: smtpSecure, // true for 465 (SSL), false for 587 (STARTTLS)
+      secure: smtpSecure, // true for 465 (implicit SSL), false for 587 (STARTTLS)
       requireTLS: !smtpSecure,
       auth: {
         user: emailUser,
         pass: emailPass,
       },
-      // IPv6 routing can fail on some Render networks (ENETUNREACH); force IPv4.
-      family: 4,
+      // Force IPv4 DNS lookups to avoid ENETUNREACH on IPv6-only routes.
       lookup: ipv4Lookup,
-      createConnection: (options) => net.createConnection({ ...options, family: 4 }),
       debug: process.env.EMAIL_DEBUG === "true",
       logger: process.env.EMAIL_DEBUG === "true",
       tls: {
