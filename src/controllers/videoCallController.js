@@ -206,9 +206,9 @@ export const videoCallController = {
       const callId = uuidv4();
       const roomId = uuidv4();
 
-      // Set expiration time (10 seconds from now)
+      // Set expiration time (45 seconds from now)
       const expiresAt = new Date();
-      expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+      expiresAt.setSeconds(expiresAt.getSeconds() + 45);
 
       // If existing pending call exists, check if expired
       if (existingCall) {
@@ -235,7 +235,21 @@ export const videoCallController = {
           existingCall.requestMessage = message;
           existingCall.updatedAt = new Date();
 
-          activeCalls.set(existingCall.callId, existingCall);
+          // Update in DB
+          await Call.findOneAndUpdate(
+            { callId: existingCall.callId },
+            {
+              status: "pending",
+              callerId: initiatorId,
+              initiatorType: initiatorType,
+              receiverId: receiverId,
+              receiverType: receiverType,
+              callType: (callType === "voice" || callType === "audio") ? "voice" : "video",
+              isActive: true,
+              updatedAt: new Date(),
+              expiresAt: expiresAt
+            }
+          );
 
           // Emit real-time notification with appropriate display name
           if (global.io) {
@@ -261,7 +275,7 @@ export const videoCallController = {
                 callType,
                 message,
                 expiresAt,
-                remainingSeconds: 10,
+                remainingSeconds: 45,
                 timestamp: new Date(),
               },
             );
@@ -404,7 +418,7 @@ export const videoCallController = {
             callType,
             message,
             expiresAt,
-            remainingSeconds: 10,
+            remainingSeconds: 45,
             timestamp: new Date(),
           },
         );
@@ -414,7 +428,7 @@ export const videoCallController = {
       await Call.create({
         callId,
         roomId,
-        callType: callType === "voice" ? "voice" : "video",
+        callType: (callType === "voice" || callType === "audio") ? "voice" : "video",
         status: "pending",
         callerId: initiatorId,
         initiatorType: initiatorType,
@@ -1336,7 +1350,7 @@ export const videoCallController = {
 
       // Reset the call for new request
       const expiresAt = new Date();
-      expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+      expiresAt.setSeconds(expiresAt.getSeconds() + 45);
 
       call.status = "pending";
       call.isActive = true;
@@ -1344,8 +1358,20 @@ export const videoCallController = {
       call.cancelledAt = null;
       call.rejectedAt = null;
       call.updatedAt = new Date();
-
       activeCalls.set(callId, call);
+
+      // Update in DB
+      await Call.findOneAndUpdate(
+        { callId: callId },
+        {
+          status: "pending",
+          isActive: true,
+          updatedAt: new Date(),
+          expiresAt: expiresAt,
+          cancelledAt: null,
+          rejectedAt: null
+        }
+      );
 
       // Emit new request notification
       if (global.io) {
@@ -1374,7 +1400,7 @@ export const videoCallController = {
             callType: call.type,
             message: call.requestMessage,
             expiresAt,
-            remainingSeconds: 10,
+            remainingSeconds: 45,
             timestamp: new Date(),
           },
         );
@@ -1438,7 +1464,7 @@ export const videoCallController = {
               "call_expired",
               {
                 callId,
-                message: "Call request expired after 10 seconds",
+                message: "Call request expired after 45 seconds",
               },
             );
           }
