@@ -34,9 +34,7 @@ class OTPService {
 
     const smtpHost = process.env.EMAIL_HOST || "smtp.gmail.com";
     const smtpPort = Number(process.env.EMAIL_PORT || 587);
-    const smtpSecure = process.env.EMAIL_SECURE
-      ? process.env.EMAIL_SECURE === "true"
-      : smtpPort === 465;
+    const smtpSecure = false;
     
     // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
