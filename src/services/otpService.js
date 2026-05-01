@@ -4,6 +4,7 @@ dotenv.config();
 
 import crypto from "crypto";
 import dns from "node:dns";
+import net from "node:net";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
 
@@ -50,6 +51,7 @@ class OTPService {
       // IPv6 routing can fail on some Render networks (ENETUNREACH); force IPv4.
       family: 4,
       lookup: ipv4Lookup,
+      createConnection: (options) => net.createConnection({ ...options, family: 4 }),
       debug: process.env.EMAIL_DEBUG === "true",
       logger: process.env.EMAIL_DEBUG === "true",
       tls: {
