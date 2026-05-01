@@ -3,25 +3,11 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import crypto from "crypto";
-import dns from "node:dns";
+import net from "node:net";
+import tls from "node:tls";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
 
-// Render environments can fail on IPv6-only SMTP routes; prefer IPv4 lookups.
-try {
-  dns.setDefaultResultOrder("ipv4first");
-} catch (err) {
-  console.warn("Could not set DNS default result order:", err?.message || err);
-}
-
-// Custom lookup that hard-forces IPv4 regardless of nodemailer's family option.
-const ipv4Lookup = (hostname, options, callback) => {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  dns.lookup(hostname, { ...options, family: 4 }, callback);
-};
 
 class OTPService {
   constructor() {
@@ -45,8 +31,12 @@ class OTPService {
         user: emailUser,
         pass: emailPass,
       },
-      // Force IPv4 DNS lookups to avoid ENETUNREACH on IPv6-only routes.
-      lookup: ipv4Lookup,
+      // Force IPv4 at the socket level — nodemailer doesn't reliably pass
+      // the lookup option through to tls.connect() on all Node versions.
+      createConnection: (options, callback) =>
+        smtpSecure
+          ? tls.connect({ ...options, family: 4 }, callback)
+          : net.createConnection({ ...options, family: 4 }, callback),
       debug: process.env.EMAIL_DEBUG === "true",
       logger: process.env.EMAIL_DEBUG === "true",
       tls: {
