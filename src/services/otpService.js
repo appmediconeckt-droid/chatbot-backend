@@ -14,6 +14,15 @@ try {
   console.warn("Could not set DNS default result order:", err?.message || err);
 }
 
+// Custom lookup that hard-forces IPv4 regardless of nodemailer's family option.
+const ipv4Lookup = (hostname, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  dns.lookup(hostname, { ...options, family: 4 }, callback);
+};
+
 class OTPService {
   constructor() {
     // Log credential details (be careful with production!)
@@ -39,7 +48,8 @@ class OTPService {
         pass: emailPass,
       },
       // IPv6 routing can fail on some Render networks (ENETUNREACH); force IPv4.
-      family: 4, 
+      family: 4,
+      lookup: ipv4Lookup,
       debug: process.env.EMAIL_DEBUG === "true",
       logger: process.env.EMAIL_DEBUG === "true",
       tls: {
