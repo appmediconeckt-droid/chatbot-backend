@@ -1,133 +1,102 @@
-// //its for mail services/otpService.js
 import dotenv from "dotenv";
 dotenv.config();
 
 import crypto from "crypto";
-import dnsPromises from "node:dns/promises";
-import nodemailer from "nodemailer";
 import twilio from "twilio";
 
-const SMTP_HOST = process.env.EMAIL_HOST || "smtp.gmail.com";
+const FROM_NAME = "Mindcrawller Global Pvt Ltd";
+const FROM_EMAIL = process.env.EMAIL_FROM;
 
-// Pre-resolve the SMTP host to an IPv4 address at module load. Render's
-// network can prefer IPv6 routes that aren't actually reachable; passing the
-// IPv4 IP directly as `host` (with `servername` set to the hostname for SNI)
-// bypasses the lookup entirely and avoids ENETUNREACH on 2607:f8b0:...
-let SMTP_HOST_IPV4 = SMTP_HOST;
-try {
-  const addrs = await dnsPromises.resolve4(SMTP_HOST);
-  if (addrs.length > 0) {
-    SMTP_HOST_IPV4 = addrs[0];
-    console.log(`[SMTP] Pre-resolved ${SMTP_HOST} -> ${SMTP_HOST_IPV4}`);
+async function sendBrevoEmail({ to, subject, html }) {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data?.message || `Brevo API error ${response.status}`);
   }
-} catch (err) {
-  console.warn(
-    `[SMTP] Could not pre-resolve ${SMTP_HOST} to IPv4, falling back to hostname:`,
-    err?.message || err,
-  );
+
+  return data;
 }
 
+const buildEmailOTPHtml = (otp) => `
+  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
+    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
+      <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
+    </div>
+    <div style="padding: 20px;">
+      <h3 style="color: #333;">Dear User,</h3>
+      <p style="color: #555;">
+        Thank you for registering with Mindcrawller. Please verify your email using the OTP below:
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        <span style="font-size: 30px; letter-spacing: 6px; font-weight: bold; color: #4CAF50; padding: 15px 25px; background: #f4f4f4; border-radius: 8px; display: inline-block;">
+          ${otp}
+        </span>
+      </div>
+      <p style="color: #555;">⏳ This OTP is valid for <strong>10 minutes</strong>.</p>
+      <p style="color: #555;">If you did not create this account, please ignore this email.</p>
+      <hr/>
+      <p style="font-size: 12px; color: #999;">
+        © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd<br/>
+        This is an automated email. Please do not reply.
+      </p>
+    </div>
+  </div>
+`;
+
+const buildLoginOTPHtml = (otp) => `
+  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
+    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
+      <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
+    </div>
+    <div style="padding: 20px;">
+      <h3 style="color: #333;">Login Security Check</h3>
+      <p style="color: #555;">
+        We received a request to log in to your account from a new session. Since you were already logged in elsewhere, we've deactivated other sessions for your security.
+      </p>
+      <p style="color: #555;">Please use the verification code below to complete your login:</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <span style="font-size: 30px; letter-spacing: 6px; font-weight: bold; color: #4CAF50; padding: 15px 25px; background: #f4f4f4; border-radius: 8px; display: inline-block;">
+          ${otp}
+        </span>
+      </div>
+      <p style="color: #555;">⏳ This OTP is valid for <strong>10 minutes</strong>.</p>
+      <p style="color: #555;">If you did not request this login, please change your password immediately.</p>
+      <hr/>
+      <p style="font-size: 12px; color: #999;">
+        © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd<br/>
+        This is an automated email. Please do not reply.
+      </p>
+    </div>
+  </div>
+`;
+
 class OTPService {
-  constructor() {
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASS;
-
-    const smtpPort = Number(process.env.EMAIL_PORT || 587);
-    const smtpSecure = smtpPort === 465;
-
-    this.emailTransporter = nodemailer.createTransport({
-      host: SMTP_HOST_IPV4, // IPv4 IP, not hostname — avoids IPv6 routing
-      port: smtpPort,
-      secure: smtpSecure, // true for 465 (implicit SSL), false for 587 (STARTTLS)
-      requireTLS: !smtpSecure,
-      auth: {
-        user: emailUser,
-        pass: emailPass,
-      },
-      debug: process.env.EMAIL_DEBUG === "true",
-      logger: process.env.EMAIL_DEBUG === "true",
-      tls: {
-        rejectUnauthorized:
-          process.env.EMAIL_TLS_REJECT_UNAUTHORIZED !== "false",
-        servername: SMTP_HOST, // Original hostname for TLS SNI / cert validation
-        minVersion: "TLSv1.2",
-      },
-      connectionTimeout: Number(process.env.EMAIL_CONNECTION_TIMEOUT || 15000),
-      greetingTimeout: Number(process.env.EMAIL_GREETING_TIMEOUT || 15000),
-      socketTimeout: Number(process.env.EMAIL_SOCKET_TIMEOUT || 20000),
-      maxConnections: 5,
-      maxMessages: 100,
-      rateDelta: 1000,
-      rateLimit: 5,
-    });
-
-    // Verify connection
-    this.verifyConnection();
-  }
-
-  async verifyConnection() {
-    try {
-      await this.emailTransporter.verify();
-      // console.log('✅ SMTP connection verified successfully');
-    } catch (error) {
-      console.error("❌ SMTP verification failed:", error.message);
-      // console.error('Please check your email credentials and Gmail settings');
-    }
-  }
-
   generateOTP() {
     return crypto.randomInt(100000, 999999).toString();
   }
 
   async sendLoginOTP(email, otp) {
     try {
-      const mailOptions = {
-        from: `"Mindcrawller Global Pvt Ltd" <${process.env.EMAIL_USER}>`,
+      const data = await sendBrevoEmail({
         to: email,
         subject: "Login Verification OTP - Mindcrawller",
-        html: `
-                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
-                    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
-                        <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
-                    </div>
-                    <div style="padding: 20px;">
-                        <h3 style="color: #333;">Login Security Check</h3>
-                        <p style="color: #555;">
-                            We received a request to log in to your account from a new session. Since you were already logged in elsewhere, we've deactivated other sessions for your security.
-                        </p>
-                        <p style="color: #555;">
-                            Please use the verification code below to complete your login:
-                        </p>
-                        <div style="text-align: center; margin: 30px 0;">
-                            <span style="
-                                font-size: 30px;
-                                letter-spacing: 6px;
-                                font-weight: bold;
-                                color: #4CAF50;
-                                padding: 15px 25px;
-                                background: #f4f4f4;
-                                border-radius: 8px;
-                                display: inline-block;
-                            ">
-                                ${otp}
-                            </span>
-                        </div>
-                        <p style="color: #555;">
-                            ⏳ This OTP is valid for <strong>10 minutes</strong>.
-                        </p>
-                        <p style="color: #555;">
-                            If you did not request this login, please change your password immediately.
-                        </p>
-                        <hr/>
-                        <p style="font-size: 12px; color: #999;">
-                            © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd <br/>
-                            This is an automated email. Please do not reply.
-                        </p>
-                    </div>
-                </div>
-                `,
-      };
-      return await this.emailTransporter.sendMail(mailOptions);
+        html: buildLoginOTPHtml(otp),
+      });
+      return data;
     } catch (error) {
       console.error("❌ Login OTP sending failed:", error.message);
       throw error;
@@ -135,116 +104,42 @@ class OTPService {
   }
 
   async sendEmailOTP(email, otp) {
-    try {
-      console.log(`Attempting to send OTP ${otp} to ${email}`);
+    console.log(`Attempting to send OTP ${otp} to ${email}`);
 
-      const mailOptions = {
-        from: `"Mindcrawller Global Pvt Ltd" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Email Verification OTP - Mindcrawller",
-        html: `
-                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
-                    
-                    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
-                        <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
-                    </div>
+    const maxRetries = 3;
+    let lastError;
 
-                    <div style="padding: 20px;">
-                        <h3 style="color: #333;">Dear User,</h3>
+    for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+      try {
+        const data = await sendBrevoEmail({
+          to: email,
+          subject: "Email Verification OTP - Mindcrawller",
+          html: buildEmailOTPHtml(otp),
+        });
 
-                        <p style="color: #555;">
-                            Thank you for registering with Mindcrawller. Please verify your email using the OTP below:
-                        </p>
+        console.log("✅ Email sent successfully!");
+        console.log("Message ID:", data?.messageId);
+        return data;
+      } catch (error) {
+        lastError = error;
 
-                        <div style="text-align: center; margin: 30px 0;">
-                            <span style="
-                                font-size: 30px;
-                                letter-spacing: 6px;
-                                font-weight: bold;
-                                color: #4CAF50;
-                                padding: 15px 25px;
-                                background: #f4f4f4;
-                                border-radius: 8px;
-                                display: inline-block;
-                            ">
-                                ${otp}
-                            </span>
-                        </div>
-
-                        <p style="color: #555;">
-                            ⏳ This OTP is valid for <strong>10 minutes</strong>.
-                        </p>
-
-                        <p style="color: #555;">
-                            If you did not create this account, please ignore this email.
-                        </p>
-
-                        <hr/>
-
-                        <p style="font-size: 12px; color: #999;">
-                            © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd <br/>
-                            This is an automated email. Please do not reply.
-                        </p>
-                    </div>
-                </div>
-                `,
-      };
-
-      // Retry logic for transient failures
-      const maxRetries = 3;
-      let retriesLeft = maxRetries;
-      let lastError;
-
-      while (retriesLeft > 0) {
-        try {
-          const info = await this.emailTransporter.sendMail(mailOptions);
-          console.log("✅ Email sent successfully!");
-          console.log("Message ID:", info.messageId);
-          console.log("Response:", info.response);
-          return info;
-        } catch (error) {
-          lastError = error;
-          retriesLeft -= 1;
-
-          const errorCode = String(error?.code || "").toUpperCase();
-          const errorMessage = String(error?.message || "").toUpperCase();
-          const isRetryableNetworkError =
-            [
-              "ETIMEDOUT",
-              "ECONNREFUSED",
-              "ENETUNREACH",
-              "EAI_AGAIN",
-              "ESOCKET",
-            ].includes(errorCode) ||
-            errorMessage.includes("ENETUNREACH") ||
-            errorMessage.includes("ETIMEDOUT");
-
-          if (retriesLeft > 0 && isRetryableNetworkError) {
-            const attemptNumber = maxRetries - retriesLeft;
-            console.log(
-              `⏳ Retry attempt ${attemptNumber + 1}/${maxRetries}... Error: ${errorCode || "UNKNOWN"}`,
-            );
-            // Exponential backoff: 2s, 4s
-            await new Promise((resolve) =>
-              setTimeout(resolve, 2000 * Math.max(1, attemptNumber)),
-            );
-          } else {
-            break;
-          }
+        // Don't retry 4xx client errors (bad email, invalid key, etc.)
+        const status = error?.response?.status || error?.status;
+        if ((status >= 400 && status < 500) || attempt === maxRetries) {
+          break;
         }
-      }
 
-      // If all retries failed, throw the last error
-      console.error(`❌ Error sending email after ${maxRetries} retries:`);
-      console.error("Error code:", lastError?.code);
-      console.error("Error message:", lastError?.message);
-      throw new Error(
-        `Failed to send email: ${lastError?.message || "Unknown SMTP error"}`,
-      );
-    } catch (error) {
-      console.error("❌ Email sending failed:", error.message);
-      throw error;
+        console.log(
+          `⏳ Retry attempt ${attempt + 1}/${maxRetries}... ${error?.message || "unknown error"}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      }
     }
+
+    console.error("❌ Error sending email after retries:", lastError?.message);
+    throw new Error(
+      `Failed to send email: ${lastError?.message || "Unknown error"}`,
+    );
   }
 
   verifyOTP(user, type, enteredOTP) {
