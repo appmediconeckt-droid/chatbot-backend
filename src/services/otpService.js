@@ -7,7 +7,7 @@ import twilio from "twilio";
 const FROM_NAME = "Mindcrawller Global Pvt Ltd";
 const FROM_EMAIL = process.env.EMAIL_FROM;
 
-async function sendBrevoEmail({ to, subject, html }) {
+async function sendBrevoEmail({ to, subject, html, text }) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -19,6 +19,7 @@ async function sendBrevoEmail({ to, subject, html }) {
       to: [{ email: to }],
       subject,
       htmlContent: html,
+      textContent: text,
     }),
   });
 
@@ -95,6 +96,7 @@ class OTPService {
         to: email,
         subject: "Login Verification OTP - Mindcrawller",
         html: buildLoginOTPHtml(otp),
+        text: `Mindcrawller Global Pvt Ltd\n\nLogin Security Check\n\nYour verification code is: ${otp}\n\nThis OTP is valid for 10 minutes.\n\nIf you did not request this login, please change your password immediately.\n\n© ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd`,
       });
       return data;
     } catch (error) {
@@ -115,6 +117,7 @@ class OTPService {
           to: email,
           subject: "Email Verification OTP - Mindcrawller",
           html: buildEmailOTPHtml(otp),
+          text: `Mindcrawller Global Pvt Ltd\n\nEmail Verification\n\nYour verification code is: ${otp}\n\nThis OTP is valid for 10 minutes.\n\nIf you did not create this account, please ignore this email.\n\n© ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd`,
         });
 
         console.log("✅ Email sent successfully!");
