@@ -3,27 +3,40 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import crypto from "crypto";
-import net from "node:net";
-import tls from "node:tls";
+import dnsPromises from "node:dns/promises";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
 
+const SMTP_HOST = process.env.EMAIL_HOST || "smtp.gmail.com";
+
+// Pre-resolve the SMTP host to an IPv4 address at module load. Render's
+// network can prefer IPv6 routes that aren't actually reachable; passing the
+// IPv4 IP directly as `host` (with `servername` set to the hostname for SNI)
+// bypasses the lookup entirely and avoids ENETUNREACH on 2607:f8b0:...
+let SMTP_HOST_IPV4 = SMTP_HOST;
+try {
+  const addrs = await dnsPromises.resolve4(SMTP_HOST);
+  if (addrs.length > 0) {
+    SMTP_HOST_IPV4 = addrs[0];
+    console.log(`[SMTP] Pre-resolved ${SMTP_HOST} -> ${SMTP_HOST_IPV4}`);
+  }
+} catch (err) {
+  console.warn(
+    `[SMTP] Could not pre-resolve ${SMTP_HOST} to IPv4, falling back to hostname:`,
+    err?.message || err,
+  );
+}
 
 class OTPService {
   constructor() {
-    // Log credential details (be careful with production!)
     const emailUser = process.env.EMAIL_USER;
     const emailPass = process.env.EMAIL_PASS;
 
-   
-
-    const smtpHost = process.env.EMAIL_HOST || "smtp.gmail.com";
-    const smtpPort = Number(process.env.EMAIL_PORT || 465);
+    const smtpPort = Number(process.env.EMAIL_PORT || 587);
     const smtpSecure = smtpPort === 465;
 
-    // Create transporter with explicit auth
     this.emailTransporter = nodemailer.createTransport({
-      host: smtpHost,
+      host: SMTP_HOST_IPV4, // IPv4 IP, not hostname — avoids IPv6 routing
       port: smtpPort,
       secure: smtpSecure, // true for 465 (implicit SSL), false for 587 (STARTTLS)
       requireTLS: !smtpSecure,
@@ -31,18 +44,12 @@ class OTPService {
         user: emailUser,
         pass: emailPass,
       },
-      // Force IPv4 at the socket level — nodemailer doesn't reliably pass
-      // the lookup option through to tls.connect() on all Node versions.
-      createConnection: (options, callback) =>
-        smtpSecure
-          ? tls.connect({ ...options, family: 4 }, callback)
-          : net.createConnection({ ...options, family: 4 }, callback),
       debug: process.env.EMAIL_DEBUG === "true",
       logger: process.env.EMAIL_DEBUG === "true",
       tls: {
         rejectUnauthorized:
           process.env.EMAIL_TLS_REJECT_UNAUTHORIZED !== "false",
-        servername: smtpHost,
+        servername: SMTP_HOST, // Original hostname for TLS SNI / cert validation
         minVersion: "TLSv1.2",
       },
       connectionTimeout: Number(process.env.EMAIL_CONNECTION_TIMEOUT || 15000),
