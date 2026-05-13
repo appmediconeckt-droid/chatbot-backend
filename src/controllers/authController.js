@@ -1514,34 +1514,45 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
         .json({ message: "User not found", success: false });
     }
 
-    // 1️⃣ Invalidate **all** active sessions for this user
-    await Session.updateMany(
-      { userId: user._id, isActive: true },
-      { $set: { isActive: false, logoutAt: new Date() } },
-    );
-
-    // 2️⃣ Generate a short‑lived OTP (6 digits)
+    // 1️⃣ Generate a short‑lived OTP (6 digits)
     const otp = otpService.generateOTP();
-    console.log(`Generated OTP for ${email}: ${otp}`);
+    console.log(`📧 Generated login OTP for ${email}: ${otp}`);
 
-    // 3️⃣ Store it in the temporary map (valid for 10 min)
+    // 2️⃣ Store it in the temporary map (valid for 10 min)
     loginOTPStore.set(email, {
       otp,
-      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
       userId: user._id,
     });
 
-    // 4️⃣ Send the OTP by email
-    await otpService.sendLoginOTP(email, otp);
+    // 3️⃣ Send the OTP by email (with retry logic)
+    try {
+      await otpService.sendLoginOTP(email, otp);
+      console.log(`✅ OTP email sent successfully to ${email}`);
+    } catch (emailError) {
+      console.error(
+        `❌ Failed to send OTP email to ${email}:`,
+        emailError.message,
+      );
+      return res.status(500).json({
+        message: "OTP generated but failed to send email. Please try again.",
+        success: false,
+        error: emailError.message,
+      });
+    }
 
     return res.status(200).json({
-      message: "All other sessions logged out. OTP sent to email.",
+      message:
+        "OTP sent to your email. Sessions will be logged out after OTP verification.",
       success: true,
       needOtpVerification: true,
+      email,
     });
   } catch (err) {
-    console.error("logoutOtherDevices error:", err);
-    return res.status(500).json({ message: "Server error", success: false });
+    console.error("❌ logoutOtherDevices error:", err);
+    return res
+      .status(500)
+      .json({ message: "Server error", success: false, error: err.message });
   }
 };
 
@@ -1573,8 +1584,16 @@ export const verifyLoginOTP = async (req, res) => {
 
     const user = await User.findById(stored.userId);
     if (!user) {
-      return res.status(404).json({ message: "User not found", success: false });
+      return res
+        .status(404)
+        .json({ message: "User not found", success: false });
     }
+
+    // Logout all existing sessions ONLY after OTP verification succeeds
+    await Session.updateMany(
+      { userId: user._id, isActive: true },
+      { $set: { isActive: false, logoutAt: new Date() } },
+    );
 
     // OTP is valid → create a **new** session for this device
     const sessionId = new mongoose.Types.ObjectId();
