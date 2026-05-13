@@ -110,7 +110,13 @@ class SocketHandler {
      console.log("PRESENCE OFFLINE", userId);
   }
 
+  async resetOnlineStatus() {
+    await User.updateMany({ isOnline: true }, { isOnline: false, lastSeen: new Date() });
+    console.log("Presence: reset all users to offline on startup");
+  }
+
   initialize() {
+    this.resetOnlineStatus();
     this.io.on("connection", async (socket) => {
       // console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
 

@@ -4,10 +4,15 @@ dotenv.config();
 import crypto from "crypto";
 import twilio from "twilio";
 
-const FROM_NAME = "Mindcrawller Global Pvt Ltd";
+const FROM_NAME = "Mediconeckt Global Pvt Ltd";
+// ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
+// (same subdomain, same TLD). Mismatches will cause authentication failures.
 const FROM_EMAIL = process.env.EMAIL_FROM;
 
 async function sendBrevoEmail({ to, subject, html, text }) {
+  // Ensure textContent is never undefined (MIME_HTML_ONLY compliance)
+  const safeText = text || "Please enable HTML to view this email.";
+
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -19,7 +24,22 @@ async function sendBrevoEmail({ to, subject, html, text }) {
       to: [{ email: to }],
       subject,
       htmlContent: html,
-      textContent: text,
+      textContent: safeText,
+      replyTo: {
+        email: "support@mediconeckt.com",
+        name: "Mediconeckt Support",
+      },
+      // ✅ SPAM FIX: Add List-Unsubscribe header (critical for Gmail/Outlook)
+      headers: {
+        "List-Unsubscribe":
+          "<mailto:support@mediconeckt.com?subject=unsubscribe>",
+        "X-Mailer": "Mediconeckt Mail Service",
+        "X-Priority": "3",
+      },
+      // ✅ SPAM FIX: Request AMP for Email (Gmail friendly)
+      amp4email: false,
+      // ✅ SPAM FIX: Enable proper tracking & authentication
+      trackingParams: "utm_source=mediconeckt&utm_medium=email",
     }),
   });
 
@@ -33,56 +53,110 @@ async function sendBrevoEmail({ to, subject, html, text }) {
 }
 
 const buildEmailOTPHtml = (otp) => `
-  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
-    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
-      <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Email Verification - Mediconeckt</title>
+  <style>
+    body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+    .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
+    .header { background: #2e7d32; padding: 20px; text-align: center; color: white; }
+    .header h2 { margin: 0; font-size: 22px; font-weight: 600; }
+    .header p { margin: 6px 0 0; font-size: 14px; opacity: 0.9; }
+    .content { padding: 30px; }
+    .content h3 { color: #222; margin-top: 0; margin-bottom: 15px; }
+    .content p { color: #444; line-height: 1.7; margin: 12px 0; }
+    .otp-box { text-align: center; margin: 30px 0; }
+    .otp-code { font-size: 32px; letter-spacing: 8px; font-weight: bold; color: #ffffff; padding: 15px 30px; background: #2e7d32; border-radius: 8px; display: inline-block; }
+    .divider { border: none; border-top: 1px solid #e6e6e6; margin: 24px 0; }
+    .footer { font-size: 12px; color: #666; line-height: 1.7; }
+    .footer a { color: #2e7d32; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Mediconeckt Global Pvt Ltd</h2>
+      <p>Healthcare Connecting Platform</p>
     </div>
-    <div style="padding: 20px;">
-      <h3 style="color: #333;">Dear User,</h3>
-      <p style="color: #555;">
-        Thank you for registering with Mindcrawller. Please verify your email using the OTP below:
-      </p>
-      <div style="text-align: center; margin: 30px 0;">
-        <span style="font-size: 30px; letter-spacing: 6px; font-weight: bold; color: #4CAF50; padding: 15px 25px; background: #f4f4f4; border-radius: 8px; display: inline-block;">
-          ${otp}
-        </span>
+    <div class="content">
+      <h3>Verify Your Email Address</h3>
+      <p>Thank you for creating an account with Mediconeckt. To complete your registration and access all features of our healthcare platform, please verify your email address by entering the verification code below.</p>
+      <p>Your one-time verification code is:</p>
+      <div class="otp-box">
+        <div class="otp-code">${otp}</div>
       </div>
-      <p style="color: #555;">⏳ This OTP is valid for <strong>10 minutes</strong>.</p>
-      <p style="color: #555;">If you did not create this account, please ignore this email.</p>
-      <hr/>
-      <p style="font-size: 12px; color: #999;">
-        © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd<br/>
-        This is an automated email. Please do not reply.
-      </p>
+      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes from when this email was sent. Do not share this code with anyone.</p>
+      <p>Once verified, you will gain full access to your Mediconeckt account including appointments, health records, and doctor consultations.</p>
+      <p><strong>Security Note:</strong> If you did not create a Mediconeckt account, you can safely ignore this email. No account will be activated without verification.</p>
+      <hr class="divider" />
+      <div class="footer">
+        <p>This is a transactional email from Mediconeckt sent to confirm your email address.<br/>
+        For support, contact us at <a href="mailto:support@mediconeckt.com">support@mediconeckt.com</a><br/>
+        &copy; ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+      </div>
     </div>
   </div>
+</body>
+</html>
 `;
 
 const buildLoginOTPHtml = (otp) => `
-  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden;">
-    <div style="background: #4CAF50; padding: 15px; text-align: center; color: white;">
-      <h2 style="margin: 0;">Mindcrawller Global Pvt Ltd</h2>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Login Verification - Mediconeckt</title>
+  <style>
+    body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+    .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
+    .header { background: #2e7d32; padding: 20px; text-align: center; color: white; }
+    .header h2 { margin: 0; font-size: 22px; font-weight: 600; }
+    .header p { margin: 6px 0 0; font-size: 14px; opacity: 0.9; }
+    .content { padding: 30px; }
+    .content h3 { color: #222; margin-top: 0; margin-bottom: 15px; }
+    .content p { color: #444; line-height: 1.7; margin: 12px 0; }
+    .otp-box { text-align: center; margin: 30px 0; }
+    .otp-code { font-size: 32px; letter-spacing: 8px; font-weight: bold; color: #ffffff; padding: 15px 30px; background: #2e7d32; border-radius: 8px; display: inline-block; }
+    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 15px; margin: 15px 0; border-radius: 4px; }
+    .warning p { margin: 0; color: #856404; font-size: 14px; }
+    .divider { border: none; border-top: 1px solid #e6e6e6; margin: 24px 0; }
+    .footer { font-size: 12px; color: #666; line-height: 1.7; }
+    .footer a { color: #2e7d32; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Mediconeckt Global Pvt Ltd</h2>
+      <p>Healthcare Connecting Platform</p>
     </div>
-    <div style="padding: 20px;">
-      <h3 style="color: #333;">Login Security Check</h3>
-      <p style="color: #555;">
-        We received a request to log in to your account from a new session. Since you were already logged in elsewhere, we've deactivated other sessions for your security.
-      </p>
-      <p style="color: #555;">Please use the verification code below to complete your login:</p>
-      <div style="text-align: center; margin: 30px 0;">
-        <span style="font-size: 30px; letter-spacing: 6px; font-weight: bold; color: #4CAF50; padding: 15px 25px; background: #f4f4f4; border-radius: 8px; display: inline-block;">
-          ${otp}
-        </span>
+    <div class="content">
+      <h3>Confirm Your Login</h3>
+      <p>We received a request to sign in to your Mediconeckt account. To confirm this is you and keep your account secure, please enter the verification code below.</p>
+      <p>Your one-time login verification code is:</p>
+      <div class="otp-box">
+        <div class="otp-code">${otp}</div>
       </div>
-      <p style="color: #555;">⏳ This OTP is valid for <strong>10 minutes</strong>.</p>
-      <p style="color: #555;">If you did not request this login, please change your password immediately.</p>
-      <hr/>
-      <p style="font-size: 12px; color: #999;">
-        © ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd<br/>
-        This is an automated email. Please do not reply.
-      </p>
+      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes. Do not share this code with anyone, including Mediconeckt support staff.</p>
+      <div class="warning">
+        <p><strong>⚠️ Security Alert:</strong> If you did not attempt to log in, your account credentials may be compromised. Change your password immediately and contact our support team.</p>
+      </div>
+      <hr class="divider" />
+      <div class="footer">
+        <p>This is a transactional email from Mediconeckt sent for account security.<br/>
+        For support, contact us at <a href="mailto:support@mediconeckt.com">support@mediconeckt.com</a><br/>
+        &copy; ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+      </div>
     </div>
   </div>
+</body>
+</html>
 `;
 
 class OTPService {
@@ -92,21 +166,45 @@ class OTPService {
 
   async sendLoginOTP(email, otp) {
     try {
+      const textContent =
+        `Mediconeckt Global Pvt Ltd - Login Verification\n\n` +
+        `We received a request to sign in to your Mediconeckt account.\n` +
+        `To keep your account secure, please verify with the code below:\n\n` +
+        `Verification Code: ${otp}\n` +
+        `Expires in: 10 minutes\n\n` +
+        `SECURITY: Do not share this code with anyone.\n` +
+        `If this wasn't you, change your password immediately at support@mediconeckt.com\n\n` +
+        `© ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, India`;
+
       const data = await sendBrevoEmail({
         to: email,
-        subject: "Login Verification OTP - Mindcrawller",
+        subject: "[Mediconeckt] Your login verification code",
         html: buildLoginOTPHtml(otp),
-        text: `Mindcrawller Global Pvt Ltd\n\nLogin Security Check\n\nYour verification code is: ${otp}\n\nThis OTP is valid for 10 minutes.\n\nIf you did not request this login, please change your password immediately.\n\n© ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd`,
+        text: textContent,
       });
+
+      console.log(
+        `✅ Login OTP sent to ${email} | MessageID: ${data?.messageId}`,
+      );
       return data;
     } catch (error) {
-      console.error("❌ Login OTP sending failed:", error.message);
+      console.error(`❌ Login OTP failed for ${email}:`, error.message);
       throw error;
     }
   }
 
   async sendEmailOTP(email, otp) {
-    console.log(`Attempting to send OTP ${otp} to ${email}`);
+    console.log(`📧 Sending email verification OTP to ${email}`);
+
+    const textContent =
+      `Mediconeckt Global Pvt Ltd - Email Verification\n\n` +
+      `Thank you for registering with Mediconeckt.\n` +
+      `Please verify your email to access all features.\n\n` +
+      `Verification Code: ${otp}\n` +
+      `Expires in: 10 minutes\n\n` +
+      `Do not share this code. If you didn't sign up, ignore this email.\n\n` +
+      `Questions? Contact: support@mediconeckt.com\n\n` +
+      `© ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, India`;
 
     const maxRetries = 3;
     let lastError;
@@ -115,33 +213,44 @@ class OTPService {
       try {
         const data = await sendBrevoEmail({
           to: email,
-          subject: "Email Verification OTP - Mindcrawller",
+          subject: "[Mediconeckt] Email verification code",
           html: buildEmailOTPHtml(otp),
-          text: `Mindcrawller Global Pvt Ltd\n\nEmail Verification\n\nYour verification code is: ${otp}\n\nThis OTP is valid for 10 minutes.\n\nIf you did not create this account, please ignore this email.\n\n© ${new Date().getFullYear()} Mindcrawller Global Pvt Ltd`,
+          text: textContent,
         });
 
-        console.log("✅ Email sent successfully!");
-        console.log("Message ID:", data?.messageId);
+        console.log(
+          `✅ Email OTP sent successfully to ${email} | MessageID: ${data?.messageId}`,
+        );
         return data;
       } catch (error) {
         lastError = error;
 
         // Don't retry 4xx client errors (bad email, invalid key, etc.)
-        const status = error?.response?.status || error?.status;
-        if ((status >= 400 && status < 500) || attempt === maxRetries) {
+        const status = error?.response?.status || error?.status || 0;
+        const isClientError = status >= 400 && status < 500;
+
+        if (isClientError) {
+          console.error(
+            `❌ Client error (${status}) - not retrying: ${error?.message}`,
+          );
           break;
         }
 
+        if (attempt === maxRetries) {
+          console.error(`❌ Final attempt (${attempt}/${maxRetries}) failed`);
+          break;
+        }
+
+        const waitTime = 2000 * attempt;
         console.log(
-          `⏳ Retry attempt ${attempt + 1}/${maxRetries}... ${error?.message || "unknown error"}`,
+          `⏳ Retry ${attempt + 1}/${maxRetries} in ${waitTime}ms... (${error?.message})`,
         );
-        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
       }
     }
 
-    console.error("❌ Error sending email after retries:", lastError?.message);
     throw new Error(
-      `Failed to send email: ${lastError?.message || "Unknown error"}`,
+      `Failed to send email OTP to ${email}: ${lastError?.message || "Unknown error"}`,
     );
   }
 

@@ -1,119 +1,85 @@
 // utils/emailService.js
-import nodemailer from 'nodemailer';
+
+const FROM_NAME = "Mediconeckt Global Pvt Ltd";
+const FROM_EMAIL = process.env.EMAIL_FROM;
+
+async function sendBrevoEmail({ to, subject, html, text }) {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: text,
+      replyTo: { email: "support@mediconeckt.com", name: "Mediconeckt Support" },
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || `Brevo API error ${response.status}`);
+  }
+  return data;
+}
 
 export const sendResetPasswordEmail = async (email, resetUrl) => {
-    console.log('📧 Attempting to send email to:', email);
-    console.log('🔗 Reset URL:', resetUrl);
-    
-    try {
-        // Check if environment variables are set
-        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-            console.error('❌ Email credentials missing in .env file');
-            throw new Error('Email configuration missing');
-        }
+  const year = new Date().getFullYear();
 
-        // Create transporter
-        const transporter = nodemailer.createTransport({
-            host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-            port: parseInt(process.env.EMAIL_PORT) || 587,
-            secure: (parseInt(process.env.EMAIL_PORT) === 465), // true for 465 (SSL), false for 587 (TLS)
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            },
-            tls: {
-                rejectUnauthorized: false // Only for development
-            },
-            connectionTimeout: 10000, // 10 seconds
-            socketTimeout: 10000, // 10 seconds
-            maxConnections: 5,
-            maxMessages: 100,
-            rateDelta: 1000,
-            rateLimit: 5
-        });
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reset Your Password - Mediconeckt</title>
+</head>
+<body style="margin:0;padding:0;background:#f9f9f9;font-family:'Segoe UI',Arial,sans-serif;">
+  <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:white;">
+    <div style="background:#4CAF50;padding:15px;text-align:center;color:white;">
+      <h2 style="margin:0;">Mediconeckt Global Pvt Ltd</h2>
+    </div>
+    <div style="padding:20px;">
+      <h3 style="color:#333;">Reset Your Password</h3>
+      <p style="color:#555;line-height:1.6;">
+        We received a request to reset the password for your
+        <a href="https://mediconeckt.com" style="color:#4CAF50;text-decoration:none;">Mediconeckt</a> account.
+        Click the button below to set a new password.
+      </p>
+      <div style="text-align:center;margin:30px 0;">
+        <a href="${resetUrl}" style="display:inline-block;padding:12px 28px;background:#4CAF50;color:white;text-decoration:none;border-radius:6px;font-size:16px;font-weight:bold;">
+          Reset Password
+        </a>
+      </div>
+      <p style="color:#555;line-height:1.6;">
+        Or copy this link into your browser:<br/>
+        <a href="${resetUrl}" style="color:#4CAF50;word-break:break-all;">${resetUrl}</a>
+      </p>
+      <p style="color:#555;line-height:1.6;">This link is valid for <strong>10 minutes</strong>.</p>
+      <p style="color:#555;line-height:1.6;">If you did not request a password reset, please ignore this email. Your password will not change.</p>
+      <hr style="border:none;border-top:1px solid #e6e6e6;margin:20px 0;"/>
+      <p style="font-size:12px;color:#666;line-height:1.6;">
+        This is a transactional email sent for account security.<br/>
+        Questions? Contact us at <a href="mailto:support@mediconeckt.com" style="color:#4CAF50;text-decoration:none;">support@mediconeckt.com</a><br/>
+        &copy; ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
 
-        // Verify connection configuration
-        await transporter.verify();
-        console.log('✅ SMTP connection verified');
+  const text = `Mediconeckt Global Pvt Ltd\n\nReset Your Password\n\nWe received a request to reset the password for your Mediconeckt account.\n\nClick the link below to reset your password:\n${resetUrl}\n\nThis link is valid for 10 minutes.\n\nIf you did not request a password reset, please ignore this email.\n\nQuestions? Contact us at support@mediconeckt.com\n\n© ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India`;
 
-        // Email content
-        const mailOptions = {
-            from: `"Counsler App" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: 'Password Reset Request',
-            html: `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        .container {
-                            font-family: Arial, sans-serif;
-                            max-width: 600px;
-                            margin: 0 auto;
-                            padding: 20px;
-                            border: 1px solid #e0e0e0;
-                            border-radius: 5px;
-                        }
-                        .button {
-                            display: inline-block;
-                            padding: 10px 20px;
-                            background-color: #4CAF50;
-                            color: white;
-                            text-decoration: none;
-                            border-radius: 5px;
-                            margin: 20px 0;
-                        }
-                        .footer {
-                            margin-top: 30px;
-                            font-size: 12px;
-                            color: #666;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h2>Password Reset Request</h2>
-                        <p>Hello,</p>
-                        <p>You requested to reset your password. Click the button below to reset it:</p>
-                        <a href="${resetUrl}" class="button">Reset Password</a>
-                        <p>Or copy this link to your browser:</p>
-                        <p>${resetUrl}</p>
-                        <p><strong>This link will expire in 10 minutes.</strong></p>
-                        <p>If you didn't request this, please ignore this email.</p>
-                        <div class="footer">
-                            <p>This is an automated message, please do not reply.</p>
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `
-        };
+  const data = await sendBrevoEmail({
+    to: email,
+    subject: "Reset your Mediconeckt password",
+    html,
+    text,
+  });
 
-        // Send email
-        const info = await transporter.sendMail(mailOptions);
-        console.log('✅ Email sent successfully:', info.messageId);
-        
-        if (process.env.NODE_ENV === 'development') {
-            console.log('📧 Preview URL:', nodemailer.getTestMessageUrl(info));
-        }
-        
-        return info;
-
-    } catch (error) {
-        console.error('❌ Email sending failed:', {
-            message: error.message,
-            code: error.code,
-            command: error.command,
-            response: error.response
-        });
-        
-        // Throw a more specific error message
-        if (error.code === 'EAUTH') {
-            throw new Error('Email authentication failed. Check your email credentials.');
-        } else if (error.code === 'ESOCKET') {
-            throw new Error('Could not connect to email server. Check your network.');
-        } else {
-            throw new Error(`Email could not be sent: ${error.message}`);
-        }
-    }
+  console.log("✅ Password reset email sent:", data?.messageId);
+  return data;
 };
