@@ -1767,7 +1767,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
 
     // 1️⃣ Generate a short‑lived OTP (6 digits)
     const otp = otpService.generateOTP();
-    console.log(`📧 Generated login OTP for ${email}: ${otp}`);
+    console.log(`Generated OTP for ${email}: ${otp} (valid for 10 minutes);`);
 
     // 2️⃣ Store it in the temporary map (valid for 10 min)
     loginOTPStore.set(email, {

@@ -422,7 +422,7 @@ app.use("/api/location", locationRoutes);
 // ---------------------------
 const server = http.createServer(app);
 
-// Create Socket.IO server with proper CORS
+// Create Socket.IO server — polling-only (Render.com free tier blocks WS upgrades)
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
@@ -432,6 +432,13 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
+  transports: ["polling"],
+  allowUpgrades: false,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  path: "/socket.io/",
+  allowEIO3: true,
+  maxHttpBufferSize: 1e7,
 });
 
 io.use(authenticateSocket);
