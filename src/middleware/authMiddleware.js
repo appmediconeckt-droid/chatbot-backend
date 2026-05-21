@@ -289,3 +289,28 @@ export const counsellorOnly = (req, res, next) => {
   next();
 };
 
+// Admin-app token auth — accepts tokens signed with ADMIN_JWT_SECRET
+// (used by the separate admin frontend which has its own auth system)
+export const adminTokenAuth = (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ success: false, error: "No token provided" });
+  }
+
+  const secret = process.env.ADMIN_JWT_SECRET;
+  if (!secret) {
+    return res.status(500).json({ success: false, error: "Admin secret not configured" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, secret);
+    // decoded contains { email } from the admin app's login
+    req.user = { role: "admin", email: decoded.email };
+    next();
+  } catch {
+    return res.status(401).json({ success: false, error: "Invalid or expired admin token" });
+  }
+};
+

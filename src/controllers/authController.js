@@ -6,6 +6,7 @@ import Session from "../models/sessionModel.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
+import { reverseGeocode } from "../services/geocodingService.js";
 import { validationResult } from "express-validator";
 import { sendResetPasswordEmail } from "../utils/emailService.js";
 import cloudinary from "../config/cloudinary.js";
@@ -24,6 +25,61 @@ const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
 // Store OTPs used for the "logout other devices" login flow
 const loginOTPStore = new Map();
+
+const MAX_LOCATION_HISTORY = 20;
+
+const getClientIp = (req) =>
+  (req.headers["x-forwarded-for"]?.split(",")[0] || req.socket?.remoteAddress || "").trim();
+
+const saveLoginLocationIfProvided = async ({ req, userId }) => {
+  const lat = Number(req.body?.latitude);
+  const lng = Number(req.body?.longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+
+  let geo = { address: "", city: "", state: "", country: "" };
+  try {
+    geo = await reverseGeocode(lat, lng);
+  } catch (err) {
+    // keep empty address; coords still saved
+  }
+
+  const now = new Date();
+  const ip = getClientIp(req);
+
+  const current = {
+    type: "Point",
+    coordinates: [lng, lat], // GeoJSON [lng, lat]
+    address: geo.address,
+    city: geo.city,
+    state: geo.state,
+    country: geo.country,
+    capturedAt: now,
+    ipAddress: ip,
+  };
+
+  const historyEntry = {
+    coordinates: [lng, lat],
+    address: geo.address,
+    capturedAt: now,
+    event: "login",
+    ipAddress: ip,
+  };
+
+  await User.findByIdAndUpdate(userId, {
+    $set: {
+      "locationData.current": current,
+      locationConsent: true,
+    },
+    $push: {
+      "locationData.history": {
+        $each: [historyEntry],
+        $slice: -MAX_LOCATION_HISTORY,
+      },
+    },
+  });
+};
 
 // Clean up expired data every hour
 setInterval(
@@ -1429,22 +1485,8 @@ export const loginUser = async (req, res) => {
         .json({ message: "Invalid password", success: false });
     }
 
-    // ---- NEW: Detect any *other* active session ----
-    const activeSession = await Session.findOne({
-      userId: user._id,
-      isActive: true,
-    });
-
-    if (activeSession) {
-      // Do NOT log the user out here – just tell the client what to do
-      return res.status(409).json({
-        message: "Already login",
-        needLogout: true, // client can use this flag to show the modal
-        success: false,
-      });
-    }
-
-    // ---- No other session → normal login (same as before) ----
+    // Multi-device policy: allow concurrent sessions across devices.
+    // Old sessions stay valid until they expire or are explicitly logged out.
     const sessionId = new mongoose.Types.ObjectId();
     const accessToken = generateAccessToken(
       user._id,
@@ -1464,6 +1506,9 @@ export const loginUser = async (req, res) => {
       refreshToken,
       isActive: true,
     });
+
+    // Optional: if client sends GPS on login, store it (and append history event=login)
+    await saveLoginLocationIfProvided({ req, userId: user._id });
 
     // Set cookies (keep your existing options)
     res.cookie("accessToken", accessToken, {
@@ -1589,13 +1634,8 @@ export const verifyLoginOTP = async (req, res) => {
         .json({ message: "User not found", success: false });
     }
 
-    // Logout all existing sessions ONLY after OTP verification succeeds
-    await Session.updateMany(
-      { userId: user._id, isActive: true },
-      { $set: { isActive: false, logoutAt: new Date() } },
-    );
-
-    // OTP is valid → create a **new** session for this device
+    // Multi-device policy: keep prior sessions active; just add this device.
+    // OTP is valid → create a new session for this device
     const sessionId = new mongoose.Types.ObjectId();
     const accessToken = generateAccessToken(
       user._id,
@@ -1617,6 +1657,9 @@ export const verifyLoginOTP = async (req, res) => {
 
     // Clean up the OTP entry
     loginOTPStore.delete(email);
+
+    // Optional: if client sends GPS on OTP-login, store it (and append history event=login)
+    await saveLoginLocationIfProvided({ req, userId: user._id });
 
     // Set cookies (same options you use elsewhere)
     res.cookie("accessToken", accessToken, {

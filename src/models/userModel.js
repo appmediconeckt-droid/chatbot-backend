@@ -232,8 +232,48 @@ const userSchema = new mongoose.Schema({
     walletBalance: {
         type: Number,
         default: 0
+    },
+
+    // ── Geolocation / fraud verification ──────────────────────────
+    locationConsent: {
+        type: Boolean,
+        default: false
+    },
+    locationData: {
+        current: {
+            type: {
+                type: String,
+                enum: ["Point"],
+                default: "Point"
+            },
+            coordinates: {
+                type: [Number],   // [longitude, latitude]
+                default: undefined
+            },
+            address: { type: String, default: "" },
+            city: { type: String, default: "" },
+            state: { type: String, default: "" },
+            country: { type: String, default: "" },
+            capturedAt: { type: Date },
+            ipAddress: { type: String, default: "" }
+        },
+        history: [{
+            coordinates: { type: [Number] },
+            address: { type: String, default: "" },
+            capturedAt: { type: Date },
+            event: { type: String, enum: ["signup", "login", "booking", "manual"], default: "manual" },
+            ipAddress: { type: String, default: "" },
+            _id: false
+        }],
+        isVerified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        verificationNotes: { type: String, default: "" }
     }
 }, { timestamps: true });
+
+// Geospatial index for "find nearby counsellors" queries
+userSchema.index({ "locationData.current": "2dsphere" });
 
 // ✅ NO PRE-SAVE HOOK - We'll generate uniqueCode in the controller
 

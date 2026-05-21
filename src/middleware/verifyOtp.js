@@ -22,11 +22,7 @@ export const verifyOtp = async (req, res) => {
       return res.status(400).json({ message: "OTP expired", success: false });
     }
 
-    // 3. Invalidate all previous sessions (optional – remove if you allow multiple logins)
-    await Session.updateMany(
-      { userId: user._id, isActive: true },
-      { isActive: false, logoutAt: new Date() }
-    );
+    // Multi-device policy: keep prior sessions active; just create one for this device.
 
     // 4. Create a new session FIRST (to get its _id)
     const newSession = new Session({

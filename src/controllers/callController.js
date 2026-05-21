@@ -3,6 +3,27 @@ import Chat from '../models/Chat.js';
 import User from '../models/userModel.js';
 import Message from '../models/Message.js';
 
+const pickUserLocationForCall = (user) => {
+  const current = user?.locationData?.current;
+  const coords = current?.coordinates;
+  const hasCoords = Array.isArray(coords) && coords.length === 2;
+
+  const locationData = hasCoords
+    ? {
+        coordinates: coords,
+        address: current.address || '',
+        city: current.city || '',
+        state: current.state || '',
+        country: current.country || '',
+        capturedAt: current.capturedAt || null,
+      }
+    : null;
+
+  const locationText = (current?.address && String(current.address).trim()) || user?.location || null;
+
+  return { locationText, locationData };
+};
+
 // Initiate a new call
 export const initiateCall = async (req, res) => {
   try {
@@ -14,8 +35,8 @@ export const initiateCall = async (req, res) => {
     
     // Check if chat exists
     const chat = await Chat.findOne({ chatId: chatId })
-      .populate('userId', 'fullName profilePhoto location')
-      .populate('counselorId', 'fullName profilePhoto location');
+      .populate('userId', 'fullName profilePhoto location locationData.current')
+      .populate('counselorId', 'fullName profilePhoto location locationData.current');
     
     if (!chat) {
       return res.status(404).json({ error: 'Chat not found' });
@@ -32,7 +53,7 @@ export const initiateCall = async (req, res) => {
     // Get caller and receiver info
     const isCallerUser = req.user.role === 'user';
     const caller = isCallerUser ? chat.userId : chat.counselorId;
-    const receiver = await User.findById(receiverId);
+    const receiver = await User.findById(receiverId).select('fullName profilePhoto location locationData.current');
     
     if (!receiver) {
       return res.status(404).json({ error: 'Receiver not found' });
@@ -56,6 +77,9 @@ export const initiateCall = async (req, res) => {
     }
     
     // Create call record
+    const callerLoc = pickUserLocationForCall(caller);
+    const receiverLoc = pickUserLocationForCall(receiver);
+
     const call = await Call.create({
       chatId: chat._id,
       callerId: req.user._id,
@@ -66,8 +90,10 @@ export const initiateCall = async (req, res) => {
       receiverName: receiver.fullName,
       callerAvatar: caller.profilePhoto?.url || null,
       receiverAvatar: receiver.profilePhoto?.url || null,
-      callerLocation: caller.location || null,
-      receiverLocation: receiver.location || null
+      callerLocation: callerLoc.locationText,
+      receiverLocation: receiverLoc.locationText,
+      callerLocationData: callerLoc.locationData || undefined,
+      receiverLocationData: receiverLoc.locationData || undefined
     });
     
     // Add call message to chat
@@ -90,13 +116,15 @@ export const initiateCall = async (req, res) => {
           id: call.callerId,
           name: call.callerName,
           avatar: call.callerAvatar,
-          location: call.callerLocation
+          location: call.callerLocation,
+          locationData: call.callerLocationData || null
         },
         receiver: {
           id: call.receiverId,
           name: call.receiverName,
           avatar: call.receiverAvatar,
-          location: call.receiverLocation
+          location: call.receiverLocation,
+          locationData: call.receiverLocationData || null
         },
         createdAt: call.createdAt
       }
@@ -136,13 +164,15 @@ export const getCallDetails = async (req, res) => {
           id: call.callerId,
           name: call.callerName,
           avatar: call.callerAvatar,
-          location: call.callerLocation
+          location: call.callerLocation,
+          locationData: call.callerLocationData || null
         },
         receiver: {
           id: call.receiverId,
           name: call.receiverName,
           avatar: call.receiverAvatar,
-          location: call.receiverLocation
+          location: call.receiverLocation,
+          locationData: call.receiverLocationData || null
         },
         isMuted: call.isMuted,
         isSpeakerOn: call.isSpeakerOn,
@@ -498,12 +528,14 @@ export const getRecentCalls = async (req, res) => {
           id: call.callerId,
           name: call.callerName,
           avatar: call.callerAvatar,
-          location: call.callerLocation
+          location: call.callerLocation,
+          locationData: call.callerLocationData || null
         } : {
           id: call.receiverId,
           name: call.receiverName,
           avatar: call.receiverAvatar,
-          location: call.receiverLocation
+          location: call.receiverLocation,
+          locationData: call.receiverLocationData || null
         };
         
         return {
@@ -547,12 +579,14 @@ export const getActiveCall = async (req, res) => {
       id: activeCall.receiverId,
       name: activeCall.receiverName,
       avatar: activeCall.receiverAvatar,
-      location: activeCall.receiverLocation
+      location: activeCall.receiverLocation,
+      locationData: activeCall.receiverLocationData || null
     } : {
       id: activeCall.callerId,
       name: activeCall.callerName,
       avatar: activeCall.callerAvatar,
-      location: activeCall.callerLocation
+      location: activeCall.callerLocation,
+      locationData: activeCall.callerLocationData || null
     };
     
     res.json({

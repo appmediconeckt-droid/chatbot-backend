@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X POST http://localhost:5000/api/ai-chat/send-message -H \"Content-Type: application/json\" -d '{\"message\":\"suggest me a counselor for anxiety\"}')",
+      "Bash(curl -s -X POST http://localhost:5000/api/ai-chat/send-message -H \"Content-Type: application/json\" -d '{\"message\":\"I have trouble sleeping\"}')",
+      "Bash(curl -s -X POST http://localhost:5000/api/ai-chat/send-message -H \"Content-Type: application/json\" -d '{\"message\":\"I want to kill myself\"}')",
+      "Bash(curl -s -X POST http://localhost:5000/api/ai-chat/send-message -H \"Content-Type: application/json\" -d '{\"message\":\"mujhe nind nahi aati raat ko bahut tension hoti hai\"}')"
+    ]
+  }
+}

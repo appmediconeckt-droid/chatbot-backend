@@ -263,14 +263,51 @@ import callRoutes from "./routes/callRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
+import progressRoutes from "./routes/progressRoutes.js";
+import locationRoutes from "./routes/locationRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
+import { resetAllUsersPresence } from "./utils/presenceManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json());
+
+// Use a tolerant JSON parser: accept text for application/json, keep raw body,
+// attempt strict JSON.parse, and retry after trimming a single trailing quote.
+app.use(express.text({ type: 'application/json', limit: '200kb' }));
+app.use((req, res, next) => {
+  if (!req.is || !req.is('application/json')) return next();
+
+  req.rawBody = typeof req.body === 'string' ? req.body : undefined;
+
+  if (!req.rawBody) return next();
+
+  // First try strict parse
+  try {
+    req.body = JSON.parse(req.rawBody);
+    return next();
+  } catch (err) {
+    // Try trimming trailing whitespace and a possible stray quote
+    let candidate = req.rawBody.trimEnd();
+    if (candidate.endsWith("'") || candidate.endsWith('"')) {
+      candidate = candidate.slice(0, -1);
+    }
+
+    try {
+      req.body = JSON.parse(candidate);
+      // update rawBody to the fixed version for logging
+      req.rawBody = candidate;
+      return next();
+    } catch (err2) {
+      // expose original parse error to the error handler
+      const parseErr = new SyntaxError(err.message || 'Invalid JSON');
+      parseErr.type = 'entity.parse.failed';
+      return next(parseErr);
+    }
+  }
+});
 
 const DB_STATE_LABEL = {
   0: "disconnected",
@@ -373,10 +410,12 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", messageRoutes);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
+app.use("/api/progress", progressRoutes); // <--- Mood tracking & progress endpoints
 app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use("/api/location", locationRoutes);
 
 // ---------------------------
 // 5. HTTP & Socket.IO server
@@ -404,5 +443,26 @@ global.io = io;
 const socketHandler = new SocketHandler(io);
 socketHandler.initialize();
 
+// Reset all users to offline on startup
+resetAllUsersPresence().catch(err => {
+  console.error("Failed to reset presence on startup:", err);
+});
+
 export { app };
 export default server;
+
+// Central error handler to catch JSON parse errors and log raw body
+app.use((err, req, res, next) => {
+  if (err && (err instanceof SyntaxError || err.type === 'entity.parse.failed')) {
+    console.error('JSON parse error:', err.message);
+    console.error('Raw request body:', req.rawBody);
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid JSON in request body',
+      error: err.message,
+    });
+  }
+
+  // pass through
+  next(err);
+});

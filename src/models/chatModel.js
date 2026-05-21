@@ -7,6 +7,10 @@ const chatSchema = new mongoose.Schema(
       ref: "User",
       required: false, // Optional for guest/landing page chats
     },
+    sessionId: {
+      type: String,
+      index: true,
+    },
     userMessage: String,
     aiResponse: String,
   },

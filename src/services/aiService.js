@@ -40,8 +40,10 @@ const handleOpenAI = async (message, history, systemInstruction) => {
   messages.push({ role: "user", content: message });
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini", // The cost-friendly OpenAI model
+    model: "gpt-4o", // Latest most capable OpenAI model - best for mental health support
     messages: messages,
+    temperature: 0.7, // Balanced for empathy and accuracy
+    max_tokens: 1000, // Allow detailed psychological responses
   });
 
   return response.choices[0].message.content;
@@ -56,7 +58,8 @@ const handleGemini = async (message, history, systemInstruction) => {
     parts: [{ text: msg.content || "" }],
   }));
 
-  // Add system instruction as the first exchange if present
+  // Add system instruction as the first exchange if present.
+  // Canned ack confirms the onboarding rule so the model doesn't bypass it.
   if (systemInstruction) {
     formattedHistory.unshift(
       {
@@ -67,7 +70,7 @@ const handleGemini = async (message, history, systemInstruction) => {
         role: "model",
         parts: [
           {
-            text: "Understood. I will act as the Mediconeckt assistant using this counselor data.",
+            text: "Understood. I will follow the ONBOARDING RULE strictly: if this is the first turn, I will only greet warmly and ask the onboarding questions (age, where they are, who is with them, what's on their mind) — no tips, no advice, no counselor recommendation. On follow-up turns I will give direct practical advice. I will use the Known profile to avoid re-asking fields already known.",
           },
         ],
       },

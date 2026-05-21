@@ -112,6 +112,24 @@ const callSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    callerLocationData: {
+      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+      address: { type: String, default: "" },
+      city: { type: String, default: "" },
+      state: { type: String, default: "" },
+      country: { type: String, default: "" },
+      capturedAt: { type: Date, default: null },
+      _id: false,
+    },
+    receiverLocationData: {
+      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+      address: { type: String, default: "" },
+      city: { type: String, default: "" },
+      state: { type: String, default: "" },
+      country: { type: String, default: "" },
+      capturedAt: { type: Date, default: null },
+      _id: false,
+    },
     isMuted: {
       type: Boolean,
       default: false,
