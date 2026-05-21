@@ -71,36 +71,57 @@ export const authorizeRoles = (...roles) => {
 
 export const authenticateSocket = async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token;
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, "");
 
     if (!token) {
-      return next(new Error("Authentication required"));
+      const err = new Error("AUTH_TOKEN_MISSING");
+      err.data = { code: "AUTH_TOKEN_MISSING" };
+      return next(err);
     }
-    const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
-    const decoded = jwt.verify(token, secret);
-    const userId = decoded.userId || decoded.id;
 
+    const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch (jwtErr) {
+      const isExpired = jwtErr?.name === "TokenExpiredError";
+      const err = new Error(isExpired ? "AUTH_TOKEN_EXPIRED" : "AUTH_TOKEN_INVALID");
+      err.data = { code: isExpired ? "AUTH_TOKEN_EXPIRED" : "AUTH_TOKEN_INVALID" };
+      return next(err);
+    }
+
+    const userId = decoded.userId || decoded.id;
     if (!userId) {
-      return next(new Error("Invalid token payload"));
+      const err = new Error("AUTH_TOKEN_INVALID");
+      err.data = { code: "AUTH_TOKEN_INVALID" };
+      return next(err);
     }
 
     User.findById(userId)
       .then((user) => {
         if (!user || !user.isActive) {
-          return next(new Error("User not found or inactive"));
+          const err = new Error("AUTH_USER_INACTIVE");
+          err.data = { code: "AUTH_USER_INACTIVE" };
+          return next(err);
         }
-
         socket.userId = user._id.toString();
         socket.userRole = user.role;
         return next();
       })
       .catch((error) => {
         console.error("Socket auth user lookup error:", error);
-        return next(new Error("Authentication failed"));
+        const err = new Error("AUTH_LOOKUP_FAILED");
+        err.data = { code: "AUTH_LOOKUP_FAILED" };
+        return next(err);
       });
   } catch (error) {
     console.error("Socket auth error:", error);
-    next(new Error("Authentication failed"));
+    const err = new Error("AUTH_FAILED");
+    err.data = { code: "AUTH_FAILED" };
+    next(err);
   }
 };
 
