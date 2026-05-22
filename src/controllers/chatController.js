@@ -5,6 +5,9 @@ import { generateAIResponse } from "../services/aiService.js";
 import { detectCrisis, generateCrisisResponse, CRISIS_LEVELS_EXPORT } from "../services/crisisDetectionService.js";
 import { analyzeMood, getMoodInsights, generateMoodReport } from "../services/moodTrackingService.js";
 import { detectLanguage, getLanguageGreeting, getLanguageEmergencyResponse } from "../services/languageService.js";
+import { extractProfileFields, formatSituationSummary } from "../services/profileExtractor.js";
+import { evaluateSafety } from "../services/safetyGuard.js";
+import { rankCounsellors, formatRankedForPrompt } from "../services/counsellorMatcher.js";
 
 const MAX_HISTORY_TURNS = 10;
 
@@ -76,7 +79,7 @@ export const chatWithAI = async (req, res) => {
     let knownProfile = null;
     if (userId) {
       const profile = await User.findById(userId)
-        .select("anonymous age gender location locationData.current.city locationData.current.state")
+        .select("anonymous age gender location locationData.current.city locationData.current.state chatContext")
         .lean();
       if (profile) {
         let anonymousName = profile.anonymous;
@@ -92,9 +95,65 @@ export const chatWithAI = async (req, res) => {
           declaredLocation: profile.location || null,
           gpsCity: profile.locationData?.current?.city || null,
           gpsState: profile.locationData?.current?.state || null,
+          currentSurrounding: profile.chatContext?.currentSurrounding || null,
+          currentCompany: profile.chatContext?.currentCompany || null,
+          safetyFlags: profile.chatContext?.safetyFlags || [],
         };
       }
     }
+
+    // Extract any onboarding facts the user just shared (age, gender, where
+    // they are, who they're with, safety flags) and merge into knownProfile +
+    // persist to DB so future turns don't re-ask. Best-effort — silent if
+    // nothing matches the patterns.
+    const extracted = extractProfileFields(message);
+    if (userId && Object.keys(extracted).length > 0) {
+      const update = {};
+      // Only set the durable fields (age, gender) if not already on the user.
+      if (extracted.age && !knownProfile?.age) update.age = extracted.age;
+      if (extracted.gender && !knownProfile?.gender) update.gender = extracted.gender;
+      // Situational fields always update — they change moment to moment.
+      if (extracted.currentSurrounding) {
+        update["chatContext.currentSurrounding"] = extracted.currentSurrounding;
+      }
+      if (extracted.currentCompany) {
+        update["chatContext.currentCompany"] = extracted.currentCompany;
+      }
+      if (extracted.safetyFlags?.length) {
+        update["chatContext.safetyFlags"] = extracted.safetyFlags;
+      }
+      if (Object.keys(update).length > 0) {
+        update["chatContext.updatedAt"] = new Date();
+        try {
+          await User.updateOne({ _id: userId }, { $set: update });
+          // Reflect in the in-memory profile so this turn's system prompt
+          // already sees the new context.
+          if (knownProfile) {
+            if (update.age) knownProfile.age = update.age;
+            if (update.gender) knownProfile.gender = update.gender;
+            if (update["chatContext.currentSurrounding"])
+              knownProfile.currentSurrounding = update["chatContext.currentSurrounding"];
+            if (update["chatContext.currentCompany"])
+              knownProfile.currentCompany = update["chatContext.currentCompany"];
+            if (update["chatContext.safetyFlags"])
+              knownProfile.safetyFlags = update["chatContext.safetyFlags"];
+          }
+        } catch (err) {
+          console.warn("[AI-CHAT] profile extract save failed:", err.message);
+        }
+      }
+    }
+
+    const situationSummary = knownProfile
+      ? formatSituationSummary({
+          age: knownProfile.age,
+          gender: knownProfile.gender,
+          currentSurrounding: knownProfile.currentSurrounding,
+          currentCompany: knownProfile.currentCompany,
+          safetyFlags: knownProfile.safetyFlags,
+          gpsCity: knownProfile.gpsCity,
+        })
+      : null;
 
     // Detect language
     const detectedLanguage = detectLanguage(message);
@@ -105,17 +164,33 @@ export const chatWithAI = async (req, res) => {
     // Detect crisis
     const crisisDetection = detectCrisis(message);
 
-    // Fetch active counsellors
-    const counsellors = await User.find({ role: "counsellor" }).select(
-      "fullName role specialization experience qualification aboutMe location consultationMode languages rating totalSessions",
+    // Fetch counsellors who are ONLINE RIGHT NOW.
+    // AI should only recommend counsellors who can actually take a session.
+    // (Crisis flow below ignores this filter — see crisis branch.)
+    const counsellors = await User.find({
+      role: "counsellor",
+      isOnline: true,
+      isActive: true,
+      profileCompleted: true,
+    }).select(
+      "fullName role gender specialization experience qualification aboutMe location consultationMode languages rating totalSessions isOnline",
     );
+
+    // Rank them against the user's situation so the AI suggests the best
+    // fit, not just a random online person. See counsellorMatcher.js for
+    // the scoring details.
+    const matcherResult = rankCounsellors({
+      counsellors,
+      message,
+      userGender: knownProfile?.gender,
+      userAge: knownProfile?.age,
+    });
+    const rankedCounsellors = matcherResult?.ranked || [];
+    const detectedTopics = matcherResult?.topics || [];
+    const topMatchSummary = formatRankedForPrompt(rankedCounsellors, 3);
+
     console.log(
-      `[AI-CHAT DEBUG] Loaded ${counsellors.length} counsellors:`,
-      counsellors.map((c) => ({
-        name: c.fullName,
-        role: c.role,
-        specialization: c.specialization,
-      })),
+      `[AI-CHAT DEBUG] ${counsellors.length} online counsellors; detected topics=${detectedTopics.join(", ") || "(none)"}; top match: ${rankedCounsellors[0]?.counsellor?.fullName || "(none)"} score=${rankedCounsellors[0]?.score?.toFixed(1) || "n/a"}`,
     );
 
     // Build system instruction - INTERACTIVE, SUPPORTIVE CHATBOT STYLE
@@ -124,9 +199,9 @@ ${isFirstTurn ? `🚨 TOP PRIORITY — THIS IS THE FIRST MESSAGE OF THE CONVERSA
 Your reply MUST be ONLY a warm greeting + caring onboarding questions. NO ADVICE, NO TIPS, NO COUNSELOR RECOMMENDATIONS. Follow the ONBOARDING RULE exactly.
 
 Required format for THIS reply:
-"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age, where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
+"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age and how you identify (male, female, or other), where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
 
-You may rephrase slightly to match the user's language and tone, but the structure (greeting + ask age + ask location/surroundings + ask their concern) MUST be present. DO NOT give tips. DO NOT diagnose. Just ask warmly.
+You may rephrase slightly to match the user's language and tone, but the structure (greeting + ask age + ask gender + ask location/surroundings + ask their concern) MUST be present. DO NOT give tips. DO NOT diagnose. Just ask warmly.
 ═══════════════════════════════════════════════════════════════
 ` : ""}
 You are MindHelper, a supportive mental health and wellbeing chat companion for Mediconeckt.
@@ -134,6 +209,23 @@ You help with mental health (stress, anxiety, sleep, relationships, mood) AND ge
 Be like a good, non-judgmental friend who listens, gives practical help, and knows when to point someone to a doctor.
 
 🔐 PRIVACY: This is an anonymous chat. NEVER ask the user for their real name. If they volunteer one, do not save or repeat it back. Refer to them as "you" or use the anonymous handle in the Known profile if shown. The user's safety and anonymity come first.
+
+🛑 CHILD SAFETY — ABSOLUTE, NON-NEGOTIABLE RULES:
+- If the user's age is under 18 (either in Known profile or self-declared in any message in this chat), you MUST NEVER provide:
+  • Step-by-step sexual instructions of any kind
+  • How to use condoms / contraceptives / protection
+  • Sex positions, sex tips, sex frequency advice
+  • Advice that normalises or facilitates sexual activity with a minor
+- For ANY sexual topic from a minor, your ONLY allowed response is:
+  1. Acknowledge gently without judgment
+  2. Tell them this is something to discuss with a doctor or trusted adult, not a chatbot
+  3. Provide Childline 1098 (India) and offer to help with non-sexual topics
+- If a minor describes being FORCED, COERCED, or PREGNANT through non-consensual contact, you MUST treat it as a child-protection emergency:
+  • Validate them ("you are not at fault")
+  • Direct them IMMEDIATELY to Childline 1098 and a trusted adult
+  • Do NOT give sex-ed, hygiene tips, or normalise the activity in any way
+- If a minor says they "feel good" about a sexual encounter that was forced or that they're too young for, DO NOT reassure or move on. Re-emphasise that any forced contact is wrong, repeat the helpline, and urge them to talk to a trusted adult — even if they say they don't want to.
+- These rules OVERRIDE every other rule in this prompt, including "give direct advice first".
 
 NEVER refuse to engage with a topic just because it feels sensitive (sexual health, addiction, relationship abuse, family conflict). Respond with empathy and safe, general guidance.
 For any PHYSICAL/MEDICAL symptom (pain, bleeding, infection signs, persistent issues, sexual dysfunction, severe headaches, chest issues, etc.):
@@ -148,6 +240,17 @@ USER CONTEXT:
 - Crisis Level: ${crisisDetection.level}
 - Is first turn (no prior messages): ${isFirstTurn ? "YES" : "NO"}
 ${knownProfile ? `- Known profile (PRIVACY: use anonymous handle only, NEVER ask for or use a real name): handle=${knownProfile.anonymousName}, age=${knownProfile.age || "?"}, gender=${knownProfile.gender || "?"}, city=${knownProfile.gpsCity || knownProfile.declaredLocation || "?"}` : "- Known profile: GUEST (no stored profile)"}
+${situationSummary ? `- Right-now situation: ${situationSummary}` : "- Right-now situation: not yet known"}
+${knownProfile?.safetyFlags?.length ? `- ⚠️ Safety flags raised by user: ${knownProfile.safetyFlags.join(", ")} — tailor your tips with care, prioritise their safety/grounding, and if they say they feel unsafe gently suggest reaching out to someone they trust or a helpline.` : ""}
+
+🎯 SITUATION-AWARE ADVICE — USE THE CONTEXT ABOVE:
+- "currently at outside" → suggest tips that work in public (slow breathing, look at 5 things around you, hold something cold/in pocket, walk to a quiet spot or shop). DO NOT suggest "lie down" or "go to a quiet room" unless they say they can.
+- "currently at home" + "alone" → safe space tips work fully (lie down, music, journal, warm drink, call a friend).
+- "currently at home" + "family"/"with someone" → suggest a quiet corner, headphones, a short walk, or excusing themselves for 5 minutes if they need space.
+- "currently at work" / "school" → discreet tools (chair stretches, 4-7-8 breathing under the desk, walk to washroom for 2 mins, water break).
+- "age" young teen (<16) → use simpler language, mention talking to a trusted adult.
+- "age" elderly (>60) → mobility-friendly tips, mention checking with their GP about any new symptoms.
+- "feels_unsafe" or "feels_trapped" in safety flags → DO NOT push them to leave or confront. Validate, suggest grounding, offer a helpline number (India: iCall 9152987821, Vandrevala 1860 2662 345), and gently mention they can talk to a counsellor here too.
 
 ═══════════════════════════════════════════════════════════════
 
@@ -164,7 +267,7 @@ The first-turn reply MUST contain:
   - NO ADVICE, NO TIPS on the first turn. Just warm greeting + caring questions.
 
 EXAMPLE FIRST-TURN REPLY (follow this style exactly):
-"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age, where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
+"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age and how you identify (male, female, or other), where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
 
 IF "Is first turn" is NO (user is already in conversation):
   - Follow the normal CONVERSATION STYLE below: give DIRECT advice immediately.
@@ -173,10 +276,41 @@ IF "Is first turn" is NO (user is already in conversation):
 
 IF the system already provides "Known profile" with real values (not "?"), do NOT re-ask those specific fields. Use what's already known. But still ask the situational ones (where they are right now, who's with them) since those change moment to moment.
 
-AVAILABLE COUNSELORS (Recommend by NAME when user asks, or when problem is serious/ongoing):
-${counsellors.length > 0
-  ? counsellors.map(c => `- ${c.fullName} | Specialization: ${c.specialization?.join(", ") || "General"} | Experience: ${c.experience || "N/A"} yrs | Rating: ${c.rating || "N/A"}/5 | Qualification: ${c.qualification || "N/A"} | Languages: ${c.languages?.join(", ") || "N/A"} | Mode: ${c.consultationMode?.join(", ") || "N/A"} | Location: ${c.location || "N/A"}`).join("\n")
-  : "No counselors available right now"}
+AVAILABLE COUNSELORS (ONLINE RIGHT NOW — pre-ranked best-match-first for THIS user's situation):
+${topMatchSummary}
+
+${detectedTopics.length ? `Detected topics in user's latest message: ${detectedTopics.join(", ")}` : "No specific topic keywords detected in the latest message."}
+
+🎯 WHY THIS LIST IS RANKED:
+- Position #1 is the strongest match for this user's age, gender, and the topic they brought up.
+- "MatchScore" reflects a combined fit (specialization match, gender preference for sensitive topics, age bucket, rating, experience).
+- "Matched topics" tells you WHY they ranked high — quote it naturally when explaining your recommendation.
+
+WHEN YOU RECOMMEND, EXPLAIN THE FIT IN ONE LINE:
+- ✅ "I'd suggest Dr. [Name] — she specialises in [matched topic] and works often with [user's age bucket], plus she's a [rating]/5. Want me to help book?"
+- ❌ Don't just say "Dr. Name is good" — name the specific reason from the row above.
+
+If the user's situation has no strong match (top MatchScore is low and no MatchedTopics), pick the highest-rated generalist from the list and be honest: "I don't see a perfect specialist online right now, but Dr. [Name] is well-rated for general support — want to start there?"
+
+🚫 ONLINE-ONLY RULE — CRITICAL:
+- The list above shows ONLY counsellors who are currently online and available right now.
+- NEVER recommend a counsellor whose name is not in this list.
+- If the list is empty (no one online), DO NOT invent or recall any counsellor names from prior turns.
+
+WHAT TO DO IF LIST IS EMPTY (NO COUNSELORS ONLINE):
+If the user asks for a counsellor and the AVAILABLE COUNSELORS list above is empty:
+  Use this 3-step structure (don't read it verbatim — paraphrase warmly in the user's language):
+   1. Acknowledge honestly: "Right now all our counsellors are with other people / offline."
+   2. Reassure + bridge: "I'm right here with you and I won't leave you waiting — let's start on this together."
+   3. Offer the booking nudge naturally: "When one of them is free I'll let you know, or you can book a slot for later from the Appointments tab."
+  Then continue with empathetic, practical tips for their problem.
+  DO NOT recommend any specific counsellor by name when the list is empty.
+  DO NOT make the user feel like a dead-end — keep the energy supportive and forward-looking.
+
+IF USER NAMES A SPECIFIC COUNSELLOR WHO IS NOT IN THE ONLINE LIST:
+  If the user says "I want Dr. X" / "book Dr. X" and Dr. X is NOT in the AVAILABLE COUNSELORS list above:
+  Reply (paraphrase warmly): "Dr. [Name] is with someone else / offline right now. I can suggest another counsellor who's available, or help you book Dr. [Name] for later — what works for you?"
+  Then, only if the AVAILABLE COUNSELORS list has someone, offer the best-match alternative.
 
 ═══════════════════════════════════════════════════════════════
 
@@ -210,12 +344,15 @@ USER: "how do I handle deadline pressure at work"
 YOU: "Deadline stress is real. Right now: list every task, then circle the ONE that unlocks the rest — do that first. Use 25-minute focused sprints with 5-minute breaks (Pomodoro), and tell your manager early if a deadline truly isn't realistic. What's the very next task you're stuck on?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USER: "suggest a counselor" / "which counselor should I see" / "I need an expert"
-YOU: Pick the BEST-MATCH counselor from the AVAILABLE COUNSELORS list above based on the user's stated problem (use specialization). Reply like:
+USER: "suggest a counselor" / "best counselor online" / "kaunsa counselor le lu" / "I need an expert"
+YOU: Pick the BEST-MATCH counselor from the AVAILABLE COUNSELORS list above based on the user's stated problem (use specialization first, then rating + experience as tiebreaker). Reply like:
 "Based on what you've shared, I'd recommend Dr. [Full Name] — they specialize in [specialization], have [X] years of experience, and a [rating]/5 rating. They speak [languages] and offer [mode] consultations. Want me to help you book a session?"
 
-If user's problem doesn't match any specialization exactly, pick the closest general counselor and say so honestly.
-If the AVAILABLE COUNSELORS list is empty, say: "No counselors are available right now, but I'm here to help — let's work through this together."
+If user's problem doesn't match any specialization exactly, pick the closest general counselor (highest rating among generalists) and be honest:
+"I don't see a [specialty] specialist online right now, but Dr. [Name] is a great general counsellor with [rating]/5 rating who can definitely help — want to start with them?"
+
+If the AVAILABLE COUNSELORS list is empty, use the 3-step "no counsellors online" reply from the section above — acknowledge, reassure, offer booking — then ALSO give 2-3 practical tips so the user feels supported right now while they wait.
+
 NEVER invent counselor names. Use ONLY names from the list above.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -289,13 +426,13 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     if (isFirstTurnOnboarding) {
       const lang = detectedLanguage.code || "en";
       const greetings = {
-        hi: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age, and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
-        en: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age, and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
+        hi: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age and how you identify (male, female, or other), and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
+        en: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age and how you identify (male, female, or other), and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
       };
       // Detect Hinglish for friendlier Hindi/English mix
       if (detectedLanguage.name === "Hindi") {
         aiResponse =
-          "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Shuru karne se pehle thoda apne baare mein batayenge — aapki umar kya hai aur aap abhi kahan ho (ghar, office, ya kahin aur)? Akele ho ya kisi ke saath? Aur sabse zaroori — aaj mann mein kya chal raha hai?";
+          "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Shuru karne se pehle thoda apne baare mein batayenge — aapki umar kya hai, aap male hain ya female ya something else, aur aap abhi kahan ho (ghar, office, ya kahin aur)? Akele ho ya kisi ke saath? Aur sabse zaroori — aaj mann mein kya chal raha hai?";
       } else {
         aiResponse = greetings[lang] || greetings.en;
       }
@@ -331,23 +468,59 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     if (crisisDetection.isCrisis && crisisDetection.level !== "medium") {
       aiResponse = generateCrisisResponse(crisisDetection.level);
 
-      // Alert counselors about crisis
+      // Crisis override: alert ALL active counsellors regardless of online status.
+      // Safety takes priority over the usual online-only filter.
       if (crisisDetection.level === "critical") {
         const emergencyCounselors = await User.find({
           role: "counsellor",
-          availability: "available",
+          isActive: true,
         });
         for (const counselor of emergencyCounselors) {
           await sendCrisisAlert(counselor, message, userId);
         }
       }
     } else {
-      // Generate normal AI response
-      aiResponse = await generateAIResponse(
+      // Hard safety guard — blocks sexual content / abuse-context responses
+      // before they ever reach the LLM. Critical for minors. If this returns
+      // a block, we use the canned reply and SKIP Gemini entirely.
+      const safety = evaluateSafety({
         message,
         history,
-        systemInstruction,
-      );
+        knownAge: knownProfile?.age,
+      });
+
+      if (safety.block) {
+        console.log(
+          `[AI-CHAT SAFETY] Blocked turn — reason=${safety.reason}, userId=${userId || "guest"}`,
+        );
+        aiResponse = safety.reply;
+
+        // Treat abuse signals as a critical incident: alert active counsellors
+        // the same way crisis detection does, so a human can step in.
+        if (
+          safety.reason === "abuse_signal" ||
+          safety.reason === "minor_sexual_howto"
+        ) {
+          try {
+            const emergencyCounselors = await User.find({
+              role: "counsellor",
+              isActive: true,
+            });
+            for (const counselor of emergencyCounselors) {
+              await sendCrisisAlert(counselor, message, userId);
+            }
+          } catch (alertErr) {
+            console.error("[AI-CHAT SAFETY] alert dispatch failed:", alertErr.message);
+          }
+        }
+      } else {
+        // Generate normal AI response
+        aiResponse = await generateAIResponse(
+          message,
+          history,
+          systemInstruction,
+        );
+      }
     }
 
     // Collapse line breaks into single spaces for a clean one-line response
@@ -408,4 +581,82 @@ const sendCrisisAlert = async (counselor, userMessage, userId) => {
   // Implementation for sending alerts (email, SMS, push notification)
   // This can be expanded based on your notification system
   console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. Message: ${userMessage.substring(0, 100)}...`);
+};
+
+// Wipe all chat history for the authenticated user. Lets them start over
+// with a clean onboarding turn. Auth-protected — callers can only delete
+// their own messages.
+export const clearMyChatHistory = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+    }
+    const result = await Chat.deleteMany({ userId });
+    return res.status(200).json({
+      success: true,
+      deletedCount: result.deletedCount,
+      message: `Cleared ${result.deletedCount} chat messages.`,
+    });
+  } catch (err) {
+    console.error("clearMyChatHistory error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: err.message });
+  }
+};
+
+// DEV-ONLY: unauth chat-history clear by userId. Only mounted when
+// NODE_ENV !== "production". Helps debug onboarding behaviour locally.
+export const devClearChatsForUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "userId is required" });
+    }
+    const result = await Chat.deleteMany({ userId });
+    return res.status(200).json({
+      success: true,
+      deletedCount: result.deletedCount,
+      userId,
+      message: `(dev) cleared ${result.deletedCount} chats for ${userId}`,
+    });
+  } catch (err) {
+    console.error("devClearChatsForUserId error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// DEV-ONLY: wipe extractor-set fields on a user so the next chat starts
+// fresh without a stale (e.g. test-typed) age polluting the safety guard.
+export const devResetProfileFields = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "userId is required" });
+    }
+    await User.updateOne(
+      { _id: userId },
+      {
+        $unset: {
+          age: "",
+          chatContext: "",
+        },
+      },
+    );
+    return res.status(200).json({
+      success: true,
+      userId,
+      message: `(dev) reset age + chatContext for ${userId}`,
+    });
+  } catch (err) {
+    console.error("devResetProfileFields error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
 };

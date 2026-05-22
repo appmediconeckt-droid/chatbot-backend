@@ -21,6 +21,7 @@ import {
   updateUserById,
   logoutOtherDevicesAndSendOTP,
   verifyLoginOTP,
+  googleAuth,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
 import { authorizeRoles } from "../middleware/authorizeRoles.js";
@@ -49,6 +50,8 @@ authRoutes.post(
 
 // AUTHENTICATION ROUTES
 authRoutes.post("/login", loginUser);
+// Google OAuth (signup + login in one endpoint — handles both new and existing users)
+authRoutes.post("/google", googleAuth);
 // NEW routes for the one‑device flow
 authRoutes.post("/logout-other-devices", logoutOtherDevicesAndSendOTP);
 authRoutes.post("/verify-login-otp", verifyLoginOTP);

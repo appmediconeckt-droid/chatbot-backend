@@ -41,6 +41,14 @@ export const startChat = async (req, res) => {
       return res.status(404).json({ error: "Counselor not found" });
     }
 
+    // Check if admin has blocked this counselor from chatting
+    if (counselor.chatPermission?.enabled === false) {
+      return res.status(403).json({
+        error: "This counselor is currently unavailable for chat.",
+        reason: counselor.chatPermission.disabledReason || "admin_decision",
+      });
+    }
+
     // Check for existing chat
     let existingChat = await Chat.findOne({
       userId: req.user._id,
@@ -380,6 +388,15 @@ export const acceptChat = async (req, res) => {
       expiresAt: chat.expiresAt,
       isActive: chat.isActive,
     });
+
+    // Check if admin has blocked this counselor from chatting
+    const counselorUser = await User.findById(chat.counselorId).lean();
+    if (counselorUser?.chatPermission?.enabled === false) {
+      return res.status(403).json({
+        error: "Chat access has been restricted by admin.",
+        reason: counselorUser.chatPermission.disabledReason || "admin_decision",
+      });
+    }
 
     // Check if counselor is authorized
     if (
@@ -972,6 +989,15 @@ export const sendMessage = async (req, res) => {
       return res.status(403).json({
         error: `Cannot send messages. Chat is ${chat.status}.`,
         status: chat.status,
+      });
+    }
+
+    // Check if admin has blocked the counselor from chatting
+    const counselorForMsg = await User.findById(chat.counselorId).lean();
+    if (counselorForMsg?.chatPermission?.enabled === false) {
+      return res.status(403).json({
+        error: "Chat access has been restricted by admin.",
+        reason: counselorForMsg.chatPermission.disabledReason || "admin_decision",
       });
     }
 

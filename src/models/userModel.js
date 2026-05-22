@@ -22,11 +22,25 @@ const userSchema = new mongoose.Schema({
     phoneNumber: {
         type: String,
         unique: true,
-        required: true
+        sparse: true,
+        required: function() { return !this.googleId; }
     },
     password: {
         type: String,
-        required: true
+        required: function() { return !this.googleId; }
+    },
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true
+        // No `default: null` — sparse index ignores docs where the field is
+        // ABSENT, but counts docs where field === null. With default:null,
+        // every local-signup user would collide on null.
+    },
+    authProvider: {
+        type: String,
+        enum: ["local", "google"],
+        default: "local"
     },
     sessionId: {
         type: String,
@@ -49,7 +63,31 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
-    
+
+    // Chat-session situational context, refreshed by the AI extractor.
+    // These change moment-to-moment (where user is, who's with them) so the
+    // AI can give relevant tips (e.g. "outside alone" vs "home with family").
+    chatContext: {
+        currentSurrounding: {
+            type: String,
+            enum: ["home", "work", "school", "outside", null],
+            default: null,
+        },
+        currentCompany: {
+            type: String,
+            enum: ["alone", "family", "friends", "partner", "colleagues", null],
+            default: null,
+        },
+        safetyFlags: {
+            type: [String],
+            default: [],
+        },
+        updatedAt: {
+            type: Date,
+            default: null,
+        },
+    },
+
     // OTP Verification Fields
     isEmailVerified: {
         type: Boolean,
@@ -110,32 +148,34 @@ const userSchema = new mongoose.Schema({
     },
     
     // Counsellor-specific fields
+    // Required only when role === "counsellor" AND user signed up via local flow
+    // (Google signup users complete these fields later via profile update)
     qualification: {
         type: String,
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     specialization: {
         type: [String],
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     experience: {
         type: Number,
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     location: {
         type: String,
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     consultationMode: {
         type: [String],
         enum: ["online", "offline", "both"],
         default: ["online"],
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     languages: {
         type: [String],
         default: [],
-        required: function() { return this.role === "counsellor"; }
+        required: function() { return this.role === "counsellor" && !this.googleId; }
     },
     aboutMe: {
         type: String,
@@ -210,6 +250,14 @@ const userSchema = new mongoose.Schema({
         default: null
     },
     
+    chatPermission: {
+        enabled: { type: Boolean, default: true },
+        disabledReason: { type: String, default: null },
+        disabledBy: { type: String, enum: ["admin", "system"], default: null },
+        disabledAt: { type: Date, default: null },
+        notes: { type: String, default: "" },
+    },
+
     isActive: {
         type: Boolean,
         default: true

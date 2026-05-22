@@ -362,6 +362,16 @@ class SocketHandler {
         return;
       }
 
+      // Check if admin has blocked the counselor from chatting
+      const counselorForSocket = await User.findById(populatedChat.counselorId._id).lean();
+      if (counselorForSocket?.chatPermission?.enabled === false) {
+        socket.emit("error", {
+          message: "Chat access has been restricted by admin.",
+          reason: counselorForSocket.chatPermission.disabledReason || "admin_decision",
+        });
+        return;
+      }
+
       // Create message
       const message = await Message.create({
         chatId: populatedChat._id,

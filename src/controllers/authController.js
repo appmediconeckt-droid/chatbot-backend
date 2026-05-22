@@ -16,6 +16,9 @@ import {
 } from "../utils/uploadHelper.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
+import { OAuth2Client } from "google-auth-library";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Twilio client is not used in this controller; removed to reduce bundle size.
 
@@ -1485,8 +1488,22 @@ export const loginUser = async (req, res) => {
         .json({ message: "Invalid password", success: false });
     }
 
-    // Multi-device policy: allow concurrent sessions across devices.
-    // Old sessions stay valid until they expire or are explicitly logged out.
+    // ---- One-device policy: detect any *other* active session ----
+    const activeSession = await Session.findOne({
+      userId: user._id,
+      isActive: true,
+    });
+
+    if (activeSession) {
+      // Do NOT log the user out here – just tell the client what to do
+      return res.status(409).json({
+        message: "Already login",
+        needLogout: true, // client can use this flag to show the modal
+        success: false,
+      });
+    }
+
+    // ---- No other session → normal login ----
     const sessionId = new mongoose.Types.ObjectId();
     const accessToken = generateAccessToken(
       user._id,
@@ -1536,6 +1553,195 @@ export const loginUser = async (req, res) => {
     console.error("Login error:", error);
     return res.status(500).json({
       message: "Error in login",
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+// ================= GOOGLE OAUTH (Sign-up + Login in one endpoint) =================
+// Frontend sends Google ID token (from Google Sign-In SDK).
+// Flow:
+//   1. Verify token with Google
+//   2. If user with email exists → auto-merge (set googleId if missing, log them in)
+//   3. If new email → create account (email auto-verified, phone optional, profile incomplete)
+//   4. Enforce one-device policy (same as /login)
+export const googleAuth = async (req, res) => {
+  try {
+    const { idToken, role } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        message: "Google idToken is required",
+        success: false,
+      });
+    }
+
+    // Default role to "user" if not provided. Frontend should send "user" or "counsellor".
+    const requestedRole = role === "counsellor" ? "counsellor" : "user";
+
+    // 1. Verify the Google ID token
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyErr) {
+      console.error("Google token verify failed:", verifyErr.message);
+      return res.status(401).json({
+        message: "Invalid Google token",
+        success: false,
+      });
+    }
+
+    if (!payload || !payload.email) {
+      return res.status(401).json({
+        message: "Google token did not contain email",
+        success: false,
+      });
+    }
+
+    if (!payload.email_verified) {
+      return res.status(401).json({
+        message: "Google email is not verified",
+        success: false,
+      });
+    }
+
+    const email = payload.email.toLowerCase();
+    const googleId = payload.sub;
+    const fullName = payload.name || email.split("@")[0];
+    const picture = payload.picture || null;
+
+    // 2. Look up existing user by email or googleId
+    let user = await User.findOne({ $or: [{ email }, { googleId }] });
+
+    if (user) {
+      // Role mismatch guard — same contract as /login. If the client said
+      // "user" but the existing account is a counsellor (or vice-versa),
+      // refuse rather than silently logging them in to the wrong dashboard.
+      if (user.role !== requestedRole) {
+        return res.status(403).json({
+          message: `This Google account is registered as ${user.role}. Please pick the ${user.role} role and try again.`,
+          success: false,
+          code: "ROLE_MISMATCH",
+          actualRole: user.role,
+          requestedRole,
+        });
+      }
+
+      // Auto-merge: existing account, link Google if not already linked
+      if (!user.googleId) {
+        user.googleId = googleId;
+        // Don't overwrite authProvider for existing local users — they can use both
+        if (!user.profilePhoto?.url && picture) {
+          user.profilePhoto = { url: picture, publicId: null };
+        }
+        await user.save();
+      }
+
+      if (!user.isActive) {
+        return res
+          .status(401)
+          .json({ message: "Account is deactivated", success: false });
+      }
+    } else {
+      // 3. Create new account from Google profile
+      const newUserData = {
+        fullName,
+        email,
+        googleId,
+        authProvider: "google",
+        role: requestedRole,
+        isEmailVerified: true,
+        isActive: true,
+        profileCompleted: false, // user still needs to add phone, age, etc.
+        // The geo index rejects a Point subdoc without coordinates, but the
+        // schema sets type="Point" by default. Initialize with [0,0] so insert
+        // succeeds; real coordinates land here when the client sends GPS.
+        locationData: {
+          current: { type: "Point", coordinates: [0, 0] },
+          history: [],
+        },
+      };
+
+      if (picture) {
+        newUserData.profilePhoto = { url: picture, publicId: null };
+      }
+
+      user = await User.create(newUserData);
+    }
+
+    // 4. One-device policy — same as /login
+    const activeSession = await Session.findOne({
+      userId: user._id,
+      isActive: true,
+    });
+
+    if (activeSession) {
+      return res.status(409).json({
+        message: "Already login",
+        needLogout: true,
+        success: false,
+        email: user.email,
+      });
+    }
+
+    // 5. Create new session + tokens
+    const sessionId = new mongoose.Types.ObjectId();
+    const accessToken = generateAccessToken(
+      user._id,
+      sessionId.toString(),
+      user.role,
+    );
+    const refreshToken = generateRefreshToken(
+      user._id,
+      sessionId.toString(),
+      user.role,
+    );
+
+    await Session.create({
+      _id: sessionId,
+      userId: user._id,
+      refreshToken,
+      isActive: true,
+    });
+
+    // Optional: capture login location if GPS sent in body
+    await saveLoginLocationIfProvided({ req, userId: user._id });
+
+    // 6. Cookies (same options as /login)
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000,
+    });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({
+      message: user.profileCompleted
+        ? "Login successful"
+        : "Account created. Please complete your profile.",
+      success: true,
+      accessToken,
+      refreshToken,
+      user: user.toJSON(),
+      role: user.role,
+      profileCompleted: user.profileCompleted,
+      isNewUser: !user.profileCompleted,
+    });
+  } catch (error) {
+    console.error("Google auth error:", error);
+    return res.status(500).json({
+      message: "Error during Google authentication",
       success: false,
       error: error.message,
     });
@@ -1634,8 +1840,13 @@ export const verifyLoginOTP = async (req, res) => {
         .json({ message: "User not found", success: false });
     }
 
-    // Multi-device policy: keep prior sessions active; just add this device.
-    // OTP is valid → create a new session for this device
+    // Logout all existing sessions ONLY after OTP verification succeeds
+    await Session.updateMany(
+      { userId: user._id, isActive: true },
+      { $set: { isActive: false, logoutAt: new Date() } },
+    );
+
+    // OTP is valid → create a **new** session for this device
     const sessionId = new mongoose.Types.ObjectId();
     const accessToken = generateAccessToken(
       user._id,
