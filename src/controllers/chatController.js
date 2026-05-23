@@ -25,15 +25,22 @@ export const chatWithAI = async (req, res) => {
     const userId = req.user?.id || req.user?._id;
 
     // Threading rules:
-    // - Logged-in user: thread by userId (sessionId optional, ignored for lookup)
+    // - Logged-in user: thread by (userId, sessionId). Client MUST echo back the
+    //   sessionId returned in each response so the conversation continues.
+    //   No sessionId from client = a brand-new session = onboarding fires.
     // - Guest: thread by sessionId only (must be sent by client to continue)
     // - Neither: brand new conversation, fall back to client-provided history
     let sessionId = req.body.sessionId;
     let history = [];
 
     if (userId) {
+      // Scope history to the CURRENT session so onboarding (age/gender/where)
+      // fires at the start of every new chat, not just the user's lifetime
+      // first chat. If the client didn't send a sessionId, treat this as a
+      // brand-new session — history stays empty so the onboarding greeting
+      // is triggered.
       if (!sessionId) sessionId = uuidv4();
-      const priorChats = await Chat.find({ userId })
+      const priorChats = await Chat.find({ userId, sessionId })
         .sort({ createdAt: -1 })
         .limit(MAX_HISTORY_TURNS)
         .lean();
@@ -195,13 +202,11 @@ export const chatWithAI = async (req, res) => {
 
     // Build system instruction - INTERACTIVE, SUPPORTIVE CHATBOT STYLE
     const systemInstruction = `
-${isFirstTurn ? `🚨 TOP PRIORITY — THIS IS THE FIRST MESSAGE OF THE CONVERSATION.
-Your reply MUST be ONLY a warm greeting + caring onboarding questions. NO ADVICE, NO TIPS, NO COUNSELOR RECOMMENDATIONS. Follow the ONBOARDING RULE exactly.
-
-Required format for THIS reply:
-"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age and how you identify (male, female, or other), where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
-
-You may rephrase slightly to match the user's language and tone, but the structure (greeting + ask age + ask gender + ask location/surroundings + ask their concern) MUST be present. DO NOT give tips. DO NOT diagnose. Just ask warmly.
+${isFirstTurn ? `🚨 FIRST MESSAGE OF THE CONVERSATION.
+The greeting is normally returned deterministically before reaching you. If you ARE generating this, follow this rule:
+- If the Known profile already shows age AND gender → warm welcome + ask only how they're feeling. DO NOT re-ask age/gender.
+- If age or gender is missing → ask ONLY the missing field, warmly, plus how they're feeling.
+- Never ask for fields that are already known. Never give tips/advice on the first turn.
 ═══════════════════════════════════════════════════════════════
 ` : ""}
 You are MindHelper, a supportive mental health and wellbeing chat companion for Mediconeckt.
@@ -226,6 +231,24 @@ Be like a good, non-judgmental friend who listens, gives practical help, and kno
   • Do NOT give sex-ed, hygiene tips, or normalise the activity in any way
 - If a minor says they "feel good" about a sexual encounter that was forced or that they're too young for, DO NOT reassure or move on. Re-emphasise that any forced contact is wrong, repeat the helpline, and urge them to talk to a trusted adult — even if they say they don't want to.
 - These rules OVERRIDE every other rule in this prompt, including "give direct advice first".
+
+🟦 ADULT SEXUAL HEALTH POLICY (age ≥ 18 ONLY, age must be in Known profile):
+- ALLOWED: general health/education info. Examples:
+  • What condoms are, what they protect against (pregnancy + STIs)
+  • Where to buy them in India (any pharmacy, no prescription; free at govt PHCs)
+  • What to look for on the wrapper (expiry date, undamaged packaging)
+  • General STI awareness (common ones, that testing is available at hospitals/PHCs)
+  • Importance of consent, communication with partner
+  • That sexual dysfunction (low libido, ED, pain, etc.) is common and treatable — see a doctor
+  • Where to get help: gynaecologist, urologist, family doctor, sexual-health clinic
+- NOT ALLOWED, even for adults:
+  • Step-by-step "how to put on a condom" mechanics — say "the leaflet inside the box has step-by-step pictures, or any pharmacist can show you in 30 seconds"
+  • Sex positions, frequency advice, "best technique" type content
+  • Anything pornographic, erotic, or graphic in tone
+  • Specific medical diagnosis ("you have X") or prescribing medication
+- TONE: matter-of-fact, non-judgemental, like a clinic nurse. Not preachy, not graphic.
+- ALWAYS end adult sexual-health replies with: "For anything specific to your body, a doctor is the best person — they've seen it all and it's confidential."
+- If age is UNKNOWN ("?" in Known profile) and the user asks a sexual question, do NOT answer with general info. Ask them their age first.
 
 NEVER refuse to engage with a topic just because it feels sensitive (sexual health, addiction, relationship abuse, family conflict). Respond with empathy and safe, general guidance.
 For any PHYSICAL/MEDICAL symptom (pain, bleeding, infection signs, persistent issues, sexual dysfunction, severe headaches, chest issues, etc.):
@@ -254,27 +277,16 @@ ${knownProfile?.safetyFlags?.length ? `- ⚠️ Safety flags raised by user: ${k
 
 ═══════════════════════════════════════════════════════════════
 
-🟢 ONBOARDING RULE — HIGHEST PRIORITY, OVERRIDES EVERYTHING ELSE:
+🟢 PROFILE-AWARE RULE — DO NOT RE-ASK WHAT YOU ALREADY KNOW:
 
-IF the "Is first turn" flag above says YES, you MUST reply with onboarding questions ONLY. This OVERRIDES every other rule in this prompt, including "give direct advice first." On the first turn, ASK FIRST, advise LATER.
+The server returns the first-turn greeting deterministically. By the time YOU see a message, the user is in active conversation. Follow these rules:
 
-The first-turn reply MUST contain:
-  - A warm 1-line greeting ("Hi! I'm MindHelper — really glad you reached out.")
-  - A short, caring paragraph that gently asks for:
-      • Their age and gender
-      • Where they are right now (home / work / outside) and if anyone is with them
-      • What they're feeling or what's on their mind today
-  - NO ADVICE, NO TIPS on the first turn. Just warm greeting + caring questions.
+  - Look at "Known profile" above. If age, gender, or city is shown with a real value (not "?"), NEVER ask for it again — just use it silently.
+  - Only ask SITUATIONAL info (where they are right now, who's with them, what just happened) IF that info would meaningfully change the advice you're about to give. Otherwise, give the help directly.
+  - If a profile field is genuinely missing (shown as "?") AND it changes your advice, ask for that ONE field naturally as part of your reply — don't interrogate.
+  - Lead with empathy + practical help. Never open with a clarifying question when you can give a useful answer.
 
-EXAMPLE FIRST-TURN REPLY (follow this style exactly):
-"Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you tell me a little about yourself — your age and how you identify (male, female, or other), where you are right now (home, work, somewhere else?), and if you're alone or with someone? And most importantly, what's on your mind today?"
-
-IF "Is first turn" is NO (user is already in conversation):
-  - Follow the normal CONVERSATION STYLE below: give DIRECT advice immediately.
-  - If they shared age/gender/location/surroundings in any earlier message, USE that info to personalize tips (e.g. teen → school context, elderly → mobility-friendly tips, "I'm at work" → discreet breathing exercise, "I'm with family" → suggest a moment of privacy if needed).
-  - If a critical piece of info is missing AND it would meaningfully change your advice, ask for that ONE piece naturally, then still give a partial tip.
-
-IF the system already provides "Known profile" with real values (not "?"), do NOT re-ask those specific fields. Use what's already known. But still ask the situational ones (where they are right now, who's with them) since those change moment to moment.
+If they shared age/gender/location/surroundings in any earlier message, USE that to personalize (teen → school context, elderly → mobility-friendly tips, "at work" → discreet exercises, "with family" → suggest privacy).
 
 AVAILABLE COUNSELORS (ONLINE RIGHT NOW — pre-ranked best-match-first for THIS user's situation):
 ${topMatchSummary}
@@ -416,25 +428,49 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     // Handle crisis immediately
     let aiResponse;
 
-    // First-turn onboarding: deterministic warm greeting + onboarding questions.
-    // We DON'T let the AI generate this — Gemini was inconsistent, so we hard-code
-    // it to guarantee every new conversation starts with the onboarding ask.
-    // Crisis still takes priority over onboarding (next block).
+    // First-turn greeting: deterministic so the entry point feels consistent.
+    // The best chatbots (Woebot, Wysa) ask profile info ONCE at signup and
+    // never re-ask. So we branch on what we already know:
+    //   1. Profile complete (age + gender known) → warm welcome + mood check only
+    //   2. Profile partial (Google-auth user missing fields) → ask ONLY what's missing
+    //   3. Guest / no profile → ask age + gender in chat (one-time per session)
+    // Crisis still takes priority over greeting (next block).
     const isFirstTurnOnboarding =
       isFirstTurn && !(crisisDetection.isCrisis && crisisDetection.level !== "medium");
 
     if (isFirstTurnOnboarding) {
-      const lang = detectedLanguage.code || "en";
-      const greetings = {
-        hi: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age and how you identify (male, female, or other), and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
-        en: "Hi! I'm MindHelper, really glad you reached out. Before we dive in, could you share a little about yourself — your age and how you identify (male, female, or other), and where you are right now (home, work, somewhere else)? Are you alone or with someone? And most importantly, what's on your mind today?",
-      };
-      // Detect Hinglish for friendlier Hindi/English mix
-      if (detectedLanguage.name === "Hindi") {
-        aiResponse =
-          "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Shuru karne se pehle thoda apne baare mein batayenge — aapki umar kya hai, aap male hain ya female ya something else, aur aap abhi kahan ho (ghar, office, ya kahin aur)? Akele ho ya kisi ke saath? Aur sabse zaroori — aaj mann mein kya chal raha hai?";
+      const isHindi = detectedLanguage.name === "Hindi";
+      const hasAge = !!knownProfile?.age;
+      const hasGender = !!knownProfile?.gender;
+      const hasFullProfile = hasAge && hasGender;
+      const isGuest = !userId;
+
+      // Mood-check quick replies — frontend renders these as tap buttons so
+      // the user doesn't have to type to respond.
+      const moodQuickReplies = isHindi
+        ? ["😢 Udaas", "😐 Theek", "🙂 Acha", "✨ Bahut acha"]
+        : ["😢 Low", "😐 Okay", "🙂 Good", "✨ Great"];
+
+      if (hasFullProfile) {
+        // Returning user with everything we need — friendly welcome + mood check.
+        aiResponse = isHindi
+          ? "Hi! Wapas aane ke liye shukriya 💙 Abhi kaisa feel ho raha hai?"
+          : "Hi! Welcome back 💙 How are you feeling right now?";
+      } else if (isGuest || (!hasAge && !hasGender)) {
+        // Guest OR logged-in user missing both fields — ask both, warmly.
+        aiResponse = isHindi
+          ? "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Aapko behtar help dene ke liye — aapki umar kya hai aur aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?"
+          : "Hi! I'm MindHelper, really glad you reached out. To help you best — could you share your age and how you identify (male, female, or other)? And how are you feeling right now?";
+      } else if (!hasAge) {
+        // Logged-in via Google, missing age only.
+        aiResponse = isHindi
+          ? "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aapki umar kya hai? (Behtar tips dene ke liye.) Aur abhi kaisa feel ho raha hai?"
+          : "Hi! Welcome back 💙 Quick thing — could you share your age? (Helps me give better tips.) And how are you feeling right now?";
       } else {
-        aiResponse = greetings[lang] || greetings.en;
+        // Logged-in via Google, missing gender only.
+        aiResponse = isHindi
+          ? "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?"
+          : "Hi! Welcome back 💙 Quick thing — how do you identify (male, female, or other)? And how are you feeling right now?";
       }
 
       // Save and return immediately, skipping Gemini.
@@ -461,6 +497,7 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
           crisisDetected: crisisDetection.isCrisis,
           crisisLevel: crisisDetection.level,
           onboarding: true,
+          quickReplies: moodQuickReplies,
         },
       });
     }

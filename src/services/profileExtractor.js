@@ -12,6 +12,10 @@ const AGE_PATTERNS = [
   /(?:i(?:'| a)?m|i am|mai|main|me|umar|age|saal|years?\s*old)\s*(?:hu|hoon|h\b|is|of)?\s*(\d{1,2})/i,
   /\b(\d{1,2})\s*(?:saal|years?|yrs?)\b/i,
   /^\s*(\d{1,2})\s*(?:yo|y\.?o\.?)\s*$/i,
+  // Bare-number reply (e.g. user typed "22" or "I'm 22 male") — only when the
+  // ENTIRE message is just digits (optionally with a gender word). Avoids
+  // misreading "I slept 8 hours" as age=8.
+  /^\s*(\d{1,2})\s*(?:male|female|boy|girl|ladka|ladki|man|woman|m|f)?\s*$/i,
 ];
 
 const GENDER_PATTERNS = [

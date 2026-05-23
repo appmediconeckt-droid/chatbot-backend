@@ -40,6 +40,32 @@ const SEXUAL_HOWTO_PATTERNS = [
   /\b(want|need|chahiye|chahta|chahti)\b.*\b(sex|boy|girl|partner)\b.*\b(daily|roj|everyday)\b/i,
 ];
 
+// Any sexual-topic mention (broader than how-to). Used to gate the "unknown
+// age" branch — if the user is asking ANYTHING sex-related and we don't know
+// their age, ask their age before answering.
+const SEXUAL_TOPIC_PATTERNS = [
+  /\b(sex|sexual|intercourse|condom|condoms|protection|contraceptiv|masturbat|orgasm|porn|erection|ejaculat)\b/i,
+  /\b(sambhog|sex\s*karna|sex\s*kaise)\b/i,
+];
+
+const hasSexualTopic = (message) => {
+  const m = String(message || "");
+  return SEXUAL_TOPIC_PATTERNS.some((re) => re.test(m));
+};
+
+// Did the conversation history show we already asked for age? Used to avoid
+// re-asking in a loop if user keeps pressing on sexual topics without giving
+// age — after one ask we let it fall through to the soft refusal instead.
+const alreadyAskedForAge = (history = []) => {
+  if (!Array.isArray(history)) return false;
+  return history.some(
+    (turn) =>
+      turn.role === "assistant" &&
+      typeof turn.content === "string" &&
+      /could you share your age|aapki umar/i.test(turn.content),
+  );
+};
+
 // Risky minor-context signals: a self-reported child age + sexual topic.
 const PREGNANCY_PATTERNS = [
   /\b(i'?m|im|mai|main|me)\s+(pregnant|garbhwati|garbhvati)\b/i,
@@ -159,6 +185,25 @@ export const evaluateSafety = ({
         "It's good that you're asking, but because you're under 18, the safest place for these questions is a doctor or a trusted adult, not a chatbot. " +
         "If anything has happened that didn't feel okay, please call **Childline 1098** — they'll listen and help, and it stays private. " +
         "I'm here to support you with how you're feeling, school stress, family stuff, or anything else on your mind.",
+    };
+  }
+
+  // Unknown age + sexual topic → ask age once before answering. Children and
+  // adults get very different answers, and refusing without explanation feels
+  // dismissive to adults. We only ask ONCE per conversation (alreadyAskedForAge
+  // gate) so we don't loop. If they refuse to share, the request still falls
+  // through to Gemini, which will be conservative thanks to the system prompt.
+  const ageUnknown =
+    !isMinorAge(knownAge) &&
+    (typeof knownAge !== "number" || !Number.isFinite(knownAge));
+  if (ageUnknown && hasSexualTopic(text) && !alreadyAskedForAge(history)) {
+    return {
+      block: true,
+      reason: "age_needed_for_sexual_topic",
+      reply:
+        "Happy to help with this — but the right answer depends on your age. Could you share your age first? " +
+        "I share general health info with adults (18+), and for under-18 I'll point you to a doctor or trusted adult so you get the safest guidance. " +
+        "Aapki umar kya hai? (Just type the number, e.g. \"22\".)",
     };
   }
 
