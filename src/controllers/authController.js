@@ -29,6 +29,26 @@ const phoneOTPStore = new Map();
 // Store OTPs used for the "logout other devices" login flow
 const loginOTPStore = new Map();
 
+// Profile-change OTP flow (dashboard "edit email / phone"). Keyed by
+// `${userId}:${field}` so a user can have at most one pending change per
+// field at a time. Each entry holds the OTP + the new value the user wants
+// to switch to. Once verified, the entry is moved to verifiedProfileChanges
+// and consumed by updateUserById on the next PATCH /update/:userId call.
+const profileChangeOTPStore = new Map();
+const verifiedProfileChanges = new Map();
+const PROFILE_CHANGE_OTP_TTL_MS = 10 * 60 * 1000; // 10 min to enter the OTP
+const PROFILE_CHANGE_VERIFIED_TTL_MS = 15 * 60 * 1000; // 15 min to hit Save
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, data] of profileChangeOTPStore.entries()) {
+    if (data.expiresAt < now) profileChangeOTPStore.delete(key);
+  }
+  for (const [key, data] of verifiedProfileChanges.entries()) {
+    if (data.expiresAt < now) verifiedProfileChanges.delete(key);
+  }
+}, 60 * 1000).unref?.();
+
 const MAX_LOCATION_HISTORY = 20;
 
 const getClientIp = (req) =>
@@ -515,7 +535,13 @@ export const updateUserById = async (req, res) => {
       });
     }
 
-    // 3. Handle basic user fields
+    // 3. Handle basic user fields.
+    //
+    // SECURITY: email and phoneNumber changes from the dashboard MUST be
+    // gated by the profile-change OTP flow. We check each one against the
+    // user's current value — if it actually changed, the request must have
+    // a matching verified entry produced by /profile-change/verify-otp.
+    // Other fields update freely.
     const basicFields = [
       "fullName",
       "phoneNumber",
@@ -529,11 +555,48 @@ export const updateUserById = async (req, res) => {
       "email",
     ];
 
-    basicFields.forEach((field) => {
-      if (req.body[field] !== undefined && req.body[field] !== "") {
-        updates[field] = req.body[field];
+    for (const field of basicFields) {
+      if (req.body[field] === undefined || req.body[field] === "") continue;
+
+      // Gate email / phoneNumber changes through the OTP flow.
+      if (field === "email") {
+        const incoming = String(req.body.email).trim().toLowerCase();
+        const current = String(currentUser.email || "").toLowerCase();
+        if (incoming !== current) {
+          const check = consumeVerifiedProfileChange(userId, "email", incoming);
+          if (!check.ok) {
+            return res.status(403).json({
+              success: false,
+              message: check.message,
+              field: "email",
+            });
+          }
+          updates.email = incoming;
+          updates.isEmailVerified = true;
+        }
+        continue;
       }
-    });
+
+      if (field === "phoneNumber") {
+        const incoming = String(req.body.phoneNumber).replace(/\D/g, "");
+        const current = String(currentUser.phoneNumber || "");
+        if (incoming !== current) {
+          const check = consumeVerifiedProfileChange(userId, "phone", incoming);
+          if (!check.ok) {
+            return res.status(403).json({
+              success: false,
+              message: check.message,
+              field: "phoneNumber",
+            });
+          }
+          updates.phoneNumber = incoming;
+          updates.isPhoneVerified = true;
+        }
+        continue;
+      }
+
+      updates[field] = req.body[field];
+    }
 
     // 4. Handle nested objects
     if (req.body.address) {
@@ -1337,38 +1400,25 @@ export const completeRegistration = async (req, res) => {
       },
     };
 
-    // Handle profile photo upload to Cloudinary (for counsellors only)
-    let profilePhotoData = null;
-    if (role === "counsellor" && req.file) {
-      try {
-        // Validate file buffer exists
-        if (!req.file.buffer) {
-          return res.status(400).json({
-            message: "Invalid file data",
-            success: false,
-          });
-        }
-
-        // Upload to Cloudinary
-        console.log("Uploading profile photo to Cloudinary...");
-        profilePhotoData = await uploadToCloudinary(req.file.buffer, {
-          folder: "profile-photos",
-          transformation: [{ width: 500, height: 500, crop: "limit" }],
-        });
-
-        userData.profilePhoto = profilePhotoData;
-        console.log(
-          "Profile photo uploaded successfully:",
-          profilePhotoData.url,
-        );
-      } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
-        return res.status(500).json({
-          message: "Failed to upload profile photo",
-          success: false,
-          error: uploadError.message,
-        });
-      }
+    // Profile photo handling.
+    //
+    // Multer + CloudinaryStorage already uploaded the file to Cloudinary by
+    // the time we reach this controller — req.file.path is the secure URL
+    // and req.file.filename is the public_id. We just need to persist them
+    // on the user. (Old code re-uploaded via req.file.buffer, which doesn't
+    // exist with CloudinaryStorage, so the upload always failed silently or
+    // returned "Invalid file data".)
+    //
+    // Photo is allowed for BOTH roles — patients can add one too if the UI
+    // collects it; we just don't require it.
+    if (req.file && req.file.path) {
+      userData.profilePhoto = {
+        url: req.file.path,
+        publicId: req.file.filename,
+      };
+      console.log(
+        `[completeRegistration] Profile photo saved for ${role}: ${req.file.path}`,
+      );
     }
 
     // Add counsellor-specific fields ONLY if role is counsellor
@@ -2652,3 +2702,296 @@ export const resendPhoneOTP = async (req, res) => {
 export const refreshAccessTokenHandler = refreshAccessToken;
 export const resendOTPS = resendEmailOTP;
 export const checkVerificationStatus = checkRegistrationStatus;
+
+// ──────────────────────────────────────────────────────────────────────────
+// PROFILE-CHANGE OTP FLOW
+//
+// When a logged-in user edits their email or phone in the dashboard, we
+// require them to prove ownership of the NEW value before the change is
+// persisted. Flow:
+//   1. Client calls POST /send-profile-change-otp { field, newValue }
+//   2. Server sends OTP to NEW email/phone, stores it keyed on userId+field
+//   3. Client calls POST /verify-profile-change-otp { field, newValue, otp }
+//   4. On success, server moves the entry into verifiedProfileChanges
+//   5. Client calls the existing PATCH /update/:userId with the new value
+//   6. updateUserById refuses to persist email/phone changes unless a
+//      verified entry exists in verifiedProfileChanges; on success the
+//      entry is consumed (delete-once semantics)
+//
+// Auth middleware guarantees req.user is populated.
+// ──────────────────────────────────────────────────────────────────────────
+
+const profileChangeKey = (userId, field) => `${String(userId)}:${field}`;
+
+const sendProfileChangeOtpViaEmail = async (toEmail, otp) => {
+  await otpService.sendEmailOTP(toEmail, otp, "User");
+};
+
+const sendProfileChangeOtpViaSMS = async (formattedPhone, otp) => {
+  const isTwilioConfigured = Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      process.env.TWILIO_PHONE_NUMBER,
+  );
+
+  if (!isTwilioConfigured) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[profile-change] Twilio not configured; dev OTP for ${formattedPhone}: ${otp}`,
+      );
+      return { devOtp: otp };
+    }
+    throw new Error("SMS service is not configured");
+  }
+
+  const twilioModule = await import("twilio");
+  const twilio = twilioModule.default || twilioModule;
+  const twilioClient = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN,
+  );
+  await twilioClient.messages.create({
+    body: `Your Mediconeckt verification code is: ${otp}. Use it to confirm your new phone number. Expires in 10 minutes.`,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: formattedPhone,
+  });
+  return {};
+};
+
+export const sendProfileChangeOTP = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+    }
+
+    const { field, newValue } = req.body || {};
+    if (!["email", "phone"].includes(field)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "field must be 'email' or 'phone'" });
+    }
+    if (typeof newValue !== "string" || !newValue.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "newValue is required" });
+    }
+
+    const currentUser = await User.findById(userId);
+    if (!currentUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (field === "email") {
+      const normalized = newValue.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid email format" });
+      }
+      if (normalized === String(currentUser.email || "").toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          message: "New email is the same as the current one",
+        });
+      }
+      const taken = await User.findOne({
+        email: normalized,
+        _id: { $ne: userId },
+      });
+      if (taken) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already in use by another account",
+        });
+      }
+
+      const otp = otpService.generateOTP();
+      profileChangeOTPStore.set(profileChangeKey(userId, "email"), {
+        otp,
+        newValue: normalized,
+        expiresAt: Date.now() + PROFILE_CHANGE_OTP_TTL_MS,
+      });
+
+      try {
+        await sendProfileChangeOtpViaEmail(normalized, otp);
+      } catch (err) {
+        profileChangeOTPStore.delete(profileChangeKey(userId, "email"));
+        console.error("[profile-change] email send failed:", err.message);
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to send OTP email" });
+      }
+
+      const devOtp =
+        process.env.NODE_ENV !== "production" ? { devOtp: otp } : {};
+      return res.status(200).json({
+        success: true,
+        message: `OTP sent to ${normalized}`,
+        ...devOtp,
+      });
+    }
+
+    // field === "phone"
+    const cleaned = newValue.replace(/\D/g, "");
+    if (cleaned.length !== 10) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number must be 10 digits" });
+    }
+    if (cleaned === String(currentUser.phoneNumber || "")) {
+      return res.status(400).json({
+        success: false,
+        message: "New phone is the same as the current one",
+      });
+    }
+    const taken = await User.findOne({
+      phoneNumber: cleaned,
+      _id: { $ne: userId },
+    });
+    if (taken) {
+      return res.status(409).json({
+        success: false,
+        message: "This phone number is already in use by another account",
+      });
+    }
+
+    const otp = otpService.generateOTP();
+    const formattedPhone = `+91${cleaned}`;
+    profileChangeOTPStore.set(profileChangeKey(userId, "phone"), {
+      otp,
+      newValue: cleaned,
+      expiresAt: Date.now() + PROFILE_CHANGE_OTP_TTL_MS,
+    });
+
+    try {
+      const result = await sendProfileChangeOtpViaSMS(formattedPhone, otp);
+      const devOtp =
+        result.devOtp && process.env.NODE_ENV !== "production"
+          ? { devOtp: result.devOtp }
+          : {};
+      return res.status(200).json({
+        success: true,
+        message: `OTP sent to ${formattedPhone}`,
+        ...devOtp,
+      });
+    } catch (err) {
+      profileChangeOTPStore.delete(profileChangeKey(userId, "phone"));
+      console.error("[profile-change] SMS send failed:", err.message);
+      return res.status(503).json({
+        success: false,
+        message: err.message || "Failed to send OTP SMS",
+      });
+    }
+  } catch (err) {
+    console.error("sendProfileChangeOTP error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export const verifyProfileChangeOTP = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+    }
+
+    const { field, newValue, otp } = req.body || {};
+    if (!["email", "phone"].includes(field)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "field must be 'email' or 'phone'" });
+    }
+    if (!otp || !newValue) {
+      return res
+        .status(400)
+        .json({ success: false, message: "newValue and otp are required" });
+    }
+
+    const key = profileChangeKey(userId, field);
+    const stored = profileChangeOTPStore.get(key);
+    if (!stored) {
+      return res.status(400).json({
+        success: false,
+        message: "No OTP found. Please request a new one.",
+      });
+    }
+    if (Date.now() > stored.expiresAt) {
+      profileChangeOTPStore.delete(key);
+      return res
+        .status(400)
+        .json({ success: false, message: "OTP expired. Request a new one." });
+    }
+
+    const normalisedNew =
+      field === "email"
+        ? String(newValue).trim().toLowerCase()
+        : String(newValue).replace(/\D/g, "");
+
+    if (stored.newValue !== normalisedNew) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "The value you're verifying doesn't match the one OTP was sent for. Please re-send the OTP.",
+      });
+    }
+    if (String(stored.otp) !== String(otp)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid OTP" });
+    }
+
+    // Mark as verified — updateUserById will consume this on Save.
+    verifiedProfileChanges.set(key, {
+      newValue: normalisedNew,
+      expiresAt: Date.now() + PROFILE_CHANGE_VERIFIED_TTL_MS,
+    });
+    profileChangeOTPStore.delete(key);
+
+    return res.status(200).json({
+      success: true,
+      message: `${field === "email" ? "Email" : "Phone"} verified. Hit Save within 15 minutes to apply.`,
+    });
+  } catch (err) {
+    console.error("verifyProfileChangeOTP error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// Internal helper used by updateUserById. Returns { ok, message } and
+// consumes the verified entry on success so it can't be re-used.
+export const consumeVerifiedProfileChange = (userId, field, attemptedValue) => {
+  const key = profileChangeKey(userId, field);
+  const verified = verifiedProfileChanges.get(key);
+  if (!verified) {
+    return {
+      ok: false,
+      message: `Please verify your new ${field === "email" ? "email" : "phone"} via OTP before saving.`,
+    };
+  }
+  if (Date.now() > verified.expiresAt) {
+    verifiedProfileChanges.delete(key);
+    return {
+      ok: false,
+      message: `Verification for the new ${field} expired. Please verify again.`,
+    };
+  }
+  const attempt =
+    field === "email"
+      ? String(attemptedValue).trim().toLowerCase()
+      : String(attemptedValue).replace(/\D/g, "");
+  if (verified.newValue !== attempt) {
+    return {
+      ok: false,
+      message: `The ${field} you're saving doesn't match the one you verified.`,
+    };
+  }
+  verifiedProfileChanges.delete(key);
+  return { ok: true };
+};

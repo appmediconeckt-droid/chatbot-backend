@@ -22,6 +22,8 @@ import {
   logoutOtherDevicesAndSendOTP,
   verifyLoginOTP,
   googleAuth,
+  sendProfileChangeOTP,
+  verifyProfileChangeOTP,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
 import { authorizeRoles } from "../middleware/authorizeRoles.js";
@@ -98,6 +100,19 @@ authRoutes.patch(
   authMiddleware,
   handleUserUpload,
   updateUserById,
+);
+
+// Profile-change OTP flow — gates email/phone changes from the dashboard.
+// Both endpoints require the user to be logged in.
+authRoutes.post(
+  "/profile-change/send-otp",
+  authMiddleware,
+  sendProfileChangeOTP,
+);
+authRoutes.post(
+  "/profile-change/verify-otp",
+  authMiddleware,
+  verifyProfileChangeOTP,
 );
 
 authRoutes.delete("/delete", authMiddleware, deleteUser);
