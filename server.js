@@ -53,7 +53,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 // IMPORTANT: Load environment variables FIRST
 dotenv.config();
 
-const PORT = parseInt(process.env.PORT, 10) || 5000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 function handleServerError(error) {
   if (error.syscall !== 'listen') {

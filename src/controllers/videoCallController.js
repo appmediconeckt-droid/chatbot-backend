@@ -132,19 +132,22 @@ export const videoCallController = {
   initiateCall: async (req, res) => {
     try {
       const {
-        initiatorId,
-        initiatorType,
         receiverId,
         receiverType,
         callType = "video",
         message = "I'd like to start a video call with you.",
+        initiatorName,
       } = req.body;
 
-      if (!initiatorId || !initiatorType || !receiverId || !receiverType) {
+      const initiatorId = req.user?._id;
+      const initiatorType = normalizeParticipantType(req.user?.role || "user");
+      const receiverTypeNormalized = normalizeParticipantType(receiverType);
+
+      if (!initiatorId || !receiverType || !receiverId) {
         return res.status(400).json({
           success: false,
           error:
-            "initiatorId, initiatorType, receiverId, and receiverType are required",
+            "Authenticated initiator, receiverId, and receiverType are required",
         });
       }
 
@@ -170,7 +173,7 @@ export const videoCallController = {
       );
       const receiverDetails = await videoCallController.getUserDetails(
         receiverId,
-        receiverType,
+        receiverTypeNormalized,
       );
 
       if (!initiatorDetails) {
@@ -191,10 +194,10 @@ export const videoCallController = {
       let existingCall = null;
       for (const [callId, call] of activeCalls.entries()) {
         if (
-          ((call.initiator.id === initiatorId &&
-            call.receiver.id === receiverId) ||
-            (call.initiator.id === receiverId &&
-              call.receiver.id === initiatorId)) &&
+          ((String(call.initiator.id) === String(initiatorId) &&
+            String(call.receiver.id) === String(receiverId)) ||
+            (String(call.initiator.id) === String(receiverId) &&
+              String(call.receiver.id) === String(initiatorId))) &&
           call.status === "pending" &&
           call.isActive
         ) {
@@ -229,7 +232,7 @@ export const videoCallController = {
             id: receiverId,
             fullName: receiverDetails.fullName,
             anonymous: receiverDetails.anonymous,
-            type: receiverType,
+            type: receiverTypeNormalized,
             profilePhoto: receiverDetails.profilePhoto,
           };
           existingCall.requestMessage = message;
@@ -243,7 +246,7 @@ export const videoCallController = {
               callerId: initiatorId,
               initiatorType: initiatorType,
               receiverId: receiverId,
-              receiverType: receiverType,
+              receiverType: receiverTypeNormalized,
               callType: (callType === "voice" || callType === "audio") ? "voice" : "video",
               isActive: true,
               updatedAt: new Date(),
@@ -256,7 +259,7 @@ export const videoCallController = {
             const initiatorDisplayName = videoCallController.getDisplayName(
               initiatorDetails,
               receiverId,
-              receiverType,
+              receiverTypeNormalized,
               initiatorType,
             );
 
@@ -361,7 +364,7 @@ export const videoCallController = {
           id: receiverId,
           fullName: receiverDetails.fullName,
           anonymous: receiverDetails.anonymous,
-          type: receiverType,
+          type: receiverTypeNormalized,
           profilePhoto: receiverDetails.profilePhoto,
           email: receiverDetails.email,
           specialization: receiverDetails.specialization,
@@ -399,14 +402,14 @@ export const videoCallController = {
         const initiatorDisplayName = videoCallController.getDisplayName(
           initiatorDetails,
           receiverId,
-          receiverType,
+          receiverTypeNormalized,
           initiatorType,
         );
 
         videoCallController.emitToParticipant(
           global.io,
           receiverId,
-          receiverType,
+          receiverTypeNormalized,
           "incoming_call_request",
           {
             callId,
@@ -433,7 +436,7 @@ export const videoCallController = {
         callerId: initiatorId,
         initiatorType: initiatorType,
         receiverId: receiverId,
-        receiverType: receiverType,
+        receiverType: receiverTypeNormalized,
         callerName: initiatorDetails.fullName,
         receiverName: receiverDetails.fullName,
         callerAvatar: initiatorDetails.profilePhoto,
@@ -456,7 +459,7 @@ export const videoCallController = {
             displayName: videoCallController.getDisplayName(
               initiatorDetails,
               receiverId,
-              receiverType,
+              receiverTypeNormalized,
               initiatorType,
             ),
             fullName: initiatorDetails.fullName,
@@ -470,11 +473,11 @@ export const videoCallController = {
               receiverDetails,
               initiatorId,
               initiatorType,
-              receiverType,
+              receiverTypeNormalized,
             ),
             fullName: receiverDetails.fullName,
             isAnonymous: receiverDetails.anonymous,
-            type: receiverType,
+            type: receiverTypeNormalized,
             profilePhoto: receiverDetails.profilePhoto,
           },
           status: "pending",
@@ -502,7 +505,7 @@ export const videoCallController = {
 
       for (const [callId, call] of activeCalls.entries()) {
         if (
-          call.receiver.id === userId &&
+          String(call.receiver.id) === String(userId) &&
           call.status === "pending" &&
           call.isActive &&
           call.expiresAt &&
@@ -965,8 +968,8 @@ export const videoCallController = {
       }
 
       // Check if user is authorized
-      const isInitiator = call.initiator.id === userId;
-      const isReceiver = call.receiver.id === userId;
+      const isInitiator = String(call.initiator.id) === String(userId);
+      const isReceiver = String(call.receiver.id) === String(userId);
 
       if (!isInitiator && !isReceiver) {
         return res.status(403).json({
@@ -1168,7 +1171,7 @@ export const videoCallController = {
 
       // Check if user is a participant
       const isParticipant =
-        call.initiator.id === userId || call.receiver.id === userId;
+        String(call.initiator.id) === String(userId) || String(call.receiver.id) === String(userId);
 
       if (!isParticipant) {
         return res.status(403).json({
@@ -1183,7 +1186,7 @@ export const videoCallController = {
         : 0;
 
       const endedBy =
-        call.initiator.id === userId ? call.initiator : call.receiver;
+        String(call.initiator.id) === String(userId) ? call.initiator : call.receiver;
 
       // Save to history
       const historyEntry = {
@@ -1333,7 +1336,7 @@ export const videoCallController = {
       }
 
       // Check authorization
-      if (call.initiator.id !== userId) {
+      if (String(call.initiator.id) !== String(userId)) {
         return res.status(403).json({
           success: false,
           error: "Only the initiator can resend the request",
@@ -1655,9 +1658,9 @@ export const videoCallController = {
         if (
           call.status !== "ended" &&
           call.isActive &&
-          (call.initiator.id === userId || call.receiver.id === userId)
+          (String(call.initiator.id) === String(userId) || String(call.receiver.id) === String(userId))
         ) {
-          const isInitiator = call.initiator.id === userId;
+          const isInitiator = String(call.initiator.id) === String(userId);
           const otherParticipant = isInitiator ? call.receiver : call.initiator;
 
           // Get display name for the other participant

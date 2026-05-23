@@ -10,7 +10,7 @@ const router = express.Router();
 router.get("/stream/token", authenticateToken, getStreamToken);
 
 // Call Request Management
-router.post("/calls/initiate", videoCallController.initiateCall);
+router.post("/calls/initiate", authenticateToken, videoCallController.initiateCall);
 router.get("/calls/pending/:userId", videoCallController.getPendingRequests);
 router.put("/calls/:callId/accept", videoCallController.acceptCall);
 router.put("/calls/:callId/reject", videoCallController.rejectCall);
