@@ -21,8 +21,6 @@ const userSchema = new mongoose.Schema({
     },
     phoneNumber: {
         type: String,
-        unique: true,
-        sparse: true,
         required: function() { return !this.googleId; }
     },
     password: {
@@ -322,6 +320,18 @@ const userSchema = new mongoose.Schema({
 
 // Geospatial index for "find nearby counsellors" queries
 userSchema.index({ "locationData.current": "2dsphere" });
+
+// Phone number is required for local accounts, but Google accounts can be
+// created before the user completes their profile. A partial unique index keeps
+// real phone numbers unique while ignoring absent/null OAuth phone values.
+userSchema.index(
+    { phoneNumber: 1 },
+    {
+        unique: true,
+        name: "phoneNumber_1",
+        partialFilterExpression: { phoneNumber: { $type: "string" } }
+    }
+);
 
 // ✅ NO PRE-SAVE HOOK - We'll generate uniqueCode in the controller
 
