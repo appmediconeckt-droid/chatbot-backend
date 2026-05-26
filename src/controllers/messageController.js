@@ -78,9 +78,9 @@ export const startChat = async (req, res) => {
           existingChat.cancelledAt = null;
           existingChat.rejectedAt = null;
 
-          // Set new expiration time (10 seconds from now)
+          // Set new expiration time (30 seconds from now)
           const expiresAt = new Date();
-          expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+          expiresAt.setSeconds(expiresAt.getSeconds() + 30);
           existingChat.expiresAt = expiresAt;
 
           existingChat.updatedAt = new Date();
@@ -91,7 +91,7 @@ export const startChat = async (req, res) => {
             chatId: existingChat._id,
             senderId: req.user._id,
             senderRole: "user",
-            content: `🔄 Sending a new request. (Expires in 10 seconds)`,
+            content: `🔄 Sending a new request. (Expires in 30 seconds)`,
             contentType: "TEXT",
           });
 
@@ -184,9 +184,9 @@ export const startChat = async (req, res) => {
         existingChat.cancelledAt = null;
         existingChat.acceptedAt = null;
 
-        // Set expiration time (10 seconds from now)
+        // Set expiration time (30 seconds from now)
         const expiresAt = new Date();
-        expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+        expiresAt.setSeconds(expiresAt.getSeconds() + 30);
         existingChat.expiresAt = expiresAt;
 
         existingChat.updatedAt = new Date();
@@ -197,7 +197,7 @@ export const startChat = async (req, res) => {
           chatId: existingChat._id,
           senderId: req.user._id,
           senderRole: "user",
-          content: `👋 I'd like to start a conversation. (Request will expire in 10 seconds)`,
+          content: `👋 I'd like to start a conversation. (Request will expire in 30 seconds)`,
           contentType: "TEXT",
         });
 
@@ -237,9 +237,9 @@ export const startChat = async (req, res) => {
     // ONLY create new chat if NO existing chat exists
     console.log("No existing chat found, creating brand new chat");
 
-    // Set expiration time (10 seconds from now)
+    // Set expiration time (30 seconds from now)
     const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+    expiresAt.setSeconds(expiresAt.getSeconds() + 30);
 
     const chat = await Chat.create({
       userId: req.user._id,
@@ -255,7 +255,7 @@ export const startChat = async (req, res) => {
       chatId: chat._id,
       senderId: req.user._id,
       senderRole: "user",
-      content: `👋 Hello! I'd like to start a conversation with you. (Request will expire in 10 seconds)`,
+      content: `👋 Hello! I'd like to start a conversation with you. (Request will expire in 30 seconds)`,
       contentType: "TEXT",
     });
 
@@ -314,7 +314,7 @@ export const startChat = async (req, res) => {
         existingChat.acceptedAt = null;
 
         const expiresAt = new Date();
-        expiresAt.setSeconds(expiresAt.getSeconds() + 10);
+        expiresAt.setSeconds(expiresAt.getSeconds() + 30);
         existingChat.expiresAt = expiresAt;
 
         existingChat.updatedAt = new Date();
@@ -325,7 +325,7 @@ export const startChat = async (req, res) => {
           chatId: existingChat._id,
           senderId: req.user._id,
           senderRole: "user",
-          content: `🔄 Sending a new request. (Expires in 10 seconds)`,
+          content: `🔄 Sending a new request. (Expires in 30 seconds)`,
           contentType: "TEXT",
         });
 
@@ -566,7 +566,7 @@ export const cancelExpiredRequests = async () => {
         chatId: chat._id,
         senderId: null,
         senderRole: "system",
-        content: `⏰ Chat request automatically cancelled after 10 seconds. You can send a new request.`,
+        content: `⏰ Chat request automatically cancelled after 30 seconds. You can send a new request.`,
         contentType: "TEXT",
       });
 
