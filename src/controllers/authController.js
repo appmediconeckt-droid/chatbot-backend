@@ -28,6 +28,8 @@ const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
 // Store OTPs used for the "logout other devices" login flow
 const loginOTPStore = new Map();
+// Store OTPs used for unlinking Google accounts (requires confirm)
+const unlinkGoogleOTPStore = new Map();
 
 // Profile-change OTP flow (dashboard "edit email / phone"). Keyed by
 // `${userId}:${field}` so a user can have at most one pending change per
@@ -124,6 +126,17 @@ setInterval(
   },
   60 * 60 * 1000,
 );
+
+// Clean up unlink OTPs every hour
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, data] of unlinkGoogleOTPStore.entries()) {
+      if (data.expiresAt < now) unlinkGoogleOTPStore.delete(key);
+    }
+  },
+  60 * 60 * 1000,
+).unref?.();
 
 export const updateUserById = async (req, res) => {
   try {
@@ -544,6 +557,7 @@ export const updateUserById = async (req, res) => {
     // Other fields update freely.
     const basicFields = [
       "fullName",
+      "anonymous",
       "phoneNumber",
       "age",
       "gender",
@@ -573,6 +587,13 @@ export const updateUserById = async (req, res) => {
           }
           updates.email = incoming;
           updates.isEmailVerified = true;
+
+          // Changing the account email should detach the existing Google link.
+          // The profile data stays intact, but future Google sign-in must be
+          // performed again against the new email/account state.
+          updates.googleEmail = null;
+          updates.googleId = undefined;
+          updates.authProvider = "local";
         }
         continue;
       }
@@ -693,9 +714,28 @@ export const updateUserById = async (req, res) => {
     // 9. Update user
     // console.log("Applying updates...");
 
+    const unsetUpdates = {};
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "googleEmail") &&
+      updates.googleEmail === null
+    ) {
+      unsetUpdates.googleEmail = "";
+      delete updates.googleEmail;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "googleId") &&
+      updates.googleId === undefined
+    ) {
+      unsetUpdates.googleId = "";
+      delete updates.googleId;
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { $set: updates },
+      {
+        $set: updates,
+        ...(Object.keys(unsetUpdates).length > 0 ? { $unset: unsetUpdates } : {}),
+      },
       { new: true, runValidators: true },
     ).select("-password -emailOTP -phoneOTP");
 
@@ -710,6 +750,7 @@ export const updateUserById = async (req, res) => {
     const formattedUser = {
       _id: updatedUser._id,
       fullName: updatedUser.fullName,
+      anonymous: updatedUser.anonymous,
       email: updatedUser.email,
       phoneNumber: updatedUser.phoneNumber,
       age: updatedUser.age,
@@ -1665,8 +1706,45 @@ export const googleAuth = async (req, res) => {
     const fullName = payload.name || email.split("@")[0];
     const picture = payload.picture || null;
 
-    // 2. Look up existing user by email or googleId
-    let user = await User.findOne({ $or: [{ email }, { googleId }] });
+    // 2. Look up existing user.
+    //
+    // SECURITY: Google identity is the `sub` (googleId), NOT the email. A
+    // user can change their backend email from the dashboard, which means
+    // the email in our DB and the email from this Google payload can drift.
+    // If we used `$or: [{ email }, { googleId }]` naively, two failure modes
+    // appear:
+    //   (a) User signs up via Google as a@gmail.com, later changes their
+    //       backend email to b@yahoo.com. Signing in again with the same
+    //       Google account works (googleId matches) — but their backend
+    //       email is no longer the Google email. That's expected.
+    //   (b) Worse: a stranger owns a Google account for b@yahoo.com. They
+    //       click "Sign in with Google" and Google sends us their sub
+    //       (some other googleId) with email=b@yahoo.com. The naive query
+    //       matches our existing record by email and we silently log the
+    //       stranger into someone else's account.
+    //
+    // Fix: resolve by googleId first. Only fall back to email match when no
+    // googleId record exists, and even then refuse if the matched record is
+    // already bound to a *different* googleId.
+    let user = await User.findOne({ googleId });
+
+    if (!user) {
+      const byEmail = await User.findOne({ email });
+      if (byEmail) {
+        if (byEmail.googleId && byEmail.googleId !== googleId) {
+          // The email belongs to an account already linked to a different
+          // Google identity. Do not merge — that would let any Google user
+          // who happens to know this email take over the account.
+          return res.status(409).json({
+            message:
+              "This email is associated with a different Google account. Please sign in with the original Google account.",
+            success: false,
+            code: "GOOGLE_ID_MISMATCH",
+          });
+        }
+        user = byEmail;
+      }
+    }
 
     if (user) {
       // Role mismatch guard — same contract as /login. If the client said
@@ -1682,13 +1760,43 @@ export const googleAuth = async (req, res) => {
         });
       }
 
-      // Auto-merge: existing account, link Google if not already linked
+      // Auto-merge: existing local account (no googleId yet), link Google.
       if (!user.googleId) {
         user.googleId = googleId;
         // Don't overwrite authProvider for existing local users — they can use both
         if (!user.profilePhoto?.url && picture) {
           user.profilePhoto = { url: picture, publicId: null };
         }
+        await user.save();
+      }
+
+      // Track the last-seen Google email for this identity.
+      // If the user previously mirrored their Google email in their profile,
+      // keep it synced when Google changes. If they manually customized their
+      // profile email, don't overwrite it on login.
+      const currentEmail = String(user.email || "").toLowerCase();
+      const previousGoogleEmail = String(user.googleEmail || "").toLowerCase();
+      const shouldSyncProfileEmail =
+        user.authProvider === "google" &&
+        (!previousGoogleEmail || currentEmail === previousGoogleEmail);
+
+      if (user.googleId === googleId && email) {
+        user.googleEmail = email;
+
+        if (shouldSyncProfileEmail && currentEmail !== email) {
+          const taken = await User.findOne({ email, _id: { $ne: user._id } });
+          if (taken) {
+            return res.status(409).json({
+              success: false,
+              code: "EMAIL_IN_USE",
+              message:
+                "Your Google email is already in use by another account. Please contact support.",
+            });
+          }
+          user.email = email;
+          user.isEmailVerified = true;
+        }
+
         await user.save();
       }
 
@@ -1702,6 +1810,7 @@ export const googleAuth = async (req, res) => {
       const newUserData = {
         fullName,
         email,
+        googleEmail: email,
         googleId,
         authProvider: "google",
         role: requestedRole,
@@ -1724,20 +1833,23 @@ export const googleAuth = async (req, res) => {
       user = await User.create(newUserData);
     }
 
-    // 4. One-device policy — same as /login
-    const activeSession = await Session.findOne({
-      userId: user._id,
-      isActive: true,
-    });
-
-    if (activeSession) {
-      return res.status(409).json({
-        message: "Already login",
-        needLogout: true,
-        success: false,
-        email: user.email,
-      });
-    }
+    // 4. One-device policy — Google variant.
+    //
+    // For local /login we return 409 "Already login" and force the user
+    // through an email-OTP confirmation before killing the other device's
+    // session, because email+password alone shouldn't let someone bump an
+    // existing session (the password could be stolen).
+    //
+    // Google auth is different: Google has already cryptographically
+    // verified the user's identity (we just verified the ID token above).
+    // Requiring an extra OTP on top of that is redundant friction. So
+    // here we silently terminate any other active sessions and proceed
+    // to issue a fresh one — same end state as local login + OTP, just
+    // without the extra round-trip.
+    await Session.updateMany(
+      { userId: user._id, isActive: true },
+      { $set: { isActive: false, logoutAt: new Date() } },
+    );
 
     // 5. Create new session + tokens
     const sessionId = new mongoose.Types.ObjectId();
@@ -1795,6 +1907,269 @@ export const googleAuth = async (req, res) => {
       success: false,
       error: error.message,
     });
+  }
+};
+
+// ================= GOOGLE RE-LINK (Change linked Google account) =================
+// Requires the user to be logged in already (old account). Client sends a NEW
+// Google ID token; we verify it and re-bind googleId (sub) to this user.
+export const relinkGoogleAccount = async (req, res) => {
+  try {
+    const currentUser = req.user;
+    if (!currentUser) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
+    }
+
+    const { idToken } = req.body;
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google idToken is required",
+      });
+    }
+
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyErr) {
+      console.error("Google token verify failed (relink):", verifyErr.message);
+      return res.status(401).json({
+        success: false,
+        message: "Invalid Google token",
+      });
+    }
+
+    if (!payload?.sub || !payload?.email) {
+      return res.status(401).json({
+        success: false,
+        message: "Google token did not contain required fields",
+      });
+    }
+
+    if (!payload.email_verified) {
+      return res.status(401).json({
+        success: false,
+        message: "Google email is not verified",
+      });
+    }
+
+    const newGoogleId = String(payload.sub);
+    const newGoogleEmail = String(payload.email).trim().toLowerCase();
+
+    // If this Google identity is already linked to some other account, block.
+    const alreadyLinked = await User.findOne({
+      googleId: newGoogleId,
+      _id: { $ne: currentUser._id },
+    }).select("_id");
+
+    if (alreadyLinked) {
+      return res.status(409).json({
+        success: false,
+        code: "GOOGLE_ALREADY_LINKED",
+        message:
+          "This Google account is already linked to another user. Please sign in to that account instead.",
+      });
+    }
+
+    // Update bindings for this user.
+    const user = await User.findById(currentUser._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const previousGoogleEmail = String(user.googleEmail || "").toLowerCase();
+    const currentEmail = String(user.email || "").toLowerCase();
+    const shouldSyncProfileEmail =
+      user.authProvider === "google" &&
+      (!previousGoogleEmail || currentEmail === previousGoogleEmail);
+
+    user.googleId = newGoogleId;
+    user.googleEmail = newGoogleEmail;
+
+    if (shouldSyncProfileEmail && currentEmail !== newGoogleEmail) {
+      const taken = await User.findOne({
+        email: newGoogleEmail,
+        _id: { $ne: user._id },
+      }).select("_id");
+      if (taken) {
+        return res.status(409).json({
+          success: false,
+          code: "EMAIL_IN_USE",
+          message:
+            "Your Google email is already in use by another account. Please contact support.",
+        });
+      }
+      user.email = newGoogleEmail;
+      user.isEmailVerified = true;
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Google account linked successfully",
+      user: user.toJSON(),
+    });
+  } catch (error) {
+    console.error("relinkGoogleAccount error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error linking Google account",
+      error: error.message,
+    });
+  }
+};
+
+export const sendUnlinkGoogleOtp = async (req, res) => {
+  try {
+    const currentUser = req.user;
+    if (!currentUser) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
+    }
+
+    const user = await User.findById(currentUser._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.googleId) {
+      return res.status(400).json({
+        success: false,
+        code: "NOT_LINKED",
+        message: "This account is not linked to Google.",
+      });
+    }
+
+    // Safety: unlinking would lock out users who don't have a password.
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        code: "PASSWORD_REQUIRED",
+        message:
+          "Set a password first before unlinking Google, otherwise you may not be able to log in.",
+      });
+    }
+    if (!user.phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        code: "PHONE_REQUIRED",
+        message:
+          "Add a phone number first before unlinking Google, otherwise you may not be able to log in.",
+      });
+    }
+
+    const email = String(user.email || "").toLowerCase();
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required on the account to send OTP",
+      });
+    }
+
+    const otp = otpService.generateOTP();
+    unlinkGoogleOTPStore.set(String(user._id), {
+      otp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    await otpService.sendLoginOTP(email, otp);
+
+    const devOtp =
+      process.env.NODE_ENV !== "production" ? { devOtp: otp } : {};
+
+    return res.status(200).json({
+      success: true,
+      message: `OTP sent to ${email}`,
+      ...devOtp,
+    });
+  } catch (err) {
+    console.error("sendUnlinkGoogleOtp error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export const unlinkGoogleAccount = async (req, res) => {
+  try {
+    const currentUser = req.user;
+    if (!currentUser) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
+    }
+
+    const { otp } = req.body;
+    if (!otp) {
+      return res.status(400).json({ success: false, message: "OTP is required" });
+    }
+
+    const user = await User.findById(currentUser._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.googleId) {
+      return res.status(400).json({
+        success: false,
+        code: "NOT_LINKED",
+        message: "This account is not linked to Google.",
+      });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        code: "PASSWORD_REQUIRED",
+        message:
+          "Set a password first before unlinking Google, otherwise you may not be able to log in.",
+      });
+    }
+    if (!user.phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        code: "PHONE_REQUIRED",
+        message:
+          "Add a phone number first before unlinking Google, otherwise you may not be able to log in.",
+      });
+    }
+
+    const stored = unlinkGoogleOTPStore.get(String(user._id));
+    if (!stored) {
+      return res.status(400).json({
+        success: false,
+        message: "No OTP found — request a new one",
+      });
+    }
+    if (Date.now() > stored.expiresAt) {
+      unlinkGoogleOTPStore.delete(String(user._id));
+      return res.status(400).json({ success: false, message: "OTP expired" });
+    }
+    if (String(stored.otp) !== String(otp)) {
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+
+    // Unlink
+    user.googleId = undefined;
+    user.googleEmail = null;
+    user.authProvider = "local";
+    await user.save();
+    unlinkGoogleOTPStore.delete(String(user._id));
+
+    return res.status(200).json({
+      success: true,
+      message: "Google account unlinked successfully",
+      user: user.toJSON(),
+    });
+  } catch (err) {
+    console.error("unlinkGoogleAccount error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 

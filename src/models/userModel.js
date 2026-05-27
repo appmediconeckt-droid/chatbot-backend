@@ -35,6 +35,12 @@ const userSchema = new mongoose.Schema({
         // ABSENT, but counts docs where field === null. With default:null,
         // every local-signup user would collide on null.
     },
+    googleEmail: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: null
+    },
     authProvider: {
         type: String,
         enum: ["local", "google"],

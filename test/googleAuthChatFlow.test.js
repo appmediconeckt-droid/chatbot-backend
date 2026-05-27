@@ -12,6 +12,7 @@ import sinon from "sinon";
 import dotenv from "dotenv";
 import dns from "dns";
 import { OAuth2Client } from "google-auth-library";
+import otpService from "../src/services/otpService.js";
 
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 dotenv.config();
@@ -21,7 +22,8 @@ import User from "../src/models/userModel.js";
 import Chat from "../src/models/Chat.js";
 import Message from "../src/models/Message.js";
 import Session from "../src/models/sessionModel.js";
-import { googleAuth } from "../src/controllers/authController.js";
+import { googleAuth, relinkGoogleAccount } from "../src/controllers/authController.js";
+import { sendUnlinkGoogleOtp, unlinkGoogleAccount } from "../src/controllers/authController.js";
 import {
   startChat,
   acceptChat,
@@ -217,6 +219,196 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
 
     const userCount = await User.countDocuments({ email: googleEmail });
     expect(userCount, "exactly one user for this email").to.equal(1);
+  });
+
+  it("Google-linked account keeps login working when Google email changes (sync googleEmail + optional profile email sync)", async () => {
+    const googleSub = `gsub-sync-${uniq}`;
+    const oldEmail = `old-email-${uniq}@gchatflow.test`;
+
+    const user = await User.create({
+      fullName: `${TEST_TAG} sync ${uniq}`,
+      email: oldEmail,
+      googleEmail: oldEmail,
+      googleId: googleSub,
+      authProvider: "google",
+      role: "user",
+      isActive: true,
+      isEmailVerified: true,
+      locationData: {
+        current: { type: "Point", coordinates: [0, 0] },
+        history: [],
+      },
+    });
+
+    await Session.deleteMany({ userId: user._id });
+
+    const newGoogleEmail = `new-email-${uniq}@gchatflow.test`;
+    verifyStub.resolves({
+      getPayload: () => ({
+        email: newGoogleEmail,
+        email_verified: true,
+        sub: googleSub,
+        name: `${TEST_TAG} sync ${uniq}`,
+        picture: null,
+      }),
+    });
+
+    const req = { body: { idToken: "tok-sync", role: "user" }, headers: {} };
+    const res = makeRes();
+    await googleAuth(req, res);
+
+    expect(res.statusCode).to.equal(200);
+    expect(res.body).to.have.property("success", true);
+
+    const refreshed = await User.findById(user._id);
+    expect(refreshed).to.exist;
+    expect(refreshed.googleId).to.equal(googleSub);
+    expect(refreshed.googleEmail).to.equal(newGoogleEmail);
+    // Because profile email mirrored Google before, it should update too.
+    expect(refreshed.email).to.equal(newGoogleEmail);
+  });
+
+  it("relink Google account updates googleId and blocks old Google from logging in", async () => {
+    const oldGoogleSub = `gsub-old-${uniq}`;
+    const newGoogleSub = `gsub-new-${uniq}`;
+    const oldGoogleEmail = `old-google-${uniq}@gchatflow.test`;
+    const newGoogleEmail = `new-google-${uniq}@gchatflow.test`;
+
+    const user = await User.create({
+      fullName: `${TEST_TAG} relink ${uniq}`,
+      email: oldGoogleEmail,
+      googleEmail: oldGoogleEmail,
+      googleId: oldGoogleSub,
+      authProvider: "google",
+      role: "user",
+      isActive: true,
+      isEmailVerified: true,
+      locationData: {
+        current: { type: "Point", coordinates: [0, 0] },
+        history: [],
+      },
+    });
+
+    await Session.deleteMany({ userId: user._id });
+
+    // Relink call uses verifyIdToken once.
+    verifyStub.onCall(0).resolves({
+      getPayload: () => ({
+        email: newGoogleEmail,
+        email_verified: true,
+        sub: newGoogleSub,
+        name: `${TEST_TAG} relink ${uniq}`,
+        picture: null,
+      }),
+    });
+
+    const relinkReq = {
+      user,
+      body: { idToken: "tok-relink" },
+      headers: {},
+    };
+    const relinkRes = makeRes();
+    await relinkGoogleAccount(relinkReq, relinkRes);
+
+    expect(relinkRes.statusCode).to.equal(200);
+    expect(relinkRes.body).to.have.property("success", true);
+
+    const afterRelink = await User.findById(user._id);
+    expect(afterRelink.googleId).to.equal(newGoogleSub);
+    expect(afterRelink.googleEmail).to.equal(newGoogleEmail);
+
+    // Now try to login with the OLD Google identity.
+    // Expected: it must NOT log into the original account anymore. Depending on
+    // whether the old email still exists in our DB, it may be rejected as a
+    // mismatch or it may create a fresh new account.
+    await Session.deleteMany({ userId: user._id });
+    verifyStub.onCall(1).resolves({
+      getPayload: () => ({
+        email: oldGoogleEmail,
+        email_verified: true,
+        sub: oldGoogleSub,
+        name: `${TEST_TAG} relink ${uniq}`,
+        picture: null,
+      }),
+    });
+
+    const oldLoginReq = { body: { idToken: "tok-old", role: "user" }, headers: {} };
+    const oldLoginRes = makeRes();
+    await googleAuth(oldLoginReq, oldLoginRes);
+
+    expect([200, 409]).to.include(oldLoginRes.statusCode);
+    if (oldLoginRes.statusCode === 409) {
+      expect(oldLoginRes.body).to.have.property("code", "GOOGLE_ID_MISMATCH");
+    } else {
+      const oldLoggedInId = oldLoginRes.body.user._id || oldLoginRes.body.user.id;
+      expect(oldLoggedInId.toString()).to.not.equal(user._id.toString());
+    }
+
+    // And login with the NEW Google identity works and reuses the same user.
+    await Session.deleteMany({ userId: user._id });
+    verifyStub.onCall(2).resolves({
+      getPayload: () => ({
+        email: newGoogleEmail,
+        email_verified: true,
+        sub: newGoogleSub,
+        name: `${TEST_TAG} relink ${uniq}`,
+        picture: null,
+      }),
+    });
+
+    const newLoginReq = { body: { idToken: "tok-new", role: "user" }, headers: {} };
+    const newLoginRes = makeRes();
+    await googleAuth(newLoginReq, newLoginRes);
+
+    expect(newLoginRes.statusCode).to.equal(200);
+    expect(newLoginRes.body).to.have.property("success", true);
+    const loggedInId = newLoginRes.body.user._id || newLoginRes.body.user.id;
+    expect(loggedInId.toString()).to.equal(user._id.toString());
+  });
+
+  it("unlink Google account requires OTP and clears googleId", async () => {
+    const googleSub = `gsub-unlink-${uniq}`;
+    const email = `unlink-${uniq}@gchatflow.test`;
+
+    const user = await User.create({
+      fullName: `${TEST_TAG} unlink ${uniq}`,
+      email,
+      googleEmail: email,
+      googleId: googleSub,
+      authProvider: "google",
+      role: "user",
+      isActive: true,
+      isEmailVerified: true,
+      // ensure unlink is allowed
+      password: "hashed-placeholder",
+      phoneNumber: "9999999999",
+      locationData: {
+        current: { type: "Point", coordinates: [0, 0] },
+        history: [],
+      },
+    });
+
+    // Stub OTP email send
+    const otpStub = sinon.stub(otpService, "sendLoginOTP").resolves();
+    const genStub = sinon.stub(otpService, "generateOTP").returns("123456");
+
+    const sendReq = { user, body: {}, headers: {} };
+    const sendRes = makeRes();
+    await sendUnlinkGoogleOtp(sendReq, sendRes);
+    expect(sendRes.statusCode).to.equal(200);
+
+    const unlinkReq = { user, body: { otp: "123456" }, headers: {} };
+    const unlinkRes = makeRes();
+    await unlinkGoogleAccount(unlinkReq, unlinkRes);
+    expect(unlinkRes.statusCode).to.equal(200);
+
+    const refreshed = await User.findById(user._id);
+    expect(refreshed.googleId).to.not.exist;
+    expect(refreshed.googleEmail).to.equal(null);
+    expect(refreshed.authProvider).to.equal("local");
+
+    genStub.restore();
+    otpStub.restore();
   });
 
   it("Google auth with role mismatch is rejected with 403", async () => {

@@ -22,6 +22,9 @@ import {
   logoutOtherDevicesAndSendOTP,
   verifyLoginOTP,
   googleAuth,
+  relinkGoogleAccount,
+  sendUnlinkGoogleOtp,
+  unlinkGoogleAccount,
   sendProfileChangeOTP,
   verifyProfileChangeOTP,
 } from "../controllers/authController.js";
@@ -54,6 +57,9 @@ authRoutes.post(
 authRoutes.post("/login", loginUser);
 // Google OAuth (signup + login in one endpoint — handles both new and existing users)
 authRoutes.post("/google", googleAuth);
+authRoutes.post("/google/relink", authMiddleware, relinkGoogleAccount);
+authRoutes.post("/google/unlink/send-otp", authMiddleware, sendUnlinkGoogleOtp);
+authRoutes.post("/google/unlink", authMiddleware, unlinkGoogleAccount);
 // NEW routes for the one‑device flow
 authRoutes.post("/logout-other-devices", logoutOtherDevicesAndSendOTP);
 authRoutes.post("/verify-login-otp", verifyLoginOTP);
