@@ -703,6 +703,19 @@ export const updateUserById = async (req, res) => {
       });
     }
 
+    // 8a. Auto-set profileCompleted for counsellors when required fields are present
+    if (currentUser.role === "counsellor") {
+      const mergedSpec = updates.specialization ?? currentUser.specialization;
+      const mergedExp = updates.experience ?? currentUser.experience;
+      const mergedQual = updates.qualification ?? currentUser.qualification ?? updates.education ?? currentUser.education;
+      const mergedLoc = updates.location ?? currentUser.location;
+      const specOk = Array.isArray(mergedSpec) ? mergedSpec.length > 0 : !!mergedSpec;
+      const hasAllRequired = specOk && !!mergedExp && !!mergedQual && !!mergedLoc;
+      if (hasAllRequired) {
+        updates.profileCompleted = true;
+      }
+    }
+
     // 8. Validate phone number
     if (updates.phoneNumber && updates.phoneNumber.length !== 10) {
       return res.status(400).json({
