@@ -27,6 +27,7 @@ import {
   unlinkGoogleAccount,
   sendProfileChangeOTP,
   verifyProfileChangeOTP,
+  debugCounsellorByEmail,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
 import { authorizeRoles } from "../middleware/authorizeRoles.js";
@@ -83,6 +84,7 @@ authRoutes.post("/resendOtp", resendOtp);
 // PUBLIC COUNSELLOR ROUTES
 authRoutes.get("/counsellors", getAllCounsellors);
 authRoutes.get("/counsellors/:counsellorId", getCounsellorById);
+authRoutes.get("/debug/counsellor", debugCounsellorByEmail);
 
 // PROTECTED ROUTES
 authRoutes.get(

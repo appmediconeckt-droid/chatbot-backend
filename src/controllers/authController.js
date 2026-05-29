@@ -2602,6 +2602,19 @@ export const getAllCounsellors = async (req, res) => {
   }
 };
 
+// ================= TEMP DEBUG: check counsellor by email =================
+export const debugCounsellorByEmail = async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ message: 'email query required' });
+    const user = await User.findOne({ email }).select('fullName email role isActive profileCompleted specialization experience qualification education location googleId');
+    if (!user) return res.status(404).json({ message: 'not found' });
+    return res.status(200).json({ user });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+};
+
 // ================= GET SINGLE COUNSELLOR =================
 export const getCounsellorById = async (req, res) => {
   try {
