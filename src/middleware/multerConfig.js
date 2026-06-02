@@ -1,6 +1,43 @@
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "../config/cloudinary.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsRoot = path.resolve(__dirname, "../../uploads");
+
+const isCloudinaryConfigured = () =>
+  Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET,
+  );
+
+const getUploadFolder = (file) => {
+  if (file.fieldname === "profilePhoto") return "profile-photos";
+  return "certifications";
+};
+
+const localStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const folder = getUploadFolder(file);
+    const destination = path.join(uploadsRoot, folder);
+    fs.mkdirSync(destination, { recursive: true });
+    cb(null, destination);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    const base = path
+      .basename(file.originalname || "upload", ext)
+      .replace(/[^a-z0-9_-]/gi, "-")
+      .replace(/-+/g, "-")
+      .slice(0, 80);
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${base}${ext}`);
+  },
+});
 
 // Storage for profile photos
 const profileStorage = new CloudinaryStorage({
@@ -105,7 +142,7 @@ const fileFilter = (req, file, cb) => {
 // Create multer instance that accepts any fields
 // Create multer instance that accepts any fields
 const upload = multer({
-  storage: dynamicStorage,
+  storage: isCloudinaryConfigured() ? dynamicStorage : localStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
@@ -164,7 +201,7 @@ const chatAttachmentFilter = (req, file, cb) => {
 };
 
 const chatAttachmentUpload = multer({
-  storage: chatAttachmentStorage,
+  storage: isCloudinaryConfigured() ? chatAttachmentStorage : localStorage,
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
@@ -187,6 +224,20 @@ export const handleUserUpload = (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: err.message,
+      });
+    }
+
+    if (!isCloudinaryConfigured() && req.files?.length > 0) {
+      const origin = `${req.protocol}://${req.get("host")}`;
+      req.files = req.files.map((file) => {
+        const relativePath = path
+          .relative(uploadsRoot, file.path)
+          .replace(/\\/g, "/");
+        return {
+          ...file,
+          path: `${origin}/uploads/${relativePath}`,
+          localPath: file.path,
+        };
       });
     }
 
@@ -228,6 +279,18 @@ export const uploadChatAttachment = (req, res, next) => {
         success: false,
         error: err.message,
       });
+    }
+
+    if (!isCloudinaryConfigured() && req.file?.path) {
+      const origin = `${req.protocol}://${req.get("host")}`;
+      const relativePath = path
+        .relative(uploadsRoot, req.file.path)
+        .replace(/\\/g, "/");
+      req.file = {
+        ...req.file,
+        path: `${origin}/uploads/${relativePath}`,
+        localPath: req.file.path,
+      };
     }
 
     next();

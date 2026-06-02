@@ -179,7 +179,13 @@ export const updateUserById = async (req, res) => {
       // );
 
       // Delete old photo if exists
-      if (currentUser.profilePhoto && currentUser.profilePhoto.publicId) {
+      if (
+        process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET &&
+        currentUser.profilePhoto &&
+        currentUser.profilePhoto.publicId
+      ) {
         try {
           await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
           console.log("Deleted old profile photo");
@@ -2624,7 +2630,7 @@ export const getCounsellorById = async (req, res) => {
       _id: counsellorId,
       role: "counsellor",
       isActive: true,
-    }).select("-password");
+    });
 
     if (!counsellor) {
       return res
@@ -3033,8 +3039,12 @@ export const setPasswordByOtp = async (req, res) => {
       return res.status(404).json({ success: false, message: "No user found with this email" });
     }
 
-    if (user.password) {
-      return res.status(400).json({ success: false, message: "Account already has a password. Use changePassword (authenticated)." });
+    const wasPasswordSet = Boolean(user.password);
+    if (wasPasswordSet) {
+      const isSamePassword = await bcrypt.compare(password, user.password);
+      if (isSamePassword) {
+        return res.status(400).json({ success: false, message: "New password cannot be the same as the current password" });
+      }
     }
 
     user.password = await bcrypt.hash(password, 10);
@@ -3050,7 +3060,12 @@ export const setPasswordByOtp = async (req, res) => {
     // Optionally consume verification so it can't be reused for other actions
     verifiedUsersStore.delete(normalizedEmail);
 
-    return res.status(200).json({ success: true, message: "Password set successfully. Please log in." });
+    return res.status(200).json({
+      success: true,
+      message: wasPasswordSet
+        ? "Password reset successfully. Please log in."
+        : "Password set successfully. Please log in.",
+    });
   } catch (error) {
     console.error("setPasswordByOtp error:", error);
     return res.status(500).json({ success: false, message: "Error setting password" });
@@ -3105,7 +3120,7 @@ export const getAlluser = async (req, res) => {
 export const getUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findById(userId).select("-password");
+    const user = await User.findById(userId);
     if (!user)
       return res
         .status(404)

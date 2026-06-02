@@ -344,6 +344,7 @@ userSchema.index(
 // Remove sensitive data when converting to JSON
 userSchema.methods.toJSON = function() {
     const user = this.toObject();
+    user.hasPassword = Boolean(user.password);
     delete user.password;
     delete user.profilePhotoPublicId;
     delete user.emailOTP;
