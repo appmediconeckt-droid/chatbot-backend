@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
+import OTP from "../models/otpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
@@ -2994,7 +2995,7 @@ export const changePassword = async (req, res) => {
 // ================= SET PASSWORD BY OTP (unauthenticated, uses verifiedUsersStore)
 export const setPasswordByOtp = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, otp } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: "Email and password are required" });
@@ -3003,12 +3004,31 @@ export const setPasswordByOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
 
-    const verification = verifiedUsersStore.get(String(email).toLowerCase());
-    if (!verification || !verification.isEmailVerified) {
-      return res.status(400).json({ success: false, message: "Email not verified or verification session missing" });
+    const normalizedEmail = String(email).toLowerCase();
+    const verification = verifiedUsersStore.get(normalizedEmail);
+    let otpDoc = null;
+
+    if (!verification?.isEmailVerified) {
+      if (!otp) {
+        return res.status(400).json({ success: false, message: "Email not verified or verification session missing" });
+      }
+
+      const otpUser = await User.findOne({ email: normalizedEmail });
+      if (!otpUser) {
+        return res.status(404).json({ success: false, message: "No user found with this email" });
+      }
+
+      otpDoc = await OTP.findOne({ userId: otpUser._id, otp: String(otp) });
+      if (!otpDoc) {
+        return res.status(400).json({ success: false, message: "Invalid OTP" });
+      }
+      if (otpDoc.expiresAt < Date.now()) {
+        await OTP.deleteMany({ userId: otpUser._id });
+        return res.status(400).json({ success: false, message: "OTP expired" });
+      }
     }
 
-    const user = await User.findOne({ email: String(email).toLowerCase() });
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(404).json({ success: false, message: "No user found with this email" });
     }
@@ -3018,14 +3038,17 @@ export const setPasswordByOtp = async (req, res) => {
     }
 
     user.password = await bcrypt.hash(password, 10);
-    user.authProvider = user.authProvider || "local";
+    user.authProvider = "local";
     await user.save();
 
     // Invalidate any active sessions for safety
     await Session.updateMany({ userId: user._id, isActive: true }, { isActive: false, logoutAt: new Date() });
+    if (otpDoc) {
+      await OTP.deleteMany({ userId: user._id });
+    }
 
     // Optionally consume verification so it can't be reused for other actions
-    verifiedUsersStore.delete(String(email).toLowerCase());
+    verifiedUsersStore.delete(normalizedEmail);
 
     return res.status(200).json({ success: true, message: "Password set successfully. Please log in." });
   } catch (error) {
