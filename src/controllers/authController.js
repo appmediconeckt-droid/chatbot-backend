@@ -2916,6 +2916,124 @@ export const resetPassword = async (req, res) => {
   }
 };
 
+// ================= SET PASSWORD (for accounts without a password, e.g. Google accounts)
+export const setPassword = async (req, res) => {
+  try {
+    const user = req.user;
+    const { password } = req.body;
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Authentication required" });
+    }
+    if (!password || typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    }
+
+    const freshUser = await User.findById(user._id);
+    if (!freshUser) return res.status(404).json({ success: false, message: "User not found" });
+
+    if (freshUser.password) {
+      return res.status(400).json({ success: false, message: "Password already set for this account" });
+    }
+
+    freshUser.password = await bcrypt.hash(password, 10);
+    // Ensure local auth provider is set so user can login with password later
+    freshUser.authProvider = "local";
+    await freshUser.save();
+
+    return res.status(200).json({ success: true, message: "Password set successfully" });
+  } catch (error) {
+    console.error("setPassword error:", error);
+    return res.status(500).json({ success: false, message: "Error setting password" });
+  }
+};
+
+// ================= CHANGE PASSWORD (authenticated) =================
+export const changePassword = async (req, res) => {
+  try {
+    const user = req.user;
+    const { oldPassword, newPassword } = req.body;
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Authentication required" });
+    }
+    if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "New password must be at least 6 characters" });
+    }
+
+    const freshUser = await User.findById(user._id).select('+password');
+    if (!freshUser) return res.status(404).json({ success: false, message: "User not found" });
+
+    if (!freshUser.password) {
+      return res.status(400).json({ success: false, message: "No password set on this account. Use set-password first." });
+    }
+
+    const match = await bcrypt.compare(String(oldPassword || ''), freshUser.password);
+    if (!match) {
+      return res.status(401).json({ success: false, message: "Old password is incorrect" });
+    }
+
+    const isSame = await bcrypt.compare(newPassword, freshUser.password);
+    if (isSame) {
+      return res.status(400).json({ success: false, message: "New password cannot be the same as the old password" });
+    }
+
+    freshUser.password = await bcrypt.hash(newPassword, 10);
+    await freshUser.save();
+
+    // Invalidate all other active sessions for security
+    await Session.updateMany({ userId: freshUser._id, isActive: true }, { isActive: false, logoutAt: new Date() });
+
+    return res.status(200).json({ success: true, message: "Password changed successfully. Please log in again." });
+  } catch (error) {
+    console.error("changePassword error:", error);
+    return res.status(500).json({ success: false, message: "Error changing password" });
+  }
+};
+
+// ================= SET PASSWORD BY OTP (unauthenticated, uses verifiedUsersStore)
+export const setPasswordByOtp = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "Email and password are required" });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    }
+
+    const verification = verifiedUsersStore.get(String(email).toLowerCase());
+    if (!verification || !verification.isEmailVerified) {
+      return res.status(400).json({ success: false, message: "Email not verified or verification session missing" });
+    }
+
+    const user = await User.findOne({ email: String(email).toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "No user found with this email" });
+    }
+
+    if (user.password) {
+      return res.status(400).json({ success: false, message: "Account already has a password. Use changePassword (authenticated)." });
+    }
+
+    user.password = await bcrypt.hash(password, 10);
+    user.authProvider = user.authProvider || "local";
+    await user.save();
+
+    // Invalidate any active sessions for safety
+    await Session.updateMany({ userId: user._id, isActive: true }, { isActive: false, logoutAt: new Date() });
+
+    // Optionally consume verification so it can't be reused for other actions
+    verifiedUsersStore.delete(String(email).toLowerCase());
+
+    return res.status(200).json({ success: true, message: "Password set successfully. Please log in." });
+  } catch (error) {
+    console.error("setPasswordByOtp error:", error);
+    return res.status(500).json({ success: false, message: "Error setting password" });
+  }
+};
+
 // ================= HELPER FUNCTIONS =================
 export const registerUserOnly = async (req, res) => {
   return res.status(400).json({

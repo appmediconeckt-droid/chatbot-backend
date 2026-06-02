@@ -51,7 +51,14 @@ import connectDB from "./src/config/db.js";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 // IMPORTANT: Load environment variables FIRST
-dotenv.config();
+// Prefer an explicit .env path in src/ when running via nodemon from project root.
+dotenv.config({ path: process.env.DOTENV_PATH || "./src/.env" });
+
+if (!process.env.MONGO_URI) {
+  console.warn(
+    "⚠️ MONGO_URI is not defined. Ensure your .env is at project root or src/.env and contains MONGO_URI",
+  );
+}
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 

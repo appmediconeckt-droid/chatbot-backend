@@ -14,6 +14,9 @@ import {
   verifyPhoneOTP,
   completeRegistration,
   forgotPassword,
+  setPassword,
+  changePassword,
+  setPasswordByOtp,
   resetPassword,
   refreshAccessTokenHandler,
   logoutAllDevices,
@@ -66,6 +69,11 @@ authRoutes.post("/logout-other-devices", logoutOtherDevicesAndSendOTP);
 authRoutes.post("/verify-login-otp", verifyLoginOTP);
 
 authRoutes.post("/logout", authMiddleware, logout);
+// Password management for both users and counsellors
+authRoutes.post("/setPassword", authMiddleware, setPassword);
+authRoutes.post("/changePassword", authMiddleware, changePassword);
+// Unauthenticated endpoint: set password after email OTP verification
+authRoutes.post("/set-password-by-otp", setPasswordByOtp);
 authRoutes.post("/refresh-token", refreshAccessTokenHandler);
 authRoutes.post("/logout-all", authMiddleware, logoutAllDevices);
 

@@ -241,7 +241,6 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     });
 
     await Session.deleteMany({ userId: user._id });
-
     const newGoogleEmail = `new-email-${uniq}@gchatflow.test`;
     verifyStub.resolves({
       getPayload: () => ({
@@ -259,7 +258,6 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
 
     expect(res.statusCode).to.equal(200);
     expect(res.body).to.have.property("success", true);
-
     const refreshed = await User.findById(user._id);
     expect(refreshed).to.exist;
     expect(refreshed.googleId).to.equal(googleSub);
@@ -267,7 +265,6 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     // Because profile email mirrored Google before, it should update too.
     expect(refreshed.email).to.equal(newGoogleEmail);
   });
-
   it("relink Google account updates googleId and blocks old Google from logging in", async () => {
     const oldGoogleSub = `gsub-old-${uniq}`;
     const newGoogleSub = `gsub-new-${uniq}`;
@@ -317,10 +314,6 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     expect(afterRelink.googleId).to.equal(newGoogleSub);
     expect(afterRelink.googleEmail).to.equal(newGoogleEmail);
 
-    // Now try to login with the OLD Google identity.
-    // Expected: it must NOT log into the original account anymore. Depending on
-    // whether the old email still exists in our DB, it may be rejected as a
-    // mismatch or it may create a fresh new account.
     await Session.deleteMany({ userId: user._id });
     verifyStub.onCall(1).resolves({
       getPayload: () => ({
