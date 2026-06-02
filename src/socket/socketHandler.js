@@ -318,7 +318,12 @@ class SocketHandler {
       );
 
       if (updateResult.modifiedCount > 0) {
-        socket.to(chatRoom).emit("messages-read", { chatId: chat._id });
+        socket.to(chatRoom).emit("messages-read", {
+          chatId: chat._id,
+          publicChatId: chat.chatId,
+          readerRole: socket.userRole,
+          readAt: new Date(),
+        });
       }
 
       socket.emit("chat-joined", {
@@ -469,7 +474,12 @@ class SocketHandler {
 
       if (updateResult.modifiedCount > 0) {
         const chatRoom = `chat_${chat.chatId}`;
-        this.io.to(chatRoom).emit("messages-read", { chatId: chat._id });
+        this.io.to(chatRoom).emit("messages-read", {
+          chatId: chat._id,
+          publicChatId: chat.chatId,
+          readerRole: socket.userRole,
+          readAt: new Date(),
+        });
       }
     } catch (error) {
       console.error("Error marking messages as read:", error);

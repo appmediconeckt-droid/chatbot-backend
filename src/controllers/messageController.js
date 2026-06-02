@@ -898,9 +898,10 @@ export const getChatMessages = async (req, res) => {
     });
 
     // Mark messages as read
+    let readResult = null;
     if (chat.status === "accepted" || chat.status === "active") {
       if (req.user.role === "user") {
-        await Message.updateMany(
+        readResult = await Message.updateMany(
           {
             chatId: chat._id,
             senderRole: "counsellor",
@@ -909,7 +910,7 @@ export const getChatMessages = async (req, res) => {
           { isRead: true, readAt: new Date() },
         );
       } else {
-        await Message.updateMany(
+        readResult = await Message.updateMany(
           {
             chatId: chat._id,
             senderRole: "user",
@@ -918,6 +919,15 @@ export const getChatMessages = async (req, res) => {
           { isRead: true, readAt: new Date() },
         );
       }
+    }
+
+    if (readResult?.modifiedCount > 0 && global.io) {
+      global.io.to(`chat_${chat.chatId}`).emit("messages-read", {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        readerRole: req.user.role,
+        readAt: new Date(),
+      });
     }
 
     res.json({
@@ -1367,6 +1377,15 @@ export const markAllRead = async (req, res) => {
         $set: { isRead: true, readAt: new Date() },
       },
     );
+
+    if (result.modifiedCount > 0 && global.io) {
+      global.io.to(`chat_${chat.chatId}`).emit("messages-read", {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        readerRole: req.user.role,
+        readAt: new Date(),
+      });
+    }
 
     res.json({
       success: true,
