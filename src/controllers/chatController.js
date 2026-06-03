@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import OpenAI from "openai";
 import Chat from "../models/chatModel.js";
 import User from "../models/userModel.js";
 import { generateAIResponse } from "../services/aiService.js";
@@ -9,6 +10,13 @@ import { extractProfileFields, formatSituationSummary } from "../services/profil
 import { evaluateSafety } from "../services/safetyGuard.js";
 import { rankCounsellors, formatRankedForPrompt } from "../services/counsellorMatcher.js";
 
+let _openaiClient = null;
+const getOpenAIClient = () => {
+  if (!_openaiClient) {
+    _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openaiClient;
+};
 const MAX_HISTORY_TURNS = 10;
 
 export const chatWithAI = async (req, res) => {
@@ -695,5 +703,41 @@ export const devResetProfileFields = async (req, res) => {
   } catch (err) {
     console.error("devResetProfileFields error:", err);
     return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+
+// POST /api/ai-chat/tts
+// Body: { text: string, voice?: string }
+// Returns: audio/mpeg stream
+export const textToSpeech = async (req, res) => {
+  try {
+    const { text, voice = "nova" } = req.body;
+
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return res.status(400).json({ success: false, message: "`text` is required" });
+    }
+
+    const truncated = text.trim().slice(0, 4096);
+
+    const mp3Response = await getOpenAIClient().audio.speech.create({
+      model: "tts-1",
+      voice,
+      input: truncated,
+      response_format: "mp3",
+    });
+
+    const audioBuffer = Buffer.from(await mp3Response.arrayBuffer());
+
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": audioBuffer.length,
+      "Cache-Control": "no-store",
+    });
+
+    return res.send(audioBuffer);
+  } catch (err) {
+    console.error("[TTS] error:", err.message);
+    return res.status(500).json({ success: false, message: "TTS failed", details: err.message });
   }
 };

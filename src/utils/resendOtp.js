@@ -1,49 +1,39 @@
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
-import { sendOtpMail } from "../utils/sendMail.js";
+import otpService from "../services/otpService.js";
 
-// ================= RESEND OTP (Simplified) =================
+// ================= RESEND OTP =================
 export const resendOtp = async (req, res) => {
   try {
     const { email } = req.body;
 
-    // Find user
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-        success: false
-      });
+    if (!email) {
+      return res.status(400).json({ message: "Email is required", success: false });
     }
 
-    // Generate new OTP
-    const otp = Math.floor(100000 + Math.random() * 900000);
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
-    // Delete old OTPs
+    if (!user) {
+      return res.status(404).json({ message: "User not found", success: false });
+    }
+
+    const otp = otpService.generateOTP();
+
     await OTP.deleteMany({ userId: user._id });
 
-    // Save new OTP
     await OTP.create({
       userId: user._id,
-      otp,
-      expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+      otp: String(otp),
+      expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
-    // Send email
-    await sendOtpMail(user.email, otp);
+    await otpService.sendLoginOTP(normalizedEmail, otp);
 
-    return res.status(200).json({
-      message: "OTP resent successfully",
-      success: true
-    });
+    return res.status(200).json({ message: "OTP resent successfully", success: true });
 
   } catch (error) {
-    console.log(error);
-    
-    return res.status(500).json({
-      message: "Error in resending OTP",
-      success: false
-    });
+    console.error("resendOtp error:", error);
+    return res.status(500).json({ message: "Error resending OTP. Please try again.", success: false });
   }
 };

@@ -3,6 +3,7 @@ import { optionalAuth } from "../middleware/authMiddleware.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 import {
   chatWithAI,
+  textToSpeech,
   clearMyChatHistory,
   devClearChatsForUserId,
   devResetProfileFields,
@@ -11,6 +12,7 @@ import {
 const router = express.Router();
 
 router.post("/send-message", optionalAuth, chatWithAI);
+router.post("/tts", optionalAuth, textToSpeech);
 // User-triggered: wipe the caller's own chat history so onboarding can
 // trigger fresh. Auth required — users can only clear their OWN messages.
 router.delete("/my-history", authMiddleware, clearMyChatHistory);
