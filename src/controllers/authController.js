@@ -200,6 +200,37 @@ export const updateUserById = async (req, res) => {
         format: profileFile.format || null,
         bytes: profileFile.bytes || null,
       };
+    } else if (req.body.avatarUrl && typeof req.body.avatarUrl === "string" && req.body.avatarUrl.startsWith("http")) {
+      // Avatar URL from generator (DiceBear etc.) — store directly, no file upload
+      if (
+        process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET &&
+        currentUser.profilePhoto &&
+        currentUser.profilePhoto.publicId
+      ) {
+        try {
+          await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
+        } catch (err) {
+          console.error("Error deleting old photo on avatar switch:", err);
+        }
+      }
+      updates.profilePhoto = { url: req.body.avatarUrl, publicId: null };
+    } else if (req.body.removeProfilePhoto === "true") {
+      if (
+        process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET &&
+        currentUser.profilePhoto &&
+        currentUser.profilePhoto.publicId
+      ) {
+        try {
+          await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
+        } catch (err) {
+          console.error("Error deleting photo on remove:", err);
+        }
+      }
+      updates.profilePhoto = null;
     }
 
     // 2. Handle Certifications - FIXED: Properly handle document URLs and DELETION

@@ -170,8 +170,16 @@ export const chatWithAI = async (req, res) => {
         })
       : null;
 
-    // Detect language
-    const detectedLanguage = detectLanguage(message);
+    // Use client-selected language if provided, otherwise detect from message text
+    const clientLang = req.body.language; // e.g. "hi-IN", "ta-IN", "en-IN"
+    const clientLangCode = clientLang ? clientLang.split('-')[0] : null;
+    const detectedLanguage = clientLangCode
+      ? { code: clientLangCode, name: ({
+          hi: 'Hindi', ta: 'Tamil', te: 'Telugu', kn: 'Kannada',
+          ml: 'Malayalam', bn: 'Bengali', gu: 'Gujarati', mr: 'Marathi',
+          pa: 'Punjabi', en: 'English',
+        }[clientLangCode] || 'English') }
+      : detectLanguage(message);
 
     // Analyze mood
     const moodAnalysis = analyzeMood(message);
@@ -411,13 +419,65 @@ HOW TO RECOMMEND (only when the rules above are met):
 
 ═══════════════════════════════════════════════════════════════
 
+🌐 LANGUAGE & RESPONSE STYLE — CRITICAL:
+${detectedLanguage.code === 'hi' ? `
+HINDI MODE — Write ALL responses in Hinglish (Hindi words spelled in English letters / Roman script).
+DO NOT use Devanagari script (no हिंदी लिपि). Write exactly like Indians text each other.
+Examples of correct Hinglish style:
+  - "Aap bilkul theek feel kar rahe ho, tension mat lo."
+  - "Yeh bahut common hai, aap akele nahi ho."
+  - "Try karo: 10 minute ke liye ankhein band karo aur gehri saansein lo."
+NEVER write: "आप बिल्कुल ठीक हैं" — always write: "Aap bilkul theek hain"
+` : ''}${detectedLanguage.code === 'ta' ? `
+TAMIL MODE — Write responses in Tamil-English mix (Tanglish). Tamil words in Roman script.
+Example: "Neenga romba nalla pannuringa, tension padaathinga. Oru nimisham kannai moodi, mella moochu viduvom."
+` : ''}${detectedLanguage.code === 'te' ? `
+TELUGU MODE — Write responses in Telugu-English mix (Tenglish). Telugu words in Roman script.
+Example: "Meeru chala bagunnaru, worry cheyyakandi. Oka minute kannu moosukooni, mella breath teesukoni."
+` : ''}${detectedLanguage.code === 'kn' ? `
+KANNADA MODE — Write responses in Kannada-English mix. Kannada words in Roman script.
+Example: "Neevu tumba chennagi maduttaiddeeri, chintisi beedi. Ondu nimisha kannu muuchi, nidhanavaagi ushiraadu."
+` : ''}${detectedLanguage.code === 'ml' ? `
+MALAYALAM MODE — Write responses in Malayalam-English mix. Malayalam words in Roman script.
+Example: "Ningal valare nannayirikkunnu, veyarikaruthu. Oru nimisham kannu adachu, sanamayi shwasikkuka."
+` : ''}${detectedLanguage.code === 'bn' ? `
+BENGALI MODE — Write responses in Banglish (Bengali words in Roman script).
+Example: "Tumi khub bhalo korcho, chinta koro na. Ek minute chokh bondho kore, dhire dhire shwas nao."
+` : ''}${detectedLanguage.code === 'mr' ? `
+MARATHI MODE — Write responses in Marathi-English mix. Marathi words in Roman script.
+Example: "Tumi khup chhan karat ahat, turunt kaahi hovat nahi. Ek minute dola mitta karoon, sahaj shwas ghya."
+` : ''}${detectedLanguage.code === 'gu' ? `
+GUJARATI MODE — Write responses in Gujarati-English mix. Gujarati words in Roman script.
+Example: "Tame khub saaru karo chho, chinta na karo. Ek minute aankhon band kari ne, dhire dhire shwas lo."
+` : ''}${(detectedLanguage.code === 'en') ? `
+ENGLISH MODE — Use Indian English style, warm and conversational. Not American formal.
+` : ''}
+
+🚻 GENDER-AWARE GRAMMAR — MANDATORY:
+User's gender from profile: ${knownProfile?.gender || 'unknown'}
+${(knownProfile?.gender === 'female' || knownProfile?.gender === 'Female') ? `
+The user is FEMALE. Use FEMALE grammatical forms in all Indian languages:
+- Hindi/Hinglish: use "-i" / "-gi" endings: "kar sakti ho", "theek ho jaogi", "aap achhi ho"
+  NEVER use male forms: "kar sakta", "theek ho jaoge", "aap achhe ho"
+- Examples of correct female Hinglish:
+  ✅ "Aap bahut strong hain, yeh kar sakti ho"
+  ✅ "Tension mat lo, theek ho jaogi"
+  ✅ "Aap akeli nahi ho"
+  ❌ WRONG: "kar sakta ho", "theek ho jaoge", "akele nahi ho"
+` : (knownProfile?.gender === 'male' || knownProfile?.gender === 'Male') ? `
+The user is MALE. Use MALE grammatical forms in all Indian languages:
+- Hindi/Hinglish: use "-a" / "-ga" endings: "kar sakta ho", "theek ho jaoge", "aap achhe ho"
+` : `
+Gender unknown — use gender-neutral phrasing where possible.
+`}
+
 ✅ DO THIS:
 - Validate their emotion briefly (1 line)
 - Give SPECIFIC, practical, actionable tips IMMEDIATELY
 - Offer 2–3 things they can try right now
 - Only suggest counselor if needed
 - Keep language simple and supportive
-- Respond in ${detectedLanguage.name}
+- Respond in ${detectedLanguage.name} using the style rules above
 
 ❌ DON'T DO THIS:
 - Open with a clarifying question instead of advice
@@ -447,38 +507,73 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
       isFirstTurn && !(crisisDetection.isCrisis && crisisDetection.level !== "medium");
 
     if (isFirstTurnOnboarding) {
-      const isHindi = detectedLanguage.name === "Hindi";
+      const lang = detectedLanguage.code;
       const hasAge = !!knownProfile?.age;
       const hasGender = !!knownProfile?.gender;
       const hasFullProfile = hasAge && hasGender;
       const isGuest = !userId;
 
-      // Mood-check quick replies — frontend renders these as tap buttons so
-      // the user doesn't have to type to respond.
-      const moodQuickReplies = isHindi
-        ? ["😢 Udaas", "😐 Theek", "🙂 Acha", "✨ Bahut acha"]
-        : ["😢 Low", "😐 Okay", "🙂 Good", "✨ Great"];
+      const QUICK_REPLIES = {
+        hi: ['😢 Udaas', '😐 Theek', '🙂 Acha', '✨ Bahut acha'],
+        ta: ['😢 Kashtam', '😐 Sari', '🙂 Nalla irukken', '✨ Romba nalla'],
+        te: ['😢 Baadhaga', '😐괜찮아', '🙂 Bagunnanu', '✨ Chaala bagunnanu'],
+        kn: ['😢 Kashta', '😐 Parvaagilla', '🙂 Chennaagide', '✨ Tumba chennaagide'],
+        ml: ['😢 Dukham', '😐 Sari', '🙂 Nannayirikkunnu', '✨ Valare nannayirikkunnu'],
+        bn: ['😢 Kharap', '😐 Theek ache', '🙂 Bhalo', '✨ Khub bhalo'],
+        mr: ['😢 Waaeet', '😐 Theek', '🙂 Chhan', '✨ Khup chhan'],
+        gu: ['😢 Kharab', '😐 Thaik', '🙂 Saaru', '✨ Khub saaru'],
+      }
+      const moodQuickReplies = QUICK_REPLIES[lang] || ["😢 Low", "😐 Okay", "🙂 Good", "✨ Great"];
+
+      const GREETINGS = {
+        hi: {
+          full:    "Hi! Wapas aane ke liye shukriya 💙 Abhi kaisa feel ho raha hai?",
+          noAll:   "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Aapko behtar help dene ke liye — aapki umar kya hai aur aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?",
+          noAge:   "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aapki umar kya hai? Aur abhi kaisa feel ho raha hai?",
+          noGend:  "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?",
+        },
+        ta: {
+          full:    "Vanakkam! Thirumba vandhadharku nandri 💙 Ippo eppadi irukkeenga?",
+          noAll:   "Vanakkam! Naan MindHelper. Ungalukku sari seidha help kodukkanum — ungal vayasu enna, neenga male-a, female-a illa vere-a? Ippo eppadi feel pannreenga?",
+          noAge:   "Vanakkam! Thirumba vandhadharku nandri 💙 Oru vishayam — ungal vayasu enna? Ippo eppadi feel pannreenga?",
+          noGend:  "Vanakkam! Thirumba vandhadharku nandri 💙 Oru vishayam — neenga male-a, female-a illa vere-a? Ippo eppadi feel pannreenga?",
+        },
+        te: {
+          full:    "Namaskaram! Thirigi ravadaniki dhanyavadalu 💙 Ipudu ela unnaru?",
+          noAll:   "Namaskaram! Nenu MindHelper. Mee ki manchiga sahayam cheyyalanante — mee vayassu enti, meru male-a, female-a? Ipudu ela feel avutunnaru?",
+          noAge:   "Namaskaram! Thirigi ravadaniki dhanyavadalu 💙 Oka vishayam — mee vayassu enti? Ipudu ela feel avutunnaru?",
+          noGend:  "Namaskaram! Thirigi ravadaniki dhanyavadalu 💙 Oka vishayam — meru male-a, female-a? Ipudu ela feel avutunnaru?",
+        },
+        kn: {
+          full:    "Namaskara! Matte bandidakke dhanyavadagalu 💙 Iga hege iddeera?",
+          noAll:   "Namaskara! Naanu MindHelper. Nimage uttama sahaya nidbekadare — nimma vayassu eshtu, neevu male-a, female-a? Iga hege feel aaguttide?",
+          noAge:   "Namaskara! Matte bandidakke dhanyavadagalu 💙 Ondu vishaya — nimma vayassu eshtu? Iga hege feel aaguttide?",
+          noGend:  "Namaskara! Matte bandidakke dhanyavadagalu 💙 Ondu vishaya — neevu male-a, female-a? Iga hege feel aaguttide?",
+        },
+        bn: {
+          full:    "Namaskar! Phire ashar jonno dhonyobad 💙 Ekhon kemon lagche?",
+          noAll:   "Namaskar! Ami MindHelper. Apnake bhalo sahajyo dite — apnar boyos koto, apni male na female? Ar ekhon kemon feel korchen?",
+          noAge:   "Namaskar! Phire ashar jonno dhonyobad 💙 Ekta kotha — apnar boyos koto? Ekhon kemon feel korchen?",
+          noGend:  "Namaskar! Phire ashar jonno dhonyobad 💙 Ekta kotha — apni male na female? Ekhon kemon feel korchen?",
+        },
+        mr: {
+          full:    "Namaskar! Parat aalyabaddal aabhari 💙 Adhi kaasa vaatata?",
+          noAll:   "Namaskar! Mi MindHelper ahe. Tumhala changali madad karayla — tumchi umar kiti, tumi male ka female? Adhi kaasa feel hotay?",
+          noAge:   "Namaskar! Parat aalyabaddal aabhari 💙 Ek gosht — tumchi umar kiti? Adhi kaasa feel hotay?",
+          noGend:  "Namaskar! Parat aalyabaddal aabhari 💙 Ek gosht — tumi male ka female? Adhi kaasa feel hotay?",
+        },
+      };
+
+      const g = GREETINGS[lang] || null;
 
       if (hasFullProfile) {
-        // Returning user with everything we need — friendly welcome + mood check.
-        aiResponse = isHindi
-          ? "Hi! Wapas aane ke liye shukriya 💙 Abhi kaisa feel ho raha hai?"
-          : "Hi! Welcome back 💙 How are you feeling right now?";
+        aiResponse = g?.full || "Hi! Welcome back 💙 How are you feeling right now?";
       } else if (isGuest || (!hasAge && !hasGender)) {
-        // Guest OR logged-in user missing both fields — ask both, warmly.
-        aiResponse = isHindi
-          ? "Hi! Main MindHelper hu, bahut khushi hui aapne yahan baat ki. Aapko behtar help dene ke liye — aapki umar kya hai aur aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?"
-          : "Hi! I'm MindHelper, really glad you reached out. To help you best — could you share your age and how you identify (male, female, or other)? And how are you feeling right now?";
+        aiResponse = g?.noAll || "Hi! I'm MindHelper, really glad you reached out. To help you best — could you share your age and how you identify (male, female, or other)? And how are you feeling right now?";
       } else if (!hasAge) {
-        // Logged-in via Google, missing age only.
-        aiResponse = isHindi
-          ? "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aapki umar kya hai? (Behtar tips dene ke liye.) Aur abhi kaisa feel ho raha hai?"
-          : "Hi! Welcome back 💙 Quick thing — could you share your age? (Helps me give better tips.) And how are you feeling right now?";
+        aiResponse = g?.noAge || "Hi! Welcome back 💙 Quick thing — could you share your age? (Helps me give better tips.) And how are you feeling right now?";
       } else {
-        // Logged-in via Google, missing gender only.
-        aiResponse = isHindi
-          ? "Hi! Wapas aane ke liye shukriya 💙 Ek chhoti si baat — aap male hain, female ya something else? Aur abhi kaisa feel ho raha hai?"
-          : "Hi! Welcome back 💙 Quick thing — how do you identify (male, female, or other)? And how are you feeling right now?";
+        aiResponse = g?.noGend || "Hi! Welcome back 💙 Quick thing — how do you identify (male, female, or other)? And how are you feeling right now?";
       }
 
       // Save and return immediately, skipping Gemini.
@@ -707,37 +802,55 @@ export const devResetProfileFields = async (req, res) => {
 };
 
 
-// POST /api/ai-chat/tts
-// Body: { text: string, voice?: string }
-// Returns: audio/mpeg stream
+// Shared TTS logic — always shimmer (female, Indian-accented English, works well for Hinglish/romanized Indian languages)
+async function generateTTSAudio(text) {
+  const truncated = String(text).trim().slice(0, 4096);
+  const mp3Response = await getOpenAIClient().audio.speech.create({
+    model: "tts-1",
+    voice: "shimmer",
+    input: truncated,
+    response_format: "mp3",
+  });
+  return Buffer.from(await mp3Response.arrayBuffer());
+}
+
+// POST /api/ai-chat/tts — web version (body: { text })
 export const textToSpeech = async (req, res) => {
   try {
-    const { text, voice = "nova" } = req.body;
-
+    const { text } = req.body;
     if (!text || typeof text !== "string" || text.trim().length === 0) {
       return res.status(400).json({ success: false, message: "`text` is required" });
     }
-
-    const truncated = text.trim().slice(0, 4096);
-
-    const mp3Response = await getOpenAIClient().audio.speech.create({
-      model: "tts-1",
-      voice,
-      input: truncated,
-      response_format: "mp3",
-    });
-
-    const audioBuffer = Buffer.from(await mp3Response.arrayBuffer());
-
+    const audioBuffer = await generateTTSAudio(text);
     res.set({
       "Content-Type": "audio/mpeg",
       "Content-Length": audioBuffer.length,
       "Cache-Control": "no-store",
     });
-
     return res.send(audioBuffer);
   } catch (err) {
-    console.error("[TTS] error:", err.message);
+    console.error("[TTS POST] error:", err.message);
+    return res.status(500).json({ success: false, message: "TTS failed", details: err.message });
+  }
+};
+
+// GET /api/ai-chat/tts?text=... — mobile app version
+export const textToSpeechGet = async (req, res) => {
+  try {
+    const { text } = req.query;
+    if (!text || String(text).trim().length === 0) {
+      return res.status(400).json({ success: false, message: "`text` query param is required" });
+    }
+    const audioBuffer = await generateTTSAudio(text);
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": audioBuffer.length,
+      "Cache-Control": "no-store",
+      "Accept-Ranges": "bytes",
+    });
+    return res.send(audioBuffer);
+  } catch (err) {
+    console.error("[TTS GET] error:", err.message);
     return res.status(500).json({ success: false, message: "TTS failed", details: err.message });
   }
 };
