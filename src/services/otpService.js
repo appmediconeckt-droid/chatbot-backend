@@ -7,7 +7,16 @@ import twilio from "twilio";
 const FROM_NAME = "Mediconeckt Global Pvt Ltd";
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
-const FROM_EMAIL = process.env.EMAIL_FROM;
+const FROM_EMAIL = process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.EMAIL || "support@mediconeckt.com";
+
+// Validate that FROM_EMAIL is set
+if (!FROM_EMAIL || FROM_EMAIL === "support@mediconeckt.com") {
+  console.warn('⚠️ WARNING: Using fallback sender email. Please verify it in Brevo dashboard.');
+  console.warn('   Current FROM_EMAIL:', FROM_EMAIL);
+  console.warn('   Set EMAIL_FROM in .env to a verified Brevo sender.');
+} else {
+  console.log('✅ Sender email configured:', FROM_EMAIL);
+}
 
 async function sendBrevoEmail({ to, subject, html, text }) {
   // Ensure textContent is never undefined (MIME_HTML_ONLY compliance)
