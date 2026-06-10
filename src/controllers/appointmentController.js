@@ -1,6 +1,31 @@
 // mindCrawller/src/controllers/appointmentController.js
 import Appointment from "../models/appointmentModel.js";
 
+// IST (India Standard Time) is UTC+5:30
+const IST_OFFSET = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+
+// Convert any date to IST
+const toIST = (date) => {
+  const utcDate = new Date(date);
+  return new Date(utcDate.getTime() + IST_OFFSET);
+};
+
+// Get start of day in IST
+const getStartOfDayIST = (date) => {
+  const istDate = toIST(date);
+  const startOfDay = new Date(istDate);
+  startOfDay.setHours(0, 0, 0, 0);
+  return new Date(startOfDay.getTime() - IST_OFFSET); // Convert back to UTC
+};
+
+// Get end of day in IST
+const getEndOfDayIST = (date) => {
+  const istDate = toIST(date);
+  const endOfDay = new Date(istDate);
+  endOfDay.setHours(23, 59, 59, 999);
+  return new Date(endOfDay.getTime() - IST_OFFSET); // Convert back to UTC
+};
+
 export const book = async (req, res) => {
   try {
     const { counselorId, date, notes } = req.body;
@@ -46,38 +71,31 @@ export const getAppointments = async (req, res) => {
     let dateFilter = {};
     const now = new Date();
 
-    // ✅ DATE-WISE FILTER (NEW)
+    // ✅ DATE-WISE FILTER (NEW) - WITH IST TIMEZONE
     if (date) {
       const selectedDate = new Date(date);
-
-      const startOfDay = new Date(selectedDate);
-      startOfDay.setHours(0, 0, 0, 0);
-
-      const endOfDay = new Date(selectedDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      const startOfDay = getStartOfDayIST(selectedDate);
+      const endOfDay = getEndOfDayIST(selectedDate);
 
       dateFilter = {
         date: { $gte: startOfDay, $lte: endOfDay },
       };
     }
 
-    // ✅ EXISTING FILTERS
+    // ✅ EXISTING FILTERS - WITH IST TIMEZONE
     else if (filter === "today") {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-
-      const endOfDay = new Date();
-      endOfDay.setHours(23, 59, 59, 999);
+      const startOfDay = getStartOfDayIST(now);
+      const endOfDay = getEndOfDayIST(now);
 
       dateFilter = {
         date: { $gte: startOfDay, $lte: endOfDay },
       };
     } else if (filter === "last7days") {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(now.getDate() - 7);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const startOfDay = getStartOfDayIST(sevenDaysAgo);
 
       dateFilter = {
-        date: { $gte: sevenDaysAgo, $lte: now },
+        date: { $gte: startOfDay, $lte: getEndOfDayIST(now) },
       };
     }
 
