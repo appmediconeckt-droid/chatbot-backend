@@ -166,7 +166,7 @@ export const downloadReport = async (req, res) => {
 
         // Create a PDF document
         const doc = new PDFDocument({
-            margin: 50,
+            margin: 40,
             size: 'A4'
         });
 
@@ -177,86 +177,147 @@ export const downloadReport = async (req, res) => {
         // Pipe document to response
         doc.pipe(res);
 
-        // Header
-        doc.fontSize(24).font('Helvetica-Bold').text('Wallet Transaction Report', { align: 'center' });
-        doc.fontSize(10).font('Helvetica').text(`Generated on: ${new Date().toLocaleString()}`, { align: 'center' });
-        doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).stroke();
-        doc.moveDown();
+        // ===== HEADER =====
+        doc.fontSize(26).font('Helvetica-Bold').fillColor('#667eea').text('WALLET REPORT', { align: 'center' });
+        doc.fontSize(10).font('Helvetica').fillColor('#666666');
+        doc.text(`Generated: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`, { align: 'center' });
+        doc.moveTo(40, doc.y + 8).lineTo(555, doc.y + 8).stroke('#667eea');
+        doc.moveDown(1);
 
-        // User Information
-        doc.fontSize(12).font('Helvetica-Bold').text('User Information');
-        doc.fontSize(10).font('Helvetica');
+        // ===== USER INFORMATION SECTION =====
+        doc.fontSize(13).font('Helvetica-Bold').fillColor('#0b1c30').text('👤 User Information');
+        doc.fontSize(10).font('Helvetica').fillColor('#333333');
         doc.text(`Name: ${user.name || 'N/A'}`);
         doc.text(`Email: ${user.email || 'N/A'}`);
         doc.text(`Phone: ${user.phone || 'N/A'}`);
-        doc.text(`Current Balance: ₹${(user.walletBalance || 0).toFixed(2)}`);
-        doc.moveDown();
+        doc.fontSize(11).font('Helvetica-Bold').fillColor('#667eea').text(`Current Balance: ₹${(user.walletBalance || 0).toFixed(2)}`);
+        doc.moveDown(0.8);
 
-        // Transaction Summary
+        // ===== SUMMARY SECTION =====
         const totalCredit = transactions.filter(t => t.type === 'credit').reduce((acc, t) => acc + t.amount, 0);
         const totalDebit = transactions.filter(t => t.type === 'debit').reduce((acc, t) => acc + t.amount, 0);
 
-        doc.fontSize(12).font('Helvetica-Bold').text('Transaction Summary');
-        doc.fontSize(10).font('Helvetica');
-        doc.text(`Total Credits: ₹${totalCredit.toFixed(2)}`);
-        doc.text(`Total Debits: ₹${totalDebit.toFixed(2)}`);
-        doc.text(`Net: ₹${(totalCredit - totalDebit).toFixed(2)}`);
-        doc.moveDown();
+        doc.fontSize(13).font('Helvetica-Bold').fillColor('#0b1c30').text('📊 Transaction Summary');
+        doc.fontSize(10).font('Helvetica').fillColor('#333333');
+        doc.text(`Total Credits: ₹${totalCredit.toFixed(2)}`, 50);
+        doc.text(`Total Debits: ₹${totalDebit.toFixed(2)}`, 50);
+        doc.fontSize(11).font('Helvetica-Bold').fillColor('#059669').text(`Net Balance: ₹${(totalCredit - totalDebit).toFixed(2)}`);
+        doc.moveDown(0.8);
 
-        // Transaction Details Table
-        doc.fontSize(12).font('Helvetica-Bold').text('Transaction Details');
+        // ===== TRANSACTIONS TABLE =====
+        doc.fontSize(13).font('Helvetica-Bold').fillColor('#0b1c30').text('💳 Recent Transactions');
         doc.moveDown(0.5);
 
-        // Table headers
-        const tableTop = doc.y;
-        const col1 = 50;
-        const col2 = 150;
-        const col3 = 300;
-        const col4 = 420;
-        const col5 = 500;
+        // Table configuration
+        const pageWidth = doc.page.width - 80;
+        const tableLeft = 40;
+        const columnWidths = {
+            date: 70,
+            type: 50,
+            description: 150,
+            status: 70,
+            amount: 80
+        };
 
-        doc.fontSize(10).font('Helvetica-Bold');
-        doc.text('Date', col1, tableTop);
-        doc.text('Type', col2, tableTop);
-        doc.text('Description', col3, tableTop);
-        doc.text('Status', col4, tableTop);
-        doc.text('Amount', col5, tableTop);
+        const headers = ['Date', 'Type', 'Description', 'Status', 'Amount'];
+        let currentY = doc.y;
 
-        // Draw line under headers
-        doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+        // Draw header row with background
+        doc.rect(tableLeft, currentY, pageWidth, 25).fillAndStroke('#667eea', '#667eea');
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#ffffff');
 
-        // Table rows
-        let yPosition = tableTop + 25;
-        const maxRows = 20;
+        let xPos = tableLeft + 5;
+        doc.text(headers[0], xPos, currentY + 7, { width: columnWidths.date - 5, align: 'left' });
+        xPos += columnWidths.date;
+
+        doc.text(headers[1], xPos, currentY + 7, { width: columnWidths.type - 5, align: 'left' });
+        xPos += columnWidths.type;
+
+        doc.text(headers[2], xPos, currentY + 7, { width: columnWidths.description - 5, align: 'left' });
+        xPos += columnWidths.description;
+
+        doc.text(headers[3], xPos, currentY + 7, { width: columnWidths.status - 5, align: 'center' });
+        xPos += columnWidths.status;
+
+        doc.text(headers[4], xPos, currentY + 7, { width: columnWidths.amount - 5, align: 'right' });
+
+        currentY += 28;
+        doc.fontSize(9).font('Helvetica').fillColor('#333333');
+
+        // Draw table rows
         let rowCount = 0;
+        const maxRowsPerPage = 15;
 
-        doc.fontSize(9).font('Helvetica');
         for (const tx of transactions) {
-            if (rowCount >= maxRows) {
+            // Check if we need a new page
+            if (rowCount >= maxRowsPerPage) {
                 doc.addPage();
-                yPosition = 50;
+                currentY = 40;
                 rowCount = 0;
+
+                // Redraw header on new page
+                doc.rect(tableLeft, currentY, pageWidth, 25).fillAndStroke('#667eea', '#667eea');
+                doc.fontSize(10).font('Helvetica-Bold').fillColor('#ffffff');
+
+                let xPos = tableLeft + 5;
+                doc.text(headers[0], xPos, currentY + 7, { width: columnWidths.date - 5, align: 'left' });
+                xPos += columnWidths.date;
+                doc.text(headers[1], xPos, currentY + 7, { width: columnWidths.type - 5, align: 'left' });
+                xPos += columnWidths.type;
+                doc.text(headers[2], xPos, currentY + 7, { width: columnWidths.description - 5, align: 'left' });
+                xPos += columnWidths.description;
+                doc.text(headers[3], xPos, currentY + 7, { width: columnWidths.status - 5, align: 'center' });
+                xPos += columnWidths.status;
+                doc.text(headers[4], xPos, currentY + 7, { width: columnWidths.amount - 5, align: 'right' });
+
+                currentY += 28;
+                doc.fontSize(9).font('Helvetica').fillColor('#333333');
             }
 
-            const date = new Date(tx.createdAt).toLocaleDateString();
-            const type = tx.type.toUpperCase();
-            const description = tx.description.substring(0, 35);
-            const status = tx.status || 'pending';
+            // Prepare data
+            const date = new Date(tx.createdAt).toLocaleDateString('en-IN', { month: '2-digit', day: '2-digit', year: '2-digit' });
+            const type = tx.type === 'credit' ? '✓ ADD' : '✗ USE';
+            const description = (tx.description || 'Wallet Transaction').substring(0, 25);
+            const status = tx.status === 'completed' ? '✓ Done' : '⏳ Pending';
             const amount = `₹${tx.amount.toFixed(2)}`;
 
-            doc.text(date, col1, yPosition);
-            doc.text(type, col2, yPosition);
-            doc.text(description, col3, yPosition);
-            doc.text(status, col4, yPosition);
-            doc.text(amount, col5, yPosition, { align: 'right' });
+            // Alternate row background
+            if (rowCount % 2 === 0) {
+                doc.rect(tableLeft, currentY, pageWidth, 20).fill('#f8f9ff');
+            }
 
-            yPosition += 20;
+            doc.fontSize(9).font('Helvetica').fillColor('#333333');
+
+            let xPos = tableLeft + 5;
+            doc.text(date, xPos, currentY + 5, { width: columnWidths.date - 5, align: 'left' });
+            xPos += columnWidths.date;
+
+            const typeColor = tx.type === 'credit' ? '#059669' : '#dc2626';
+            doc.fillColor(typeColor).text(type, xPos, currentY + 5, { width: columnWidths.type - 5, align: 'left' });
+            xPos += columnWidths.type;
+
+            doc.fillColor('#333333').text(description, xPos, currentY + 5, { width: columnWidths.description - 5, align: 'left' });
+            xPos += columnWidths.description;
+
+            const statusColor = tx.status === 'completed' ? '#059669' : '#f59e0b';
+            doc.fillColor(statusColor).text(status, xPos, currentY + 5, { width: columnWidths.status - 5, align: 'center' });
+            xPos += columnWidths.status;
+
+            const amountColor = tx.type === 'credit' ? '#059669' : '#333333';
+            doc.fillColor(amountColor).font('Helvetica-Bold').text(amount, xPos, currentY + 5, { width: columnWidths.amount - 5, align: 'right' });
+
+            currentY += 20;
             rowCount++;
         }
 
-        // Footer
-        doc.moveDown();
-        doc.fontSize(9).font('Helvetica').text('This is an automatically generated report. For more information, contact support.', { align: 'center' });
+        // Draw bottom line
+        doc.moveTo(tableLeft, currentY).lineTo(tableLeft + pageWidth, currentY).stroke('#ddd');
+
+        // ===== FOOTER =====
+        doc.moveDown(2);
+        doc.fontSize(8).font('Helvetica').fillColor('#999999');
+        doc.text('This is an automatically generated wallet report. For queries, please contact our support team.', { align: 'center' });
+        doc.text(`Report ID: ${userId.toString().slice(-8).toUpperCase()}`, { align: 'center' });
 
         // Finalize PDF
         doc.end();
