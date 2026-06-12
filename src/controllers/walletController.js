@@ -2,7 +2,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import User from '../models/userModel.js';
 import Transaction from '../models/transactionModel.js';
-import PDFDocument from 'pdfkit';
+import PdfPrinter from 'pdfmake';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -155,10 +155,10 @@ export const getWalletData = async (req, res) => {
 const pdfTranslations = {
     en: {
         title: 'WALLET REPORT',
-        generated: 'Generated',
+        generated: 'Generated on',
         userInfo: 'User Information',
         summary: 'Transaction Summary',
-        transactions: 'Recent Transactions',
+        transactions: 'Transaction Details',
         name: 'Name',
         email: 'Email',
         phone: 'Phone',
@@ -183,7 +183,7 @@ const pdfTranslations = {
         generated: 'तैयार की गई',
         userInfo: 'उपयोगकर्ता की जानकारी',
         summary: 'लेनदेन सारांश',
-        transactions: 'हाल के लेनदेन',
+        transactions: 'लेनदेन विवरण',
         name: 'नाम',
         email: 'ईमेल',
         phone: 'फोन',
@@ -204,11 +204,11 @@ const pdfTranslations = {
         reportId: 'रिपोर्ट आईडी'
     },
     ta: {
-        title: 'கார்டிஸ் அறிக்கை',
+        title: 'வணிக அறிக்கை',
         generated: 'உருவாக்கப்பட்டது',
         userInfo: 'பயனர் தகவல்',
         summary: 'பரிவர்த்தனை சுருக்கம்',
-        transactions: 'சமீபத்திய பரிவர்த்தனைகள்',
+        transactions: 'பரிவர்த்தனை விவரம்',
         name: 'பெயர்',
         email: 'மின்னஞ்சல்',
         phone: 'தொலைபேசி',
@@ -225,7 +225,7 @@ const pdfTranslations = {
         debit: 'பற்று',
         completed: 'முடிந்தது',
         pending: 'நிலுவையில் உள்ளது',
-        footer: 'இது தானாக உருவாக்கப்பட்ட கார்டிஸ் அறிக்கை. கேள்விகளுக்கு, தயவுசெய்து ஆதரவைத் தொடர்புகொள்ளவும்.',
+        footer: 'இது தானாக உருவாக்கப்பட்ட வணிக அறிக்கை. கேள்விகளுக்கு, தயவுசெய்து ஆதரவைத் தொடர்புகொள்ளவும்.',
         reportId: 'அறிக்கை குறுவொளி'
     },
     mr: {
@@ -233,7 +233,7 @@ const pdfTranslations = {
         generated: 'तयार केले',
         userInfo: 'वापरकर्ता माहिती',
         summary: 'व्यवहार सारांश',
-        transactions: 'अलीकडील व्यवहार',
+        transactions: 'व्यवहार तपशील',
         name: 'नाव',
         email: 'ईमेल',
         phone: 'फोन',
@@ -258,7 +258,7 @@ const pdfTranslations = {
         generated: 'జనరేట్ చేయబడింది',
         userInfo: 'వినియోగదారు సమాచారం',
         summary: 'లావాదేవీ సారాంశం',
-        transactions: 'ఇటీవలి లావాదేవీలు',
+        transactions: 'లావాదేవీ వివరాలు',
         name: 'పేరు',
         email: 'ఈమెయిల్',
         phone: 'ఫోన్',
@@ -280,7 +280,7 @@ const pdfTranslations = {
     }
 };
 
-// Download Wallet Report
+// Download Wallet Report with pdfmake
 export const downloadReport = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -291,153 +291,109 @@ export const downloadReport = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Get translations for the selected language
         const t = pdfTranslations[lang] || pdfTranslations['en'];
-
-        // Fetch all transactions for the user
         const transactions = await Transaction.find({ userId }).sort({ createdAt: -1 });
 
-        // Create a PDF document
-        const doc = new PDFDocument({
-            margin: 40,
-            size: 'A4',
-            bufferPages: true
-        });
+        const totalCredit = transactions.filter(tx => tx.type === 'credit').reduce((acc, tx) => acc + tx.amount, 0);
+        const totalDebit = transactions.filter(tx => tx.type === 'debit').reduce((acc, tx) => acc + tx.amount, 0);
 
-        // Set response headers
+        // Build table rows
+        const tableRows = [
+            [
+                { text: t.date, bold: true, color: 'white', fillColor: '#667eea' },
+                { text: t.type, bold: true, color: 'white', fillColor: '#667eea' },
+                { text: t.description, bold: true, color: 'white', fillColor: '#667eea' },
+                { text: t.status, bold: true, color: 'white', fillColor: '#667eea' },
+                { text: t.amount, bold: true, color: 'white', fillColor: '#667eea', alignment: 'right' }
+            ]
+        ];
+
+        for (const tx of transactions) {
+            tableRows.push([
+                new Date(tx.createdAt).toLocaleDateString(),
+                tx.type === 'credit' ? t.credit : t.debit,
+                (tx.description || 'Transaction').substring(0, 25),
+                tx.status === 'completed' ? t.completed : t.pending,
+                { text: `₹${tx.amount.toFixed(2)}`, alignment: 'right' }
+            ]);
+        }
+
+        // Define document
+        const docDefinition = {
+            content: [
+                { text: t.title, fontSize: 24, bold: true, color: '#667eea', alignment: 'center' },
+                { text: `${t.generated}: ${new Date().toLocaleDateString()}`, fontSize: 10, alignment: 'center', color: '#666666', margin: [0, 5, 0, 15] },
+
+                { text: t.userInfo, fontSize: 14, bold: true, color: '#0b1c30', margin: [0, 10, 0, 8] },
+                {
+                    columns: [
+                        { text: `${t.name}: ${user.name || 'N/A'}`, fontSize: 11 },
+                        { text: `${t.email}: ${user.email || 'N/A'}`, fontSize: 11 }
+                    ],
+                    margin: [0, 0, 0, 5]
+                },
+                {
+                    columns: [
+                        { text: `${t.phone}: ${user.phone || 'N/A'}`, fontSize: 11 },
+                        { text: `${t.balance}: ₹${(user.walletBalance || 0).toFixed(2)}`, fontSize: 12, bold: true, color: '#667eea' }
+                    ],
+                    margin: [0, 0, 0, 15]
+                },
+
+                { text: t.summary, fontSize: 14, bold: true, color: '#0b1c30', margin: [0, 10, 0, 8] },
+                {
+                    columns: [
+                        { text: `${t.totalCredits}: ₹${totalCredit.toFixed(2)}`, fontSize: 11 },
+                        { text: `${t.totalDebits}: ₹${totalDebit.toFixed(2)}`, fontSize: 11 },
+                        { text: `${t.netBalance}: ₹${(totalCredit - totalDebit).toFixed(2)}`, fontSize: 12, bold: true, color: '#059669' }
+                    ],
+                    margin: [0, 0, 0, 15]
+                },
+
+                { text: t.transactions, fontSize: 14, bold: true, color: '#0b1c30', margin: [0, 10, 0, 8] },
+                {
+                    table: {
+                        headerRows: 1,
+                        widths: ['15%', '12%', '35%', '15%', '23%'],
+                        body: tableRows
+                    },
+                    layout: {
+                        fillColor: (rowIndex) => {
+                            return rowIndex === 0 ? '#667eea' : (rowIndex % 2 === 0 ? '#f8f9ff' : 'white');
+                        },
+                        hLineColor: () => '#ddd',
+                        vLineColor: () => '#ddd'
+                    },
+                    margin: [0, 0, 0, 15]
+                },
+
+                { text: t.footer, fontSize: 9, color: '#999999', alignment: 'center', margin: [0, 10, 0, 5] },
+                { text: `${t.reportId}: ${userId.toString().slice(-8).toUpperCase()}`, fontSize: 9, color: '#999999', alignment: 'center' }
+            ],
+            defaultStyle: {
+                font: 'Helvetica'
+            }
+        };
+
+        const fonts = {
+            Helvetica: {
+                normal: 'Helvetica',
+                bold: 'Helvetica-Bold',
+                italics: 'Helvetica-Oblique',
+                bolditalics: 'Helvetica-BoldOblique'
+            }
+        };
+
+        const printer = new PdfPrinter(fonts);
+        const pdfDoc = printer.createPdfKitDocument(docDefinition);
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="wallet-report-${new Date().toISOString().split('T')[0]}.pdf"`);
 
-        // Pipe document to response
-        doc.pipe(res);
-
-        // Use a standard font that works well
-        const font = 'Helvetica';
-        const fontBold = 'Helvetica-Bold';
-
-        // ===== HEADER =====
-        doc.fontSize(22).font(fontBold).fillColor('#667eea').text(t.title, { align: 'center' });
-        doc.fontSize(10).font(font).fillColor('#666666');
-        doc.text(`${t.generated}: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, { align: 'center' });
-        doc.moveTo(40, doc.y + 8).lineTo(555, doc.y + 8).stroke('#667eea');
-        doc.moveDown(1);
-
-        // ===== USER INFORMATION SECTION =====
-        doc.fontSize(12).font(fontBold).fillColor('#0b1c30').text(t.userInfo);
-        doc.fontSize(10).font(font).fillColor('#333333');
-        doc.text(`${t.name}: ${user.name || 'N/A'}`);
-        doc.text(`${t.email}: ${user.email || 'N/A'}`);
-        doc.text(`${t.phone}: ${user.phone || 'N/A'}`);
-        doc.fontSize(11).font(fontBold).fillColor('#667eea').text(`${t.balance}: ₹${(user.walletBalance || 0).toFixed(2)}`);
-        doc.moveDown(0.8);
-
-        // ===== SUMMARY SECTION =====
-        const totalCredit = transactions.filter(t => t.type === 'credit').reduce((acc, tx) => acc + tx.amount, 0);
-        const totalDebit = transactions.filter(t => t.type === 'debit').reduce((acc, tx) => acc + tx.amount, 0);
-
-        doc.fontSize(12).font(fontBold).fillColor('#0b1c30').text(t.summary);
-        doc.fontSize(10).font(font).fillColor('#333333');
-        doc.text(`${t.totalCredits}: ₹${totalCredit.toFixed(2)}`, 50);
-        doc.text(`${t.totalDebits}: ₹${totalDebit.toFixed(2)}`, 50);
-        doc.fontSize(11).font(fontBold).fillColor('#059669').text(`${t.netBalance}: ₹${(totalCredit - totalDebit).toFixed(2)}`);
-        doc.moveDown(0.8);
-
-        // ===== TRANSACTIONS TABLE =====
-        doc.fontSize(12).font(fontBold).fillColor('#0b1c30').text(t.transactions);
-        doc.moveDown(0.5);
-
-        // Simple table rendering
-        const tableTop = doc.y;
-        const pageWidth = doc.page.width - 80;
-        const tableLeft = 40;
-
-        // Headers
-        const headers = [t.date, t.type, t.description, t.status, t.amount];
-        const colWidths = [60, 50, 140, 70, 80];
-
-        // Draw header background
-        doc.rect(tableLeft, tableTop, pageWidth, 22).fillAndStroke('#667eea', '#667eea');
-        doc.fontSize(9).font(fontBold).fillColor('#ffffff');
-
-        let xPos = tableLeft + 5;
-        for (let i = 0; i < headers.length; i++) {
-            doc.text(headers[i], xPos, tableTop + 6, { width: colWidths[i] - 5, align: 'left' });
-            xPos += colWidths[i];
-        }
-
-        let currentY = tableTop + 25;
-        doc.fontSize(8).font(font).fillColor('#333333');
-
-        let rowCount = 0;
-        const maxRowsPerPage = 16;
-
-        for (const tx of transactions) {
-            if (rowCount >= maxRowsPerPage) {
-                doc.addPage();
-                currentY = 40;
-                rowCount = 0;
-
-                // Redraw header on new page
-                doc.rect(tableLeft, currentY, pageWidth, 22).fillAndStroke('#667eea', '#667eea');
-                doc.fontSize(9).font(fontBold).fillColor('#ffffff');
-
-                xPos = tableLeft + 5;
-                for (let i = 0; i < headers.length; i++) {
-                    doc.text(headers[i], xPos, currentY + 6, { width: colWidths[i] - 5, align: 'left' });
-                    xPos += colWidths[i];
-                }
-
-                currentY += 25;
-                doc.fontSize(8).font(font).fillColor('#333333');
-            }
-
-            // Alternate row background
-            if (rowCount % 2 === 0) {
-                doc.rect(tableLeft, currentY, pageWidth, 18).fill('#f8f9ff');
-            }
-
-            const date = new Date(tx.createdAt).toLocaleDateString();
-            const type = tx.type === 'credit' ? t.credit : t.debit;
-            const desc = (tx.description || 'Transaction').substring(0, 20);
-            const status = tx.status === 'completed' ? t.completed : t.pending;
-            const amount = `₹${tx.amount.toFixed(2)}`;
-
-            doc.fontSize(8).font(font).fillColor('#333333');
-            xPos = tableLeft + 5;
-
-            doc.text(date, xPos, currentY + 4, { width: colWidths[0] - 5, align: 'left' });
-            xPos += colWidths[0];
-
-            const typeColor = tx.type === 'credit' ? '#059669' : '#dc2626';
-            doc.fillColor(typeColor).text(type, xPos, currentY + 4, { width: colWidths[1] - 5, align: 'left' });
-            xPos += colWidths[1];
-
-            doc.fillColor('#333333').text(desc, xPos, currentY + 4, { width: colWidths[2] - 5, align: 'left' });
-            xPos += colWidths[2];
-
-            const statusColor = tx.status === 'completed' ? '#059669' : '#f59e0b';
-            doc.fillColor(statusColor).text(status, xPos, currentY + 4, { width: colWidths[3] - 5, align: 'center' });
-            xPos += colWidths[3];
-
-            doc.fillColor('#667eea').font(fontBold).text(amount, xPos, currentY + 4, { width: colWidths[4] - 5, align: 'right' });
-
-            currentY += 18;
-            rowCount++;
-        }
-
-        // Draw bottom line
-        doc.moveTo(tableLeft, currentY).lineTo(tableLeft + pageWidth, currentY).stroke('#ddd');
-
-        // ===== FOOTER =====
-        doc.moveDown(2);
-        doc.fontSize(8).font(font).fillColor('#999999');
-        doc.text(t.footer, { align: 'center' });
-        doc.text(`${t.reportId}: ${userId.toString().slice(-8).toUpperCase()}`, { align: 'center' });
-
-        // Finalize PDF
-        doc.end();
+        pdfDoc.pipe(res);
+        pdfDoc.end();
     } catch (error) {
         console.error('Error generating wallet report:', error);
-        res.status(500).json({ message: 'Failed to generate report' });
+        res.status(500).json({ message: 'Failed to generate report', error: error.message });
     }
 };
