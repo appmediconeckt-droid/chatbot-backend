@@ -2,6 +2,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import User from '../models/userModel.js';
 import Transaction from '../models/transactionModel.js';
+import PDFDocument from 'pdfkit';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -147,5 +148,120 @@ export const getWalletData = async (req, res) => {
     } catch (error) {
         console.error('Error fetching wallet data:', error);
         res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Download Wallet Report
+export const downloadReport = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const user = await User.findById(userId);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Fetch all transactions for the user
+        const transactions = await Transaction.find({ userId }).sort({ createdAt: -1 });
+
+        // Create a PDF document
+        const doc = new PDFDocument({
+            margin: 50,
+            size: 'A4'
+        });
+
+        // Set response headers
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="wallet-report-${new Date().toISOString().split('T')[0]}.pdf"`);
+
+        // Pipe document to response
+        doc.pipe(res);
+
+        // Header
+        doc.fontSize(24).font('Helvetica-Bold').text('Wallet Transaction Report', { align: 'center' });
+        doc.fontSize(10).font('Helvetica').text(`Generated on: ${new Date().toLocaleString()}`, { align: 'center' });
+        doc.moveTo(50, doc.y + 5).lineTo(550, doc.y + 5).stroke();
+        doc.moveDown();
+
+        // User Information
+        doc.fontSize(12).font('Helvetica-Bold').text('User Information');
+        doc.fontSize(10).font('Helvetica');
+        doc.text(`Name: ${user.name || 'N/A'}`);
+        doc.text(`Email: ${user.email || 'N/A'}`);
+        doc.text(`Phone: ${user.phone || 'N/A'}`);
+        doc.text(`Current Balance: ₹${(user.walletBalance || 0).toFixed(2)}`);
+        doc.moveDown();
+
+        // Transaction Summary
+        const totalCredit = transactions.filter(t => t.type === 'credit').reduce((acc, t) => acc + t.amount, 0);
+        const totalDebit = transactions.filter(t => t.type === 'debit').reduce((acc, t) => acc + t.amount, 0);
+
+        doc.fontSize(12).font('Helvetica-Bold').text('Transaction Summary');
+        doc.fontSize(10).font('Helvetica');
+        doc.text(`Total Credits: ₹${totalCredit.toFixed(2)}`);
+        doc.text(`Total Debits: ₹${totalDebit.toFixed(2)}`);
+        doc.text(`Net: ₹${(totalCredit - totalDebit).toFixed(2)}`);
+        doc.moveDown();
+
+        // Transaction Details Table
+        doc.fontSize(12).font('Helvetica-Bold').text('Transaction Details');
+        doc.moveDown(0.5);
+
+        // Table headers
+        const tableTop = doc.y;
+        const col1 = 50;
+        const col2 = 150;
+        const col3 = 300;
+        const col4 = 420;
+        const col5 = 500;
+
+        doc.fontSize(10).font('Helvetica-Bold');
+        doc.text('Date', col1, tableTop);
+        doc.text('Type', col2, tableTop);
+        doc.text('Description', col3, tableTop);
+        doc.text('Status', col4, tableTop);
+        doc.text('Amount', col5, tableTop);
+
+        // Draw line under headers
+        doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+
+        // Table rows
+        let yPosition = tableTop + 25;
+        const maxRows = 20;
+        let rowCount = 0;
+
+        doc.fontSize(9).font('Helvetica');
+        for (const tx of transactions) {
+            if (rowCount >= maxRows) {
+                doc.addPage();
+                yPosition = 50;
+                rowCount = 0;
+            }
+
+            const date = new Date(tx.createdAt).toLocaleDateString();
+            const type = tx.type.toUpperCase();
+            const description = tx.description.substring(0, 35);
+            const status = tx.status || 'pending';
+            const amount = `₹${tx.amount.toFixed(2)}`;
+
+            doc.text(date, col1, yPosition);
+            doc.text(type, col2, yPosition);
+            doc.text(description, col3, yPosition);
+            doc.text(status, col4, yPosition);
+            doc.text(amount, col5, yPosition, { align: 'right' });
+
+            yPosition += 20;
+            rowCount++;
+        }
+
+        // Footer
+        doc.moveDown();
+        doc.fontSize(9).font('Helvetica').text('This is an automatically generated report. For more information, contact support.', { align: 'center' });
+
+        // Finalize PDF
+        doc.end();
+    } catch (error) {
+        console.error('Error generating wallet report:', error);
+        res.status(500).json({ message: 'Failed to generate report' });
     }
 };
