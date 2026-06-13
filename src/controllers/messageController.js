@@ -1229,7 +1229,7 @@ export const getCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location isOnline lastSeen",
+        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen",
       )
       .sort({ rating: -1, fullName: 1 });
 
@@ -1324,7 +1324,7 @@ export const searchCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating totalSessions languages consultationMode location isOnline lastSeen",
+        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen",
       )
       .sort({ rating: -1, fullName: 1 });
 

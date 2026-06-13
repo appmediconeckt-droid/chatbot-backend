@@ -18,7 +18,7 @@ const chatSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'rejected', 'closed', 'active','cancelled'],
+    enum: ['pending', 'accepted', 'rejected', 'closed', 'active', 'cancelled', 'paused'],
     default: 'pending'
   },
   isActive: {
