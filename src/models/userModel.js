@@ -254,6 +254,41 @@ const userSchema = new mongoose.Schema({
         format: String,
         bytes: Number
     },
+    avatar: {
+        type: {
+            type: String,
+            enum: ["uploaded", "preset", "initial", "builder"],
+            default: "initial"
+        },
+        url: {
+            type: String,
+            default: ""
+        },
+        initials: {
+            type: String,
+            default: ""
+        },
+        backgroundColor: {
+            type: String,
+            default: "#4F46E5"
+        },
+        textColor: {
+            type: String,
+            default: "#FFFFFF"
+        },
+        seed: {
+            type: String,
+            default: ""
+        },
+        builder: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
+        updatedAt: {
+            type: Date,
+            default: null
+        }
+    },
     profilePhotoPublicId: {
         type: String,
         default: null

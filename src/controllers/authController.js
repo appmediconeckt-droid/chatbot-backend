@@ -41,6 +41,118 @@ const profileChangeOTPStore = new Map();
 const verifiedProfileChanges = new Map();
 const PROFILE_CHANGE_OTP_TTL_MS = 10 * 60 * 1000; // 10 min to enter the OTP
 const PROFILE_CHANGE_VERIFIED_TTL_MS = 15 * 60 * 1000; // 15 min to hit Save
+const HEX_COLOR_REGEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const AVATAR_TYPES = new Set(["preset", "initial", "builder"]);
+
+const parseMaybeJson = (value, fallback = null) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return fallback;
+  }
+};
+
+const getInitials = (name = "") => {
+  const parts = String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) return "U";
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+};
+
+const normalizeHexColor = (value, fallback) => {
+  if (!value || typeof value !== "string") return fallback;
+  const color = value.trim();
+  return HEX_COLOR_REGEX.test(color) ? color.toUpperCase() : fallback;
+};
+
+const buildInitialAvatarUrl = ({ initials, backgroundColor, textColor }) => {
+  const background = backgroundColor.replace("#", "");
+  const color = textColor.replace("#", "");
+  const name = encodeURIComponent(initials || "U");
+
+  return `https://ui-avatars.com/api/?name=${name}&background=${background}&color=${color}&bold=true&format=svg`;
+};
+
+const buildAvatarUpdate = (body, currentUser, updates) => {
+  const rawAvatar = parseMaybeJson(body.avatar, {});
+  const avatarInput =
+    rawAvatar && typeof rawAvatar === "object" && !Array.isArray(rawAvatar)
+      ? rawAvatar
+      : {};
+
+  const avatarType =
+    body.avatarType ||
+    avatarInput.type ||
+    (body.avatarUrl || avatarInput.url ? "preset" : undefined);
+  const hasAvatarRequest =
+    Boolean(body.avatarUrl) ||
+    Boolean(body.avatarType) ||
+    Boolean(body.avatar) ||
+    Boolean(body.avatarBackgroundColor) ||
+    Boolean(body.avatarTextColor) ||
+    Boolean(body.avatarBuilder);
+
+  if (!hasAvatarRequest || !AVATAR_TYPES.has(avatarType)) {
+    return null;
+  }
+
+  const backgroundColor = normalizeHexColor(
+    body.avatarBackgroundColor || avatarInput.backgroundColor,
+    currentUser.avatar?.backgroundColor || "#4F46E5",
+  );
+  const textColor = normalizeHexColor(
+    body.avatarTextColor || avatarInput.textColor,
+    currentUser.avatar?.textColor || "#FFFFFF",
+  );
+  const builder =
+    parseMaybeJson(body.avatarBuilder, undefined) ?? avatarInput.builder ?? null;
+  const seed = String(body.avatarSeed || avatarInput.seed || currentUser._id);
+  const initials = String(
+    body.avatarInitials ||
+      avatarInput.initials ||
+      getInitials(updates.fullName || currentUser.fullName),
+  )
+    .slice(0, 3)
+    .toUpperCase();
+
+  let url = body.avatarUrl || avatarInput.url || "";
+
+  if (avatarType === "initial") {
+    url = buildInitialAvatarUrl({ initials, backgroundColor, textColor });
+  }
+
+  if (
+    (avatarType === "preset" || avatarType === "builder") &&
+    url &&
+    !/^https?:\/\//i.test(url)
+  ) {
+    return { error: "avatarUrl must be an http or https URL" };
+  }
+
+  return {
+    avatar: {
+      type: avatarType,
+      url,
+      initials,
+      backgroundColor,
+      textColor,
+      seed,
+      builder,
+      updatedAt: new Date(),
+    },
+    profilePhoto: url ? { url, publicId: null } : undefined,
+  };
+};
 
 setInterval(() => {
   const now = Date.now();
@@ -200,6 +312,16 @@ export const updateUserById = async (req, res) => {
         format: profileFile.format || null,
         bytes: profileFile.bytes || null,
       };
+      updates.avatar = {
+        type: "uploaded",
+        url: profileFile.path,
+        initials: getInitials(currentUser.fullName),
+        backgroundColor: currentUser.avatar?.backgroundColor || "#4F46E5",
+        textColor: currentUser.avatar?.textColor || "#FFFFFF",
+        seed: String(currentUser._id),
+        builder: null,
+        updatedAt: new Date(),
+      };
     } else if (req.body.avatarUrl && typeof req.body.avatarUrl === "string" && req.body.avatarUrl.startsWith("http")) {
       // Avatar URL from generator (DiceBear etc.) — store directly, no file upload
       if (
@@ -216,6 +338,14 @@ export const updateUserById = async (req, res) => {
         }
       }
       updates.profilePhoto = { url: req.body.avatarUrl, publicId: null };
+      const avatarUpdate = buildAvatarUpdate(req.body, currentUser, updates);
+      if (avatarUpdate?.error) {
+        return res.status(400).json({
+          success: false,
+          message: avatarUpdate.error,
+        });
+      }
+      if (avatarUpdate?.avatar) updates.avatar = avatarUpdate.avatar;
     } else if (req.body.removeProfilePhoto === "true") {
       if (
         process.env.CLOUDINARY_CLOUD_NAME &&
@@ -231,6 +361,29 @@ export const updateUserById = async (req, res) => {
         }
       }
       updates.profilePhoto = null;
+      const initials = getInitials(currentUser.fullName);
+      const backgroundColor = currentUser.avatar?.backgroundColor || "#4F46E5";
+      const textColor = currentUser.avatar?.textColor || "#FFFFFF";
+      updates.avatar = {
+        type: "initial",
+        url: buildInitialAvatarUrl({ initials, backgroundColor, textColor }),
+        initials,
+        backgroundColor,
+        textColor,
+        seed: String(currentUser._id),
+        builder: null,
+        updatedAt: new Date(),
+      };
+    } else {
+      const avatarUpdate = buildAvatarUpdate(req.body, currentUser, updates);
+      if (avatarUpdate?.error) {
+        return res.status(400).json({
+          success: false,
+          message: avatarUpdate.error,
+        });
+      }
+      if (avatarUpdate?.avatar) updates.avatar = avatarUpdate.avatar;
+      if (avatarUpdate?.profilePhoto) updates.profilePhoto = avatarUpdate.profilePhoto;
     }
 
     // 2. Handle Certifications - FIXED: Properly handle document URLs and DELETION
@@ -808,6 +961,7 @@ export const updateUserById = async (req, res) => {
       gender: updatedUser.gender,
       role: updatedUser.role,
       profilePhoto: updatedUser.profilePhoto,
+      avatar: updatedUser.avatar,
       isActive: updatedUser.isActive,
       profileCompleted: updatedUser.profileCompleted,
       createdAt: updatedUser.createdAt,
@@ -2712,6 +2866,7 @@ export const getMyProfile = async (req, res) => {
       gender: user.gender,
       role: user.role,
       profilePhoto: user.profilePhoto,
+      avatar: user.avatar,
       isActive: user.isActive,
       profileCompleted: user.profileCompleted,
 

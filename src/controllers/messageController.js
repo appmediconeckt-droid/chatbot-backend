@@ -5,6 +5,9 @@ import User from "../models/userModel.js";
 
 // ==================== HELPER FUNCTION ====================
 
+const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const INACTIVE_CHAT_RETENTION_MS = ONE_MONTH_MS;
+
 // Helper function to find chat by either _id or chatId
 const findChatByIdentifier = async (identifier) => {
   // Check if it's a valid ObjectId
@@ -15,6 +18,70 @@ const findChatByIdentifier = async (identifier) => {
 
   // Try to find by chatId field
   return await Chat.findOne({ chatId: identifier });
+};
+
+const getChatActivityDate = (chat) =>
+  chat.lastMessageAt || chat.updatedAt || chat.acceptedAt || chat.startedAt;
+
+const isChatInactiveBeyondRetention = (chat, now = new Date()) => {
+  const activityDate = getChatActivityDate(chat);
+  return (
+    activityDate &&
+    now.getTime() - new Date(activityDate).getTime() >= INACTIVE_CHAT_RETENTION_MS
+  );
+};
+
+export const clearInactiveChatHistory = async (chat, now = new Date()) => {
+  if (!chat || !isChatInactiveBeyondRetention(chat, now)) {
+    return { cleared: false, deletedCount: 0 };
+  }
+
+  const result = await Message.deleteMany({ chatId: chat._id });
+
+  chat.lastMessage = null;
+  chat.lastMessageAt = null;
+  chat.updatedAt = now;
+  await chat.save();
+
+  return { cleared: true, deletedCount: result.deletedCount || 0 };
+};
+
+export const cleanupInactiveChatHistories = async () => {
+  try {
+    const cutoff = new Date(Date.now() - INACTIVE_CHAT_RETENTION_MS);
+    const inactiveChats = await Chat.find({
+      isActive: true,
+      status: { $in: ["accepted", "active"] },
+      $or: [
+        { lastMessageAt: { $lte: cutoff } },
+        {
+          lastMessageAt: { $exists: false },
+          updatedAt: { $lte: cutoff },
+        },
+        {
+          lastMessageAt: null,
+          updatedAt: { $lte: cutoff },
+        },
+      ],
+    });
+
+    let deletedCount = 0;
+    for (const chat of inactiveChats) {
+      const cleanup = await clearInactiveChatHistory(chat);
+      deletedCount += cleanup.deletedCount;
+    }
+
+    if (inactiveChats.length > 0) {
+      console.log(
+        `Cleared ${deletedCount} messages from ${inactiveChats.length} inactive counselor chats`,
+      );
+    }
+
+    return { chatsChecked: inactiveChats.length, deletedCount };
+  } catch (error) {
+    console.error("Error cleaning inactive chat histories:", error);
+    return { chatsChecked: 0, deletedCount: 0, error };
+  }
 };
 
 export const startChat = async (req, res) => {
@@ -766,6 +833,8 @@ export const getChats = async (req, res) => {
       )
       .sort({ updatedAt: -1 });
 
+    await Promise.all(chats.map((chat) => clearInactiveChatHistory(chat)));
+
     const chatsWithDetails = await Promise.all(
       chats.map(async (chat) => {
         const lastMessage = await Message.findOne({ chatId: chat._id }).sort({
@@ -893,6 +962,8 @@ export const getChatMessages = async (req, res) => {
       });
     }
 
+    await clearInactiveChatHistory(chat);
+
     const messages = await Message.find({ chatId: chat._id }).sort({
       createdAt: 1,
     });
@@ -1001,6 +1072,8 @@ export const sendMessage = async (req, res) => {
         status: chat.status,
       });
     }
+
+    await clearInactiveChatHistory(chat);
 
     // Check if admin has blocked the counselor from chatting
     const counselorForMsg = await User.findById(chat.counselorId).lean();

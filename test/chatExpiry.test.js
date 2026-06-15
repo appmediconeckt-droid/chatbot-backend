@@ -23,6 +23,7 @@ import Message from "../src/models/Message.js";
 import {
   startChat,
   acceptChat,
+  clearInactiveChatHistory,
 } from "../src/controllers/messageController.js";
 
 const TEST_TAG = "__chatExpiryTest__";
@@ -229,5 +230,67 @@ describe("Chat request 30-second expiry", function () {
     expect(requestMsg, "expected a request message mentioning expiry").to.exist;
     expect(requestMsg.content).to.match(/30 seconds/);
     expect(requestMsg.content).to.not.match(/10 seconds/);
+  });
+
+  it("clears counselor chat messages after 30 days without activity", async () => {
+    const chat = await Chat.create({
+      userId: user._id,
+      counselorId: counselor._id,
+      status: "accepted",
+      isActive: true,
+      startedAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+      lastMessageAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+    });
+
+    await Message.create({
+      chatId: chat._id,
+      senderId: user._id,
+      senderRole: "user",
+      content: "Old inactive message",
+    });
+
+    const cleanup = await clearInactiveChatHistory(chat);
+
+    expect(cleanup).to.have.property("cleared", true);
+    expect(cleanup.deletedCount).to.equal(1);
+    expect(await Message.countDocuments({ chatId: chat._id })).to.equal(0);
+  });
+
+  it("keeps full history for chats that continued for 3 months and are still active", async () => {
+    const chat = await Chat.create({
+      userId: user._id,
+      counselorId: counselor._id,
+      status: "accepted",
+      isActive: true,
+      startedAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(),
+      lastMessageAt: new Date(),
+    });
+
+    await Message.create([
+      {
+        chatId: chat._id,
+        senderId: user._id,
+        senderRole: "user",
+        content: "Message from three months ago",
+        createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000),
+      },
+      {
+        chatId: chat._id,
+        senderId: counselor._id,
+        senderRole: "counsellor",
+        content: "Recent message",
+        createdAt: new Date(),
+      },
+    ]);
+
+    const cleanup = await clearInactiveChatHistory(chat);
+    const messages = await Message.find({ chatId: chat._id }).sort({ createdAt: 1 });
+
+    expect(cleanup).to.have.property("cleared", false);
+    expect(messages).to.have.length(2);
+    expect(messages[0].content).to.equal("Message from three months ago");
+    expect(messages[1].content).to.equal("Recent message");
   });
 });

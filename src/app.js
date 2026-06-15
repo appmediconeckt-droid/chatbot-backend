@@ -266,6 +266,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import ratingRoutes from "./routes/ratingRoutes.js";
+import translateRoutes from "./routes/translateRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 import { resetAllUsersPresence } from "./utils/presenceManager.js";
@@ -423,6 +424,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/chat", messageRoutes);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/progress", progressRoutes); // <--- Mood tracking & progress endpoints
+app.use("/api/translate", translateRoutes);
 app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
 app.use("/api/appointments", appointmentRoutes);
