@@ -744,7 +744,7 @@ export const getChats = async (req, res) => {
     let chats;
     let query = {
       isActive: true,
-      status: { $in: ["accepted", "active"] },
+      status: { $in: ["pending", "accepted", "active"] },  // Include pending chats so users can see chat requests
     };
 
     if (req.user.role === "user") {

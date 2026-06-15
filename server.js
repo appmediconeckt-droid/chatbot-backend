@@ -60,7 +60,7 @@ if (!process.env.MONGO_URI) {
   );
 }
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+const PORT = parseInt(process.env.PORT, 10) || 5001;
 
 function handleServerError(error) {
   if (error.syscall !== 'listen') {

@@ -322,12 +322,23 @@ const DB_STATE_LABEL = {
 // ---------------------------
 const allowedOrigins = [
   "https://mediconeckt.vercel.app/",
+  "https://mediconeckt.vercel.app",
   "http://localhost:4173",
   "http://localhost:3000",
+  "http://localhost:5000",
+  "http://localhost:5001",
   "http://localhost:5173",
+  "http://localhost:8000",
+  "http://localhost:8080",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5000",
+  "http://127.0.0.1:5001",
   "http://192.168.0.138:5173",
+  "http://192.168.0.138:3000",
+  "http://192.168.0.138:5001",
   "https://your-frontend-domain.com",
   "https://aichatbotmediconeckt.netlify.app",
+  "https://aichatbotmediconeckt.netlify.app/",
 ];
 
 const normalizeOrigin = (origin) => origin?.replace(/\/$/, "");
@@ -424,7 +435,7 @@ app.use("/api/counselors", ratingRoutes);
 // ---------------------------
 const server = http.createServer(app);
 
-// Create Socket.IO server — polling-only (Render.com free tier blocks WS upgrades)
+// Create Socket.IO server with WebSocket and polling support
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
@@ -434,13 +445,17 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
-  transports: ["polling"],
-  allowUpgrades: false,
+  transports: ["websocket", "polling"],
+  allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
   path: "/socket.io/",
   allowEIO3: true,
   maxHttpBufferSize: 1e7,
+  reconnection: true,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  reconnectionAttempts: 5,
 });
 
 io.use(authenticateSocket);

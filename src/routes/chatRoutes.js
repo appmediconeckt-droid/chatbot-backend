@@ -5,6 +5,7 @@ import {
   chatWithAI,
   textToSpeech,
   textToSpeechGet,
+  getChatHistory,
   clearMyChatHistory,
   devClearChatsForUserId,
   devResetProfileFields,
@@ -13,6 +14,7 @@ import {
 const router = express.Router();
 
 router.post("/send-message", optionalAuth, chatWithAI);
+router.get("/history", optionalAuth, getChatHistory);  // Fetch chat history for page reload
 router.post("/tts", optionalAuth, textToSpeech);
 router.get("/tts", optionalAuth, textToSpeechGet);
 // User-triggered: wipe the caller's own chat history so onboarding can
