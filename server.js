@@ -48,16 +48,11 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import dns from "node:dns";
 import connectDB from "./src/config/db.js";
-import { cleanupInactiveChatHistories } from "./src/controllers/messageController.js";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-// IMPORTANT: Load environment variables before connecting to MongoDB.
-// Local dev usually keeps .env in the project root; older setups may use src/.env.
-dotenv.config();
-dotenv.config({ path: "./src/.env", override: false });
-if (process.env.DOTENV_PATH) {
-  dotenv.config({ path: process.env.DOTENV_PATH, override: true });
-}
+// IMPORTANT: Load environment variables FIRST
+// Prefer an explicit .env path in src/ when running via nodemon from project root.
+dotenv.config({ path: process.env.DOTENV_PATH || "./src/.env" });
 
 if (!process.env.MONGO_URI) {
   console.warn(
@@ -65,8 +60,7 @@ if (!process.env.MONGO_URI) {
   );
 }
 
-const PORT = parseInt(process.env.PORT, 10) || 5001;
-const DAILY_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 function handleServerError(error) {
   if (error.syscall !== 'listen') {
@@ -98,13 +92,6 @@ connectDB()
     });
 
     server.on('error', handleServerError);
-
-    cleanupInactiveChatHistories();
-    const inactiveChatCleanupTimer = setInterval(
-      cleanupInactiveChatHistories,
-      DAILY_CLEANUP_INTERVAL_MS,
-    );
-    inactiveChatCleanupTimer.unref?.();
   })
   .catch(err => {
     console.error("❌ MongoDB connection error:", err);

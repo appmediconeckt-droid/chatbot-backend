@@ -3,7 +3,6 @@ import Message from "../models/Message.js";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
 import mongoose from "mongoose";
-import { clearInactiveChatHistory } from "../controllers/messageController.js";
 
 class SocketHandler {
   constructor(io) {
@@ -367,8 +366,6 @@ class SocketHandler {
         socket.emit("error", { message: "Unauthorized" });
         return;
       }
-
-      await clearInactiveChatHistory(populatedChat);
 
       // Check if admin has blocked the counselor from chatting
       const counselorForSocket = await User.findById(populatedChat.counselorId._id).lean();

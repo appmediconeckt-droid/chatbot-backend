@@ -266,12 +266,9 @@ import walletRoutes from "./routes/walletRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import ratingRoutes from "./routes/ratingRoutes.js";
-import translateRoutes from "./routes/translateRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 import { resetAllUsersPresence } from "./utils/presenceManager.js";
-import adminRoutes from "./routes/adminRoutes.js";
-import { initChatCleanupJob } from "./jobs/chatCleanupJob.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -325,23 +322,12 @@ const DB_STATE_LABEL = {
 // ---------------------------
 const allowedOrigins = [
   "https://mediconeckt.vercel.app/",
-  "https://mediconeckt.vercel.app",
   "http://localhost:4173",
   "http://localhost:3000",
-  "http://localhost:5000",
-  "http://localhost:5001",
   "http://localhost:5173",
-  "http://localhost:8000",
-  "http://localhost:8080",
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:5000",
-  "http://127.0.0.1:5001",
   "http://192.168.0.138:5173",
-  "http://192.168.0.138:3000",
-  "http://192.168.0.138:5001",
   "https://your-frontend-domain.com",
   "https://aichatbotmediconeckt.netlify.app",
-  "https://aichatbotmediconeckt.netlify.app/",
 ];
 
 const normalizeOrigin = (origin) => origin?.replace(/\/$/, "");
@@ -426,21 +412,19 @@ app.use("/api/auth", authRoutes);
 app.use("/api/chat", messageRoutes);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/progress", progressRoutes); // <--- Mood tracking & progress endpoints
-app.use("/api/translate", translateRoutes);
 app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/counselors", ratingRoutes);
-app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 
 // ---------------------------
 // 5. HTTP & Socket.IO server
 // ---------------------------
 const server = http.createServer(app);
 
-// Create Socket.IO server with WebSocket and polling support
+// Create Socket.IO server — polling-only (Render.com free tier blocks WS upgrades)
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
@@ -450,17 +434,13 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
-  transports: ["websocket", "polling"],
-  allowUpgrades: true,
+  transports: ["polling"],
+  allowUpgrades: false,
   pingTimeout: 60000,
   pingInterval: 25000,
   path: "/socket.io/",
   allowEIO3: true,
   maxHttpBufferSize: 1e7,
-  reconnection: true,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
-  reconnectionAttempts: 5,
 });
 
 io.use(authenticateSocket);
@@ -476,13 +456,6 @@ socketHandler.initialize();
 resetAllUsersPresence().catch(err => {
   console.error("Failed to reset presence on startup:", err);
 });
-
-// Initialize chat cleanup job (runs daily at 2 AM)
-try {
-  initChatCleanupJob();
-} catch (error) {
-  console.error("Failed to initialize chat cleanup job:", error);
-}
 
 export { app };
 export default server;

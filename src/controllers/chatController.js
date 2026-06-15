@@ -723,66 +723,6 @@ const sendCrisisAlert = async (counselor, userMessage, userId) => {
   console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. Message: ${userMessage.substring(0, 100)}...`);
 };
 
-// GET /api/ai-chat/history — Fetch AI chat history for the current session
-// Returns last MAX_HISTORY_TURNS conversations for the user
-export const getChatHistory = async (req, res) => {
-  try {
-    const userId = req.user?.id || req.user?._id;
-    const { sessionId } = req.query;
-
-    if (!userId && !sessionId) {
-      return res.status(400).json({
-        success: false,
-        message: "Either userId (via auth) or sessionId (via query) is required",
-      });
-    }
-
-    let query = {};
-    if (userId) {
-      query.userId = userId;
-      if (sessionId) {
-        query.sessionId = sessionId;
-      }
-    } else {
-      query.sessionId = sessionId;
-    }
-
-    const chats = await Chat.find(query)
-      .sort({ createdAt: -1 })
-      .limit(MAX_HISTORY_TURNS)
-      .lean();
-
-    if (!chats || chats.length === 0) {
-      return res.status(200).json({
-        success: true,
-        history: [],
-        message: "No chat history found",
-      });
-    }
-
-    const history = chats
-      .reverse()
-      .flatMap((c) => [
-        { role: "user", content: c.userMessage },
-        { role: "assistant", content: c.aiResponse },
-      ]);
-
-    return res.status(200).json({
-      success: true,
-      history,
-      sessionId: chats[0]?.sessionId || null,
-      totalTurns: chats.length,
-    });
-  } catch (err) {
-    console.error("[getChatHistory] error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Error fetching chat history",
-      error: err.message,
-    });
-  }
-};
-
 // Wipe all chat history for the authenticated user. Lets them start over
 // with a clean onboarding turn. Auth-protected — callers can only delete
 // their own messages.
