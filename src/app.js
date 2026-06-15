@@ -269,6 +269,8 @@ import ratingRoutes from "./routes/ratingRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 import { resetAllUsersPresence } from "./utils/presenceManager.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import { initChatCleanupJob } from "./jobs/chatCleanupJob.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -429,6 +431,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/counselors", ratingRoutes);
+app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 
 // ---------------------------
 // 5. HTTP & Socket.IO server
@@ -471,6 +474,13 @@ socketHandler.initialize();
 resetAllUsersPresence().catch(err => {
   console.error("Failed to reset presence on startup:", err);
 });
+
+// Initialize chat cleanup job (runs daily at 2 AM)
+try {
+  initChatCleanupJob();
+} catch (error) {
+  console.error("Failed to initialize chat cleanup job:", error);
+}
 
 export { app };
 export default server;
