@@ -1175,7 +1175,7 @@ export const sendMessage = async (req, res) => {
 // Delete chat (soft delete)
 export const deleteChat = async (req, res) => {
   try {
-    const chat = await Chat.findById(req.params.chatId);
+    const chat = await findChatByIdentifier(req.params.chatId);
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
@@ -1194,9 +1194,16 @@ export const deleteChat = async (req, res) => {
 
     // Soft delete
     chat.isActive = false;
+    chat.status = chat.status === "pending" ? "cancelled" : chat.status;
+    chat.updatedAt = new Date();
     await chat.save();
 
-    res.json({ message: "Chat deleted successfully" });
+    res.json({
+      success: true,
+      message: "Chat deleted successfully",
+      chatId: chat._id,
+      publicChatId: chat.chatId,
+    });
   } catch (error) {
     console.error("Error deleting chat:", error);
     res.status(500).json({ error: "Error deleting chat" });
@@ -1206,7 +1213,7 @@ export const deleteChat = async (req, res) => {
 // Clear all messages in chat
 export const clearChat = async (req, res) => {
   try {
-    const chat = await Chat.findById(req.params.chatId);
+    const chat = await findChatByIdentifier(req.params.chatId);
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
