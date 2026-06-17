@@ -994,8 +994,8 @@ export const sendMessage = async (req, res) => {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    // Only allow messaging if chat is accepted or active
-    if (chat.status !== "accepted" && chat.status !== "active") {
+    // Only allow messaging if chat is pending, accepted, or active
+    if (chat.status !== "pending" && chat.status !== "accepted" && chat.status !== "active") {
       return res.status(403).json({
         error: `Cannot send messages. Chat is ${chat.status}.`,
         status: chat.status,

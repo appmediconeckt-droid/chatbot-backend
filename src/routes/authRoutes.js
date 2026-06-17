@@ -51,11 +51,7 @@ authRoutes.post("/send-email-otp", sendEmailOTP);
 authRoutes.post("/verify-email-otp", verifyEmailOTP);
 authRoutes.post("/send-phone-otp", sendPhoneOTP);
 authRoutes.post("/verify-phone-otp", verifyPhoneOTP);
-authRoutes.post(
-  "/complete-registration",
-  uploadProfilePhoto,
-  completeRegistration,
-);
+authRoutes.post("/complete-registration",uploadProfilePhoto,completeRegistration,);
 
 // AUTHENTICATION ROUTES
 authRoutes.post("/login", loginUser);
@@ -157,3 +153,4 @@ authRoutes.post(
 );
 
 export default authRoutes;
+    

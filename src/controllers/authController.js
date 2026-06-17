@@ -57,6 +57,35 @@ const MAX_LOCATION_HISTORY = 20;
 const getClientIp = (req) =>
   (req.headers["x-forwarded-for"]?.split(",")[0] || req.socket?.remoteAddress || "").trim();
 
+const markUserOnline = async (userOrId) => {
+  const userId = userOrId?._id || userOrId;
+  if (!userId) return;
+
+  await User.findByIdAndUpdate(userId, {
+    $set: { isOnline: true, lastSeen: null },
+  });
+
+  if (userOrId?._id) {
+    userOrId.isOnline = true;
+    userOrId.lastSeen = null;
+  }
+};
+
+const markUserOfflineIfNoActiveSessions = async (userId) => {
+  if (!userId) return;
+
+  const activeSessionCount = await Session.countDocuments({
+    userId,
+    isActive: true,
+  });
+
+  if (activeSessionCount > 0) return;
+
+  await User.findByIdAndUpdate(userId, {
+    $set: { isOnline: false, lastSeen: new Date() },
+  });
+};
+
 const saveLoginLocationIfProvided = async ({ req, userId }) => {
   const lat = Number(req.body?.latitude);
   const lng = Number(req.body?.longitude);
@@ -1457,6 +1486,13 @@ export const completeRegistration = async (req, res) => {
       profileCompleted: true,
       isEmailVerified: true,
       isActive: true,
+      // The 2dsphere index requires a complete GeoJSON Point. Without this,
+      // the schema default creates { type: "Point" } without coordinates and
+      // MongoDB rejects the insert during registration.
+      locationData: {
+        current: { type: "Point", coordinates: [0, 0] },
+        history: [],
+      },
       // NEW: Add patient profile fields (will be null/empty for counsellors initially)
       dateOfBirth: dateOfBirth || null,
       bloodGroup: bloodGroup || null,
@@ -1551,6 +1587,7 @@ export const completeRegistration = async (req, res) => {
       isActive: true,
       createdAt: new Date(),
     });
+    await markUserOnline(newUser);
 
     // Set cookies
     res.cookie("accessToken", accessToken, {
@@ -1665,6 +1702,7 @@ export const loginUser = async (req, res) => {
       refreshToken,
       isActive: true,
     });
+    await markUserOnline(user);
 
     // Optional: if client sends GPS on login, store it (and append history event=login)
     await saveLoginLocationIfProvided({ req, userId: user._id });
@@ -1921,6 +1959,7 @@ export const googleAuth = async (req, res) => {
       refreshToken,
       isActive: true,
     });
+    await markUserOnline(user);
 
     // Optional: capture login location if GPS sent in body
     await saveLoginLocationIfProvided({ req, userId: user._id });
@@ -2341,6 +2380,7 @@ export const verifyLoginOTP = async (req, res) => {
       refreshToken,
       isActive: true,
     });
+    await markUserOnline(user);
 
     // Clean up the OTP entry
     loginOTPStore.delete(email);
@@ -2421,6 +2461,7 @@ export const refreshAccessToken = async (req, res) => {
     // Update session with new refresh token
     session.refreshToken = newRefreshToken;
     await session.save();
+    await markUserOnline(user);
 
     // Set cookies (for browser clients)
     res.cookie("accessToken", newAccessToken, {
@@ -2508,6 +2549,8 @@ export const logout = async (req, res) => {
       console.log("⚠️ No userId found, skipping session invalidation");
     }
 
+    await markUserOfflineIfNoActiveSessions(userId);
+
     // Clear cookies regardless
     const cookieOptions = {
       httpOnly: true,
@@ -2561,6 +2604,7 @@ export const logoutAllDevices = async (req, res) => {
       { userId, isActive: true },
       { isActive: false, logoutAt: new Date() },
     );
+    await markUserOfflineIfNoActiveSessions(userId);
 
     res.clearCookie("accessToken", {
       httpOnly: true,
