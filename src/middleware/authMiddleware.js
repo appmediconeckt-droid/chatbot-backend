@@ -59,6 +59,15 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
       });
     }
 
+    if (!user.isOnline || user.lastSeen) {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { isOnline: true, lastSeen: null } },
+      );
+      user.isOnline = true;
+      user.lastSeen = null;
+    }
+
     // 5. Issue new tokens (rotation)
     const newAccessToken = generateAccessToken(user._id, session._id);
     const newRefreshToken = generateRefreshToken(user._id, session._id);
@@ -196,6 +205,15 @@ export const authMiddleware = async (req, res, next) => {
     }
 
     // ── 5. Attach user to request ──
+    if (!user.isOnline || user.lastSeen) {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { isOnline: true, lastSeen: null } },
+      );
+      user.isOnline = true;
+      user.lastSeen = null;
+    }
+
     req.user = user;
     req.userId = user._id;
     req.userRole = user.role;
