@@ -62,95 +62,23 @@ export const startChat = async (req, res) => {
         existingChat.status === "cancelled" ||
         existingChat.status === "rejected" ||
         existingChat.status === "closed" ||
-        (existingChat.status === "pending" &&
-          existingChat.expiresAt &&
-          new Date() > existingChat.expiresAt) ||
         !existingChat.isActive;
 
       // Check if there's an active pending request
       if (existingChat.status === "pending" && existingChat.isActive) {
-        // Check if it's expired
-        if (existingChat.expiresAt && new Date() > existingChat.expiresAt) {
-          console.log("Request expired, reactivating");
-          // Reactivate the expired chat
-          existingChat.status = "pending";
-          existingChat.isActive = true;
-          existingChat.cancelledAt = null;
-          existingChat.rejectedAt = null;
-
-          // Set new expiration time (30 seconds from now)
-          const expiresAt = new Date();
-          expiresAt.setSeconds(expiresAt.getSeconds() + 30);
-          existingChat.expiresAt = expiresAt;
-
-          existingChat.updatedAt = new Date();
-          await existingChat.save();
-
-          // Add new request message
-          await Message.create({
-            chatId: existingChat._id,
-            senderId: req.user._id,
-            senderRole: "user",
-            content: `🔄 Sending a new request. (Expires in 30 seconds)`,
-            contentType: "TEXT",
-          });
-
-          const populatedChat = await Chat.findById(existingChat._id)
-            .populate("userId", "fullName email profilePhoto anonymous") // Add anonymous here
-            .populate(
-              "counselorId",
-              "fullName specialization profilePhoto rating isActive",
-            );
-
-          return res.json({
-            success: true,
-            message: "New request sent successfully",
-            chat: {
-              id: populatedChat._id,
-              chatId: populatedChat.chatId,
-              status: populatedChat.status,
-              expiresAt: populatedChat.expiresAt,
-              counselor: {
-                id: populatedChat.counselorId._id,
-                name: populatedChat.counselorId.fullName,
-                specialization: populatedChat.counselorId.specialization,
-                avatar: populatedChat.counselorId.profilePhoto?.url || null,
-              },
-              user: {
-                id: populatedChat.userId._id,
-                name: populatedChat.userId.fullName,
-                anonymous: populatedChat.userId.anonymous, // Add anonymous here
-                email: populatedChat.userId.email,
-              },
-              startedAt: populatedChat.startedAt,
-            },
-          });
-        } else if (
-          existingChat.expiresAt &&
-          new Date() <= existingChat.expiresAt
-        ) {
-          // Active pending request exists
-          const populatedChat = await Chat.findById(existingChat._id)
-            .populate("userId", "fullName email profilePhoto anonymous")
-            .populate(
-              "counselorId",
-              "fullName specialization profilePhoto rating isActive",
-            );
-
-          // Calculate remaining seconds
-          const remainingSeconds = Math.max(
-            0,
-            Math.floor((existingChat.expiresAt - new Date()) / 1000),
+        // Active pending request exists
+        const populatedChat = await Chat.findById(existingChat._id)
+          .populate("userId", "fullName email profilePhoto anonymous")
+          .populate(
+            "counselorId",
+            "fullName specialization profilePhoto rating isActive",
           );
 
-          return res.status(400).json({
-            error: `Chat request already active. Please wait ${remainingSeconds} seconds before sending another request.`,
-            status: existingChat.status,
-            chatId: existingChat._id,
-            expiresAt: existingChat.expiresAt,
-            remainingSeconds: remainingSeconds,
-          });
-        }
+        return res.status(400).json({
+          error: `Chat request already active. Please wait for counselor to respond.`,
+          status: existingChat.status,
+          chatId: existingChat._id,
+        });
       }
 
       // If chat is accepted or active, return error
@@ -183,11 +111,7 @@ export const startChat = async (req, res) => {
         existingChat.closedAt = null;
         existingChat.cancelledAt = null;
         existingChat.acceptedAt = null;
-
-        // Set expiration time (30 seconds from now)
-        const expiresAt = new Date();
-        expiresAt.setSeconds(expiresAt.getSeconds() + 30);
-        existingChat.expiresAt = expiresAt;
+        existingChat.expiresAt = null;
 
         existingChat.updatedAt = new Date();
         await existingChat.save();
@@ -197,7 +121,7 @@ export const startChat = async (req, res) => {
           chatId: existingChat._id,
           senderId: req.user._id,
           senderRole: "user",
-          content: `👋 I'd like to start a conversation. (Request will expire in 30 seconds)`,
+          content: `👋 I'd like to start a conversation.`,
           contentType: "TEXT",
         });
 
@@ -215,7 +139,6 @@ export const startChat = async (req, res) => {
             id: populatedChat._id,
             chatId: populatedChat.chatId,
             status: populatedChat.status,
-            expiresAt: populatedChat.expiresAt,
             counselor: {
               id: populatedChat.counselorId._id,
               name: populatedChat.counselorId.fullName,
@@ -237,15 +160,10 @@ export const startChat = async (req, res) => {
     // ONLY create new chat if NO existing chat exists
     console.log("No existing chat found, creating brand new chat");
 
-    // Set expiration time (30 seconds from now)
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + 30);
-
     const chat = await Chat.create({
       userId: req.user._id,
       counselorId: counselorId,
       status: "pending",
-      expiresAt: expiresAt,
       startedAt: new Date(),
       updatedAt: new Date(),
     });
@@ -255,7 +173,7 @@ export const startChat = async (req, res) => {
       chatId: chat._id,
       senderId: req.user._id,
       senderRole: "user",
-      content: `👋 Hello! I'd like to start a conversation with you. (Request will expire in 30 seconds)`,
+      content: `👋 Hello! I'd like to start a conversation with you.`,
       contentType: "TEXT",
     });
 
@@ -312,10 +230,7 @@ export const startChat = async (req, res) => {
         existingChat.closedAt = null;
         existingChat.cancelledAt = null;
         existingChat.acceptedAt = null;
-
-        const expiresAt = new Date();
-        expiresAt.setSeconds(expiresAt.getSeconds() + 30);
-        existingChat.expiresAt = expiresAt;
+        existingChat.expiresAt = null;
 
         existingChat.updatedAt = new Date();
         await existingChat.save();
@@ -325,7 +240,7 @@ export const startChat = async (req, res) => {
           chatId: existingChat._id,
           senderId: req.user._id,
           senderRole: "user",
-          content: `🔄 Sending a new request. (Expires in 30 seconds)`,
+          content: `🔄 Sending a new request.`,
           contentType: "TEXT",
         });
 
@@ -343,7 +258,6 @@ export const startChat = async (req, res) => {
             id: populatedChat._id,
             chatId: populatedChat.chatId,
             status: populatedChat.status,
-            expiresAt: populatedChat.expiresAt,
             counselor: {
               id: populatedChat.counselorId._id,
               name: populatedChat.counselorId.fullName,
@@ -419,24 +333,6 @@ export const acceptChat = async (req, res) => {
       });
     }
 
-    // Check if request has expired
-    if (
-      chat.status === "pending" &&
-      chat.expiresAt &&
-      new Date() > chat.expiresAt
-    ) {
-      chat.status = "cancelled";
-      chat.cancelledAt = new Date();
-      chat.isActive = false;
-      await chat.save();
-
-      return res.status(400).json({
-        error: "Chat request has expired. User needs to send a new request.",
-        status: "expired",
-        canResend: true,
-        chatId: chat._id,
-      });
-    }
 
     // Check if chat is pending
     if (chat.status !== "pending") {
@@ -449,7 +345,6 @@ export const acceptChat = async (req, res) => {
     // Accept the chat
     chat.status = "accepted";
     chat.acceptedAt = new Date();
-    chat.expiresAt = null; // Clear expiration
     chat.updatedAt = new Date();
     await chat.save();
 
@@ -540,44 +435,9 @@ export const acceptChat = async (req, res) => {
   }
 };
 
-// Auto-cancel expired chat requests (background job)
+// Placeholder: Background job removed - requests no longer expire automatically
 export const cancelExpiredRequests = async () => {
-  try {
-    const now = new Date();
-
-    // Find all pending chats that have expired
-    const expiredChats = await Chat.find({
-      status: "pending",
-      expiresAt: { $lt: now },
-      isActive: true,
-    });
-
-    console.log(`Found ${expiredChats.length} expired chat requests to cancel`);
-
-    // Update each expired chat
-    for (const chat of expiredChats) {
-      chat.status = "cancelled";
-      chat.cancelledAt = now;
-      chat.isActive = false; // Optionally deactivate
-      await chat.save();
-
-      // Add auto-cancel message
-      await Message.create({
-        chatId: chat._id,
-        senderId: null,
-        senderRole: "system",
-        content: `⏰ Chat request automatically cancelled after 30 seconds. You can send a new request.`,
-        contentType: "TEXT",
-      });
-
-      console.log(`Cancelled expired chat: ${chat._id}`);
-    }
-
-    return expiredChats.length;
-  } catch (error) {
-    console.error("Error cancelling expired requests:", error);
-    return 0;
-  }
+  return 0;
 };
 
 // Reject chat request (counselor only)
@@ -612,7 +472,6 @@ export const rejectChat = async (req, res) => {
     // Reject the chat
     chat.status = "rejected";
     chat.rejectedAt = new Date();
-    chat.expiresAt = null; // Clear expiration
     chat.updatedAt = new Date();
     await chat.save();
 
@@ -674,12 +533,11 @@ export const getPendingRequests = async (req, res) => {
     const counselorId = req.user._id;
     const now = new Date();
 
-    // 1. Fetch pending chats that haven't expired using .lean() for performance
+    // 1. Fetch all pending chats for this counselor
     const pendingChats = await Chat.find({
       counselorId,
       status: "pending",
       isActive: true,
-      $or: [{ expiresAt: { $gt: now } }, { expiresAt: { $exists: false } }],
     })
       .populate("userId", "fullName email profilePhoto anonymous")
       .sort({ startedAt: -1 })
@@ -709,10 +567,6 @@ export const getPendingRequests = async (req, res) => {
 
     // 3. Construct the response
     const requests = pendingChats.map((chat) => {
-      const remainingSeconds = chat.expiresAt
-        ? Math.max(0, Math.floor((new Date(chat.expiresAt) - now) / 1000))
-        : null;
-
       return {
         id: chat._id,
         chatId: chat.chatId,
@@ -726,8 +580,6 @@ export const getPendingRequests = async (req, res) => {
         requestMessage: messageMap[chat._id.toString()] || "No message",
         requestedAt: chat.startedAt,
         status: chat.status,
-        expiresAt: chat.expiresAt,
-        remainingSeconds,
       };
     });
 
@@ -799,22 +651,10 @@ export const getChats = async (req, res) => {
           return null;
         }
 
-        // Check if request is expired
-        let isExpired = false;
-        if (
-          chat.status === "pending" &&
-          chat.expiresAt &&
-          new Date() > chat.expiresAt
-        ) {
-          isExpired = true;
-        }
-
         return {
           id: chat._id,
           chatId: chat.chatId,
           status: chat.status,
-          isExpired: isExpired,
-          expiresAt: chat.expiresAt,
           otherParty: {
             id: otherParty._id,
             name: otherParty.fullName,
