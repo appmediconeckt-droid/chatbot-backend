@@ -1593,11 +1593,16 @@ export const videoCallController = {
         query.$and.push({ receiverId: userId });
       }
 
-      const total = await Call.countDocuments(query);
-      const calls = await Call.find(query)
-        .sort({ createdAt: -1 })
-        .skip((parsedPage - 1) * parsedLimit)
-        .limit(parsedLimit);
+      // ✅ Optimized: Use single query with countDocuments() on paginated result
+      // fetch count and data in parallel to reduce latency
+      const [total, calls] = await Promise.all([
+        Call.countDocuments(query),
+        Call.find(query)
+          .sort({ createdAt: -1 })
+          .skip((parsedPage - 1) * parsedLimit)
+          .limit(parsedLimit)
+          .lean() // ✅ Optimize: Read-only data, no need for Mongoose objects
+      ]);
 
       const formattedCalls = calls.map((call) => {
         const isInitiator = call.callerId.toString() === userId.toString();

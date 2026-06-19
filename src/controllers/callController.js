@@ -458,15 +458,16 @@ export const getCallHistory = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     
-    const calls = await Call.find({ 
-      chatId: chat._id,
-      isActive: false
-    })
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit);
-    
-    const total = await Call.countDocuments({ chatId: chat._id, isActive: false });
+    // ✅ Optimized: Fetch count & data in parallel with lean() for read-only data
+    const query = { chatId: chat._id, isActive: false };
+    const [calls, total] = await Promise.all([
+      Call.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(), // ✅ Read-only data - faster
+      Call.countDocuments(query)
+    ]);
     
     res.json({
       success: true,

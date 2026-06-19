@@ -266,6 +266,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import ratingRoutes from "./routes/ratingRoutes.js";
+import ratingsApiRoutes from "./routes/ratingsApiRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
 import { resetAllUsersPresence } from "./utils/presenceManager.js";
@@ -422,6 +423,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/counselors", ratingRoutes);
+app.use("/api/ratings", ratingsApiRoutes);
 // app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);

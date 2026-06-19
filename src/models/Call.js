@@ -169,6 +169,12 @@ const callSchema = new mongoose.Schema(
 // Indexes for better query performance
 callSchema.index({ status: 1 });
 callSchema.index({ createdAt: -1 });
+// Composite index for fast call history queries (most common pattern)
+callSchema.index({ callerId: 1, createdAt: -1 });
+callSchema.index({ receiverId: 1, createdAt: -1 });
+// Compound index for OR queries
+callSchema.index({ callerId: 1, status: 1, createdAt: -1 });
+callSchema.index({ receiverId: 1, status: 1, createdAt: -1 });
 
 // Virtual for formatted duration
 callSchema.virtual("formattedDuration").get(function () {
