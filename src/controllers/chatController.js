@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import mongoose from "mongoose";
 import OpenAI from "openai";
 import Chat from "../models/chatModel.js";
 import User from "../models/userModel.js";
@@ -745,6 +746,47 @@ export const clearMyChatHistory = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: err.message });
+  }
+};
+
+// Delete one AI chat message/turn for the authenticated user.
+export const deleteMyChatMessage = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { chatId } = req.params;
+
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(chatId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid chat message id" });
+    }
+
+    const deletedChat = await Chat.findOneAndDelete({
+      _id: chatId,
+      userId,
+    }).lean();
+
+    if (!deletedChat) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Chat message not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      deletedChatId: deletedChat._id,
+      sessionId: deletedChat.sessionId,
+      message: "Chat message deleted successfully.",
+    });
+  } catch (err) {
+    console.error("deleteMyChatMessage error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 

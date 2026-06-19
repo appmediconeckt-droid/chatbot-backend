@@ -1558,94 +1558,183 @@ export const videoCallController = {
   // ==================== CALL HISTORY ====================
 
   // 11. Get call history
-  getCallHistory: async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const { page = 1, limit = 20, status = "all", type = "all" } = req.query;
+getCallHistory: async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 20, status = "all", type = "all" } = req.query;
 
-      const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
-      const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-      const query = {
-        $and: [
-          {
-            $or: [{ callerId: userId }, { receiverId: userId }],
-          },
-          {
-            $or: [
-              { isActive: false },
-              { status: { $in: TERMINAL_CALL_STATUSES } },
-              { endedAt: { $ne: null } },
-              { rejectedAt: { $ne: null } },
-              { cancelledAt: { $ne: null } },
-            ],
-          },
-        ],
-      };
+    const query = {
+      $and: [
+        {
+          $or: [
+            { callerId: userId },
+            { receiverId: userId },
+          ],
+        },
+        {
+          $or: [
+            { isActive: false },
+            { status: { $in: TERMINAL_CALL_STATUSES } },
+            { endedAt: { $ne: null } },
+            { rejectedAt: { $ne: null } },
+            { cancelledAt: { $ne: null } },
+          ],
+        },
+      ],
+    };
 
-      if (status !== "all") {
-        query.$and.push({ status });
-      }
-
-      if (type === "initiated") {
-        query.$and.push({ callerId: userId });
-      } else if (type === "received") {
-        query.$and.push({ receiverId: userId });
-      }
-
-      const total = await Call.countDocuments(query);
-      const calls = await Call.find(query)
-        .sort({ createdAt: -1 })
-        .skip((parsedPage - 1) * parsedLimit)
-        .limit(parsedLimit);
-
-      const formattedCalls = calls.map((call) => {
-        const isInitiator = call.callerId.toString() === userId.toString();
-        const otherParticipantName = isInitiator
-          ? call.receiverName
-          : call.callerName;
-        const otherParticipantId = isInitiator
-          ? call.receiverId
-          : call.callerId;
-        const otherParticipantType = isInitiator
-          ? call.receiverType
-          : call.initiatorType;
-        const otherParticipantAvatar = isInitiator
-          ? call.receiverAvatar
-          : call.callerAvatar;
-
-        return {
-          id: call.callId,
-          with: otherParticipantName,
-          withId: otherParticipantId,
-          withType: otherParticipantType,
-          withProfilePhoto: otherParticipantAvatar,
-          type: call.callType,
-          duration: call.duration,
-          timestamp: call.createdAt,
-          status: call.status,
-          role: isInitiator ? "initiator" : "receiver",
-          endedBy: call.endedBy,
-          acceptedAt: call.acceptedAt,
-          rejectedAt: call.rejectedAt,
-        };
-      });
-
-      res.json({
-        success: true,
-        history: formattedCalls,
-        total,
-        page: parsedPage,
-        totalPages: Math.ceil(total / parsedLimit),
-      });
-    } catch (error) {
-      console.error("Error fetching history:", error);
-      res.status(500).json({
-        success: false,
-        error: "Failed to fetch history",
-      });
+    if (status !== "all") {
+      query.$and.push({ status });
     }
-  },
+
+    if (type === "initiated") {
+      query.$and.push({ callerId: userId });
+    } else if (type === "received") {
+      query.$and.push({ receiverId: userId });
+    }
+
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const [total, calls] = await Promise.all([
+      Call.countDocuments(query).maxTimeMS(8000),
+
+      Call.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parsedLimit)
+        .lean()
+        .maxTimeMS(8000),
+    ]);
+
+    const participantIds = [
+      ...new Set(
+        calls
+          .flatMap((call) => [
+            call.callerId?.toString(),
+            call.receiverId?.toString(),
+          ])
+          .filter(Boolean)
+          .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      ),
+    ];
+
+    const users = participantIds.length
+      ? await User.find({
+          _id: { $in: participantIds },
+        })
+          .select("_id fullName full_name name role anonymous avatar profilePhoto")
+          .lean()
+          .maxTimeMS(8000)
+      : [];
+
+    const userMap = {};
+
+    users.forEach((user) => {
+      userMap[user._id.toString()] = user;
+    });
+
+    const getDisplayName = (user, fallbackName = "Anonymous User") => {
+      if (!user) return fallbackName || "Anonymous User";
+
+      if (user.role === "user") {
+        return (
+          user.anonymous ||
+          user.fullName ||
+          user.full_name ||
+          user.name ||
+          "Anonymous User"
+        );
+      }
+
+      return (
+        user.fullName ||
+        user.full_name ||
+        user.name ||
+        fallbackName ||
+        "Unknown User"
+      );
+    };
+
+    const getAvatar = (user, fallbackAvatar = null) => {
+      if (!user) return fallbackAvatar;
+
+      return (
+        user.profilePhoto?.url ||
+        user.avatar?.url ||
+        fallbackAvatar ||
+        null
+      );
+    };
+
+    const formattedCalls = calls.map((call) => {
+      const callerId = call.callerId?.toString();
+      const receiverId = call.receiverId?.toString();
+
+      const isInitiator = callerId === userId.toString();
+
+      const otherParticipantId = isInitiator ? receiverId : callerId;
+      const otherUser = userMap[otherParticipantId];
+
+      const fallbackOtherName = isInitiator
+        ? call.receiverName
+        : call.callerName;
+
+      const fallbackOtherAvatar = isInitiator
+        ? call.receiverAvatar
+        : call.callerAvatar;
+
+      const otherParticipantType = isInitiator
+        ? call.receiverType
+        : call.initiatorType;
+
+      return {
+        id: call.callId,
+
+        // Frontend me ye naam show karo
+        with: getDisplayName(otherUser, fallbackOtherName),
+
+        withId: otherParticipantId,
+        withType: otherParticipantType,
+        withProfilePhoto: getAvatar(otherUser, fallbackOtherAvatar),
+
+        type: call.callType,
+        duration: call.duration,
+        timestamp: call.createdAt,
+        status: call.status,
+
+        role: isInitiator ? "initiator" : "receiver",
+        endedBy: call.endedBy,
+        acceptedAt: call.acceptedAt,
+        rejectedAt: call.rejectedAt,
+
+        callerName: getDisplayName(userMap[callerId], call.callerName),
+        receiverName: getDisplayName(userMap[receiverId], call.receiverName),
+
+        callerAnonymousName: userMap[callerId]?.anonymous || null,
+        receiverAnonymousName: userMap[receiverId]?.anonymous || null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      history: formattedCalls,
+      total,
+      page: parsedPage,
+      totalPages: Math.ceil(total / parsedLimit),
+    });
+  } catch (error) {
+    console.error("Error fetching history:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch history",
+      message: error.message,
+    });
+  }
+},
 
   // 12. Get active calls
   getActiveCalls: async (req, res) => {
