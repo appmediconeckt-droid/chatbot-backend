@@ -6,6 +6,7 @@ import {
   textToSpeech,
   textToSpeechGet,
   clearMyChatHistory,
+  deleteMyChatMessage,
   devClearChatsForUserId,
   devResetProfileFields,
 } from "../controllers/chatController.js";
@@ -18,6 +19,7 @@ router.get("/tts", optionalAuth, textToSpeechGet);
 // User-triggered: wipe the caller's own chat history so onboarding can
 // trigger fresh. Auth required — users can only clear their OWN messages.
 router.delete("/my-history", authMiddleware, clearMyChatHistory);
+router.delete("/message/:chatId", authMiddleware, deleteMyChatMessage);
 
 // DEV-ONLY: clear chats for any userId without auth. Only mounts when
 // NODE_ENV !== "production" so production users are never exposed.
