@@ -11,6 +11,7 @@ import {
   getPendingRequests,
   getChatMessages,
   sendMessage,
+  deletePersonalMessage,
   deleteChat,
   clearChat,
   markAllRead,
@@ -38,6 +39,7 @@ router.post(
   uploadChatAttachment,
   sendMessage,
 );
+router.delete("/message/:messageId", authenticateToken, deletePersonalMessage);
 router.delete("/chat/:chatId", authenticateToken, deleteChat);
 router.delete("/clear/:chatId", authenticateToken, clearChat);
 router.post("/mark-all-read", authenticateToken, markAllRead);

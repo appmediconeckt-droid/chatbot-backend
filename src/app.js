@@ -283,7 +283,10 @@ const app = express();
 
 // Use a tolerant JSON parser: accept text for application/json, keep raw body,
 // attempt strict JSON.parse, and retry after trimming a single trailing quote.
-app.use(express.text({ type: 'application/json', limit: '200kb' }));
+// Selfie data URLs are considerably larger than normal JSON payloads. Keep a
+// bounded limit that accepts a compressed camera image while preventing an
+// unbounded request body.
+app.use(express.text({ type: 'application/json', limit: process.env.JSON_BODY_LIMIT || '8mb' }));
 app.use((req, res, next) => {
   if (!req.is || !req.is('application/json')) return next();
 

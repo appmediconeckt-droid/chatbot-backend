@@ -1237,3 +1237,43 @@ export const markAllRead = async (req, res) => {
     res.status(500).json({ error: "Error marking messages as read" });
   }
 };
+
+// Delete one personal-chat message (including its image/file reference).
+// Either participant may remove an individual item from their shared personal chat.
+export const deletePersonalMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const message = await Message.findOne({
+      $or: [{ _id: mongoose.Types.ObjectId.isValid(messageId) ? messageId : null }, { messageId }],
+    });
+
+    if (!message) return res.status(404).json({ success: false, error: "Message not found" });
+    const chat = await findChatByIdentifier(String(message.chatId));
+    if (!chat) return res.status(404).json({ success: false, error: "Chat not found" });
+
+    const isParticipant = [String(chat.userId), String(chat.counselorId)].includes(String(req.user._id));
+    if (!isParticipant) return res.status(403).json({ success: false, error: "Unauthorized" });
+
+    await message.deleteOne();
+
+    const lastMessage = await Message.findOne({ $or: [{ chatId: chat._id }, { chatId: chat.chatId }] })
+      .sort({ createdAt: -1 });
+    chat.lastMessage = lastMessage?.content || "";
+    chat.lastMessageAt = lastMessage?.createdAt || null;
+    chat.updatedAt = new Date();
+    await chat.save();
+
+    if (global.io) {
+      global.io.to(`chat_${chat.chatId}`).emit("message-deleted", {
+        chatId: String(chat._id),
+        messageId: String(message._id),
+        publicMessageId: message.messageId,
+      });
+    }
+
+    return res.json({ success: true, messageId: String(message._id), publicMessageId: message.messageId });
+  } catch (error) {
+    console.error("Error deleting personal chat message:", error);
+    return res.status(500).json({ success: false, error: "Failed to delete message" });
+  }
+};
