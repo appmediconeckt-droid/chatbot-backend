@@ -19,6 +19,11 @@ const ratingSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    // Optional reference to the interaction (chat or call) that earned the rating.
+    sessionId: {
+      type: String,
+      default: null,
+    },
     stars: {
       type: Number,
       required: true,
