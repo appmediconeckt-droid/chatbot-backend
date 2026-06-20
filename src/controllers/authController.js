@@ -2668,13 +2668,20 @@ export const getAllCounsellors = async (req, res) => {
 
     const counsellors = await User.find(filter)
       .select("-password")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const counsellorsWithLoginStatus = counsellors.map((counsellor) => ({
+      ...counsellor,
+      isOnline: Boolean(counsellor.isOnline),
+      isLoggedIn: Boolean(counsellor.isOnline),
+    }));
 
     return res.status(200).json({
       message: "Counsellors fetched successfully",
       success: true,
-      counsellors,
-      count: counsellors.length,
+      counsellors: counsellorsWithLoginStatus,
+      count: counsellorsWithLoginStatus.length,
     });
   } catch (error) {
     console.log("Get counsellors error:", error);
