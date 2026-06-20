@@ -274,6 +274,7 @@ import { resetAllUsersPresence } from "./utils/presenceManager.js";
 // import { initChatCleanupJob } from "./jobs/chatCleanupJob.js";
 import forgotPasswordRoutes from "./routes/forgotPasswordRoutes.js";
 import translateRoutes from "./routes/translateRoutes.js";
+import avatarRoutes from "./routes/avatarRoutes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -424,6 +425,7 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/counselors", ratingRoutes);
 app.use("/api/ratings", ratingsApiRoutes);
+app.use("/api/avatar", avatarRoutes); // <--- Avatar generation with OpenAI
 // app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);
