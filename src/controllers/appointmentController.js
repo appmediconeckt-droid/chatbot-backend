@@ -1,6 +1,31 @@
 // mindCrawller/src/controllers/appointmentController.js
 import Appointment from "../models/appointmentModel.js";
 
+// Delete appointments that never became a completed/confirmed session once
+// their scheduled date/time is past. Support both American and British
+// cancellation spellings because older clients store both variants.
+const EXPIRED_UNRESOLVED_STATUS_PATTERN = /^(pending|rejected|reject|canceled|cancelled)$/i;
+
+// Pending/rejected/canceled appointments are no longer actionable once their
+// scheduled time has passed. deleteMany is idempotent, so it is safe to run
+// from both the recurring cleanup job and the appointments API request path.
+export const deleteExpiredUnresolvedAppointments = async () => {
+  const result = await Appointment.deleteMany({
+    // Existing records can contain "reject" / uppercase values from older
+    // UI versions, so keep this check case-insensitive and backward-safe.
+    status: EXPIRED_UNRESOLVED_STATUS_PATTERN,
+    date: { $lt: new Date() },
+  });
+
+  if (result.deletedCount > 0) {
+    console.log(
+      `Appointment cleanup: removed ${result.deletedCount} expired unresolved appointment(s)`,
+    );
+  }
+
+  return result.deletedCount;
+};
+
 // IST (India Standard Time) is UTC+5:30
 const IST_OFFSET = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
 
@@ -65,6 +90,8 @@ export const book = async (req, res) => {
 
 export const getAppointments = async (req, res) => {
   try {
+    await deleteExpiredUnresolvedAppointments();
+
     const userId = req.user._id;
     const { filter, date } = req.query;
 

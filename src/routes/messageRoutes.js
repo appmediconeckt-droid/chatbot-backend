@@ -9,6 +9,7 @@ import {
   acceptChat,
   rejectChat,
   getPendingRequests,
+  getMyChatStatuses,
   getChatMessages,
   sendMessage,
   deletePersonalMessage,
@@ -32,6 +33,7 @@ router.get("/pending-requests", authenticateToken, getPendingRequests);
 
 // ==================== CHAT MANAGEMENT ROUTES ====================
 router.get("/chats", authenticateToken, getChats);
+router.get("/chat-statuses", authenticateToken, getMyChatStatuses);
 router.get("/chat/:chatId/messages", authenticateToken, getChatMessages);
 router.post(
   "/chat/:chatId/message",

@@ -262,6 +262,7 @@ import messageRoutes from "./routes/messageRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
+import { deleteExpiredUnresolvedAppointments } from "./controllers/appointmentController.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
@@ -432,6 +433,18 @@ app.use("/api/avatar", avatarRoutes); // <--- Avatar generation with OpenAI
 // app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);
+
+// Remove unresolved appointments only after their scheduled date/time has
+// passed. The request-time cleanup in getAppointments is a second safeguard.
+const appointmentCleanupInterval = setInterval(() => {
+  deleteExpiredUnresolvedAppointments().catch((error) => {
+    console.error("Appointment cleanup failed:", error.message);
+  });
+}, 60 * 1000);
+appointmentCleanupInterval.unref?.();
+deleteExpiredUnresolvedAppointments().catch((error) => {
+  console.error("Initial appointment cleanup failed:", error.message);
+});
 
 
 // ---------------------------

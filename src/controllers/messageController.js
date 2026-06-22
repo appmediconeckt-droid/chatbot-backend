@@ -692,6 +692,41 @@ export const getChats = async (req, res) => {
   }
 };
 
+// Return the current user's live chat requests so the counselor list can keep
+// its button state after the tab is unmounted/remounted. Pending chats are
+// intentionally included here (unlike getChats, which only powers the chat
+// inbox and therefore returns accepted/active chats).
+export const getMyChatStatuses = async (req, res) => {
+  try {
+    if (req.user.role !== "user") {
+      return res.status(403).json({ error: "Only users can view chat statuses" });
+    }
+
+    const chats = await Chat.find({
+      userId: req.user._id,
+      isActive: true,
+      status: { $in: ["pending", "accepted", "active"] },
+    })
+      .select("chatId counselorId status createdAt updatedAt")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return res.json({
+      chats: chats.map((chat) => ({
+        id: chat._id,
+        chatId: chat.chatId,
+        counselorId: chat.counselorId,
+        status: chat.status,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching user chat statuses:", error);
+    return res.status(500).json({ error: "Error fetching chat statuses" });
+  }
+};
+
 // Get chat messages
 export const getChatMessages = async (req, res) => {
   try {
@@ -726,7 +761,13 @@ export const getChatMessages = async (req, res) => {
     }
 
     // Only allow viewing messages if chat is accepted or active
-    if (chat.status !== "accepted" && chat.status !== "active") {
+    // The user can open the chat as soon as a request is created. This keeps
+    // the Chat Now action usable while the counselor's acceptance is pending.
+    if (
+      chat.status !== "pending" &&
+      chat.status !== "accepted" &&
+      chat.status !== "active"
+    ) {
       return res.status(403).json({
         error: `Chat is ${chat.status}. Cannot view messages.`,
         status: chat.status,

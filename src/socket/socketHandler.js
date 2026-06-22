@@ -8,6 +8,7 @@ class SocketHandler {
   constructor(io) {
     this.io = io;
     this.onlineUsers = new Map();
+    this.offlineTimers = new Map();
   }
 
   normalizeChatIdentifier(chatId) {
@@ -57,6 +58,12 @@ class SocketHandler {
     const userId = socket.userId?.toString();
     if (!userId) return;
 
+    const pendingOfflineTimer = this.offlineTimers.get(userId);
+    if (pendingOfflineTimer) {
+      clearTimeout(pendingOfflineTimer);
+      this.offlineTimers.delete(userId);
+    }
+
     if (!this.onlineUsers.has(userId)) {
       this.onlineUsers.set(userId, new Set());
     }
@@ -93,21 +100,39 @@ class SocketHandler {
 
     if (userSockets.size > 0) return;
 
-    this.onlineUsers.delete(userId);
-    const lastSeen = new Date();
+    // Mobile networks and polling transports can reconnect briefly. Keep the
+    // authenticated user online during that window; a reconnect cancels this
+    // timer. Explicit logout still invalidates the session immediately.
+    if (this.offlineTimers.has(userId)) return;
 
-    await User.findByIdAndUpdate(userId, {
-      isOnline: false,
-      lastSeen,
-    });
+    const timer = setTimeout(async () => {
+      this.offlineTimers.delete(userId);
+      const currentSockets = this.onlineUsers.get(userId);
+      if (currentSockets?.size > 0) return;
 
-    this.io.emit("presence-update", {
-      userId,
-      role: socket.userRole,
-      isOnline: false,
-      lastSeen,
-    });
-     console.log("PRESENCE OFFLINE", userId);
+      this.onlineUsers.delete(userId);
+      const lastSeen = new Date();
+
+      try {
+        await User.findByIdAndUpdate(userId, {
+          isOnline: false,
+          lastSeen,
+        });
+
+        this.io.emit("presence-update", {
+          userId,
+          role: socket.userRole,
+          isOnline: false,
+          lastSeen,
+        });
+        console.log("PRESENCE OFFLINE", userId);
+      } catch (error) {
+        console.error("Error completing offline presence update:", error);
+      }
+    }, 30_000);
+
+    timer.unref?.();
+    this.offlineTimers.set(userId, timer);
   }
 
   async resetOnlineStatus() {
@@ -116,7 +141,6 @@ class SocketHandler {
   }
 
   initialize() {
-    this.resetOnlineStatus();
     this.io.on("connection", async (socket) => {
       // console.log(`📱 User connected: ${socket.userId} (${socket.userRole})`);
 
