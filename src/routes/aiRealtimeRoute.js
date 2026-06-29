@@ -1,14 +1,18 @@
 import express from "express";
+import { optionalAuth } from "../middleware/authMiddleware.js";
+import { buildRealtimeDataContext } from "../services/aiRealtimeContext.js";
 
 const router = express.Router();
 
 const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
-const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "alloy";
+const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "shimmer";
 const REALTIME_ROUTE_VERSION = "webrtc-text-sdp-2026-06-27";
 
 const REALTIME_SYSTEM_INSTRUCTIONS = `
 You are MediConeckt AI Assistant, a warm voice companion for mental health and general wellbeing support.
+Do not speak first when a voice call starts. Stay silent and wait until the user says something, then respond to that user message.
 Keep voice replies short, natural, and supportive. Ask one gentle follow-up question only when it helps.
+Use a warm female-presenting assistant persona. In Hindi, Hinglish, and other gendered languages, always refer to yourself with feminine grammar, for example "main bol rahi hoon", "main samajh rahi hoon", "main madad kar rahi hoon". Never say masculine self-references like "main bol raha hoon" or "main kar raha hoon".
 You are not a replacement for a doctor, therapist, emergency service, or crisis line.
 If the user mentions self-harm, suicide, harming others, abuse, coercion, feeling unsafe, or a medical emergency:
 1. Respond calmly and directly.
@@ -18,20 +22,33 @@ If the user mentions self-harm, suicide, harming others, abuse, coercion, feelin
 Do not give instructions for self-harm, violence, illegal activity, sexual content involving minors, diagnosis, or medication.
 `;
 
-const buildRealtimeSession = () => ({
+const buildRealtimeSession = (dataContext = "") => ({
   type: "realtime",
   model: REALTIME_MODEL,
   audio: {
+    input: {
+      transcription: {
+        model: "gpt-4o-mini-transcribe",
+      },
+      turn_detection: {
+        type: "server_vad",
+        create_response: true,
+        interrupt_response: true,
+      },
+    },
     output: {
       voice: REALTIME_VOICE,
     },
   },
-  instructions: REALTIME_SYSTEM_INSTRUCTIONS,
+  instructions: dataContext
+    ? `${REALTIME_SYSTEM_INSTRUCTIONS}\n\n${dataContext}`
+    : REALTIME_SYSTEM_INSTRUCTIONS,
 });
 
-const exchangeRealtimeSdp = async (offerSdp) => {
+const exchangeRealtimeSdp = async (offerSdp, user) => {
   const normalizedOfferSdp = String(offerSdp || "").replace(/\r?\n/g, "\r\n");
-  const sessionConfig = JSON.stringify(buildRealtimeSession());
+  const dataContext = await buildRealtimeDataContext(user);
+  const sessionConfig = JSON.stringify(buildRealtimeSession(dataContext));
 
   const formData = new FormData();
 
@@ -90,6 +107,7 @@ const extractSdpOffer = (body) => {
 
 router.post(
   "/session",
+  optionalAuth,
   express.text({
     type: ["application/sdp", "text/plain", "application/octet-stream"],
     limit: "1mb",
@@ -114,7 +132,7 @@ router.post(
         });
       }
 
-      const answerSdp = await exchangeRealtimeSdp(offerSdp);
+      const answerSdp = await exchangeRealtimeSdp(offerSdp, req.user);
 
       return res.status(200).type("application/sdp").send(answerSdp);
     } catch (error) {
