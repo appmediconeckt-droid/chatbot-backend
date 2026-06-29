@@ -276,6 +276,8 @@ import { resetAllUsersPresence } from "./utils/presenceManager.js";
 import forgotPasswordRoutes from "./routes/forgotPasswordRoutes.js";
 import translateRoutes from "./routes/translateRoutes.js";
 import avatarRoutes from "./routes/avatarRoutes.js";
+import aiRoutes from "./routes/aiRoutes.js";
+import aiRealtimeRoute from "./routes/aiRealtimeRoute.js"
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -433,6 +435,8 @@ app.use("/api/avatar", avatarRoutes); // <--- Avatar generation with OpenAI
 // app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);
+app.use("/api/ai", aiRoutes);
+app.use("/api/ai/realtime", aiRealtimeRoute);
 
 // Remove unresolved appointments only after their scheduled date/time has
 // passed. The request-time cleanup in getAppointments is a second safeguard.

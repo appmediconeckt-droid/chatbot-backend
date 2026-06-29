@@ -7,15 +7,28 @@ export const generateAIResponse = async (
   chatHistory = [],
   systemInstruction = "",
 ) => {
-  // Check our switch in the .env file!
-  const provider = process.env.ACTIVE_AI_PROVIDER || "gemini";
+  // OpenAI is the production default. Gemini remains available only when
+  // explicitly selected, so quota issues there do not break the main chat.
+  const provider = (process.env.ACTIVE_AI_PROVIDER || "openai").toLowerCase();
 
-  if (provider === "openai") {
-    return await handleOpenAI(message, chatHistory, systemInstruction);
-  } else if (provider === "groq") {
-    return await handleGroq(message, chatHistory, systemInstruction);
-  } else {
-    return await handleGemini(message, chatHistory, systemInstruction);
+  try {
+    if (provider === "openai") {
+      return await handleOpenAI(message, chatHistory, systemInstruction);
+    } else if (provider === "groq") {
+      return await handleGroq(message, chatHistory, systemInstruction);
+    } else {
+      return await handleGemini(message, chatHistory, systemInstruction);
+    }
+  } catch (error) {
+    if (provider !== "openai" && process.env.OPENAI_API_KEY) {
+      console.warn(
+        `[AI_SERVICE] ${provider} provider failed, retrying with OpenAI:`,
+        error.message,
+      );
+      return await handleOpenAI(message, chatHistory, systemInstruction);
+    }
+
+    throw error;
   }
 };
 

@@ -84,6 +84,10 @@ const callSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
     duration: {
       type: Number, // Duration in seconds
       default: 0,

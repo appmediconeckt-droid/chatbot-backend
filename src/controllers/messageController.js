@@ -538,17 +538,24 @@ export const getPendingRequests = async (req, res) => {
       counselorId,
       status: "pending",
       isActive: true,
+      $or: [
+        { expiresAt: null },
+        { expiresAt: { $exists: false } },
+        { expiresAt: { $gt: now } },
+      ],
     })
       .populate("userId", "fullName email profilePhoto anonymous")
       .sort({ startedAt: -1 })
       .lean();
 
-    if (!pendingChats.length) {
+    const validPendingChats = pendingChats.filter((chat) => chat.userId);
+
+    if (!validPendingChats.length) {
       return res.json({ requests: [] });
     }
 
     // 2. Optimized: Bulk fetch the FIRST message for all found chats in one query
-    const chatIds = pendingChats.map((c) => c._id);
+    const chatIds = validPendingChats.map((c) => c._id);
     const messages = await Message.find({
       chatId: { $in: chatIds },
       senderRole: "user",
@@ -566,16 +573,17 @@ export const getPendingRequests = async (req, res) => {
     });
 
     // 3. Construct the response
-    const requests = pendingChats.map((chat) => {
+    const requests = validPendingChats.map((chat) => {
+      const user = chat.userId || {};
       return {
         id: chat._id,
         chatId: chat.chatId,
         user: {
-          id: chat.userId._id,
-          name: chat.userId.fullName,
-          anonymous: chat.userId.anonymous,
-          email: chat.userId.email,
-          Image: chat.userId.profilePhoto?.url || null,
+          id: user._id || null,
+          name: user.fullName || "Unknown User",
+          anonymous: user.anonymous || "",
+          email: user.email || "",
+          Image: user.profilePhoto?.url || null,
         },
         requestMessage: messageMap[chat._id.toString()] || "No message",
         requestedAt: chat.startedAt,

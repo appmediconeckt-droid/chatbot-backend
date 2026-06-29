@@ -75,7 +75,7 @@ export const submitRating = async (req, res) => {
             comment: cleanComment,
           },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
       );
     } else {
       // No chatId — just record the rating.

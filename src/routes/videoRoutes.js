@@ -23,6 +23,7 @@ router.put("/calls/:callId/end", videoCallController.endCall);
 // History & Status
 router.get("/calls/history/:userId", videoCallController.getCallHistory);
 router.get("/calls/active/:userId", videoCallController.getActiveCalls);
+router.delete("/calls/:callId", authenticateToken, videoCallController.deleteCall);
 router.get("/calls/:callId/details", videoCallController.getCallDetails);
 
 // User Status

@@ -8,6 +8,7 @@ const callHistory = [];
 const activeCalls = new Map();
 const userCallHistory = new Map(); // userId -> array of calls
 const userStatus = new Map(); // Track online/busy status of users
+const CALL_REQUEST_TIMEOUT_SECONDS = 30;
 
 const normalizeParticipantType = (type) => {
   const normalized = String(type || "")
@@ -209,9 +210,11 @@ export const videoCallController = {
       const callId = uuidv4();
       const roomId = uuidv4();
 
-      // Set expiration time (45 seconds from now)
+      // Set expiration time for unanswered call requests.
       const expiresAt = new Date();
-      expiresAt.setSeconds(expiresAt.getSeconds() + 45);
+      expiresAt.setSeconds(
+        expiresAt.getSeconds() + CALL_REQUEST_TIMEOUT_SECONDS,
+      );
 
       // If existing pending call exists, check if expired
       if (existingCall) {
@@ -278,7 +281,7 @@ export const videoCallController = {
                 callType,
                 message,
                 expiresAt,
-                remainingSeconds: 45,
+                remainingSeconds: CALL_REQUEST_TIMEOUT_SECONDS,
                 timestamp: new Date(),
               },
             );
@@ -421,7 +424,7 @@ export const videoCallController = {
             callType,
             message,
             expiresAt,
-            remainingSeconds: 45,
+            remainingSeconds: CALL_REQUEST_TIMEOUT_SECONDS,
             timestamp: new Date(),
           },
         );
@@ -442,6 +445,7 @@ export const videoCallController = {
         callerAvatar: initiatorDetails.profilePhoto,
         receiverAvatar: receiverDetails.profilePhoto,
         isActive: true,
+        expiresAt,
       });
 
       res.status(201).json({
@@ -1136,7 +1140,9 @@ export const videoCallController = {
   endCall: async (req, res) => {
     try {
       const { callId } = req.params;
-      const { userId } = req.body;
+      const userId = String(
+        req.body?.userId || req.user?._id || req.user?.id || "",
+      ).trim();
 
       const call = activeCalls.get(callId);
 
@@ -1184,6 +1190,10 @@ export const videoCallController = {
       const duration = call.startTime
         ? Math.floor((endTime - call.startTime) / 1000)
         : 0;
+      const wasPendingRequest = ["pending", "ringing", "waiting", "requested"].includes(
+        String(call.status || "").toLowerCase(),
+      );
+      const finalStatus = wasPendingRequest ? "cancelled" : "ended";
 
       const endedBy =
         String(call.initiator.id) === String(userId) ? call.initiator : call.receiver;
@@ -1193,14 +1203,15 @@ export const videoCallController = {
         id: call.callId,
         roomId: call.roomId,
         type: call.type,
-        status: "completed",
+        status: wasPendingRequest ? "cancelled" : "completed",
         initiatedBy: call.initiatedBy,
         initiator: call.initiator,
         receiver: call.receiver,
         createdAt: call.createdAt,
         acceptedAt: call.acceptedAt,
         startTime: call.startTime,
-        endTime,
+        endTime: wasPendingRequest ? null : endTime,
+        cancelledAt: wasPendingRequest ? endTime : call.cancelledAt,
         duration,
         endedBy: {
           id: endedBy.id,
@@ -1214,8 +1225,9 @@ export const videoCallController = {
       await Call.findOneAndUpdate(
         { callId: callId },
         {
-          status: "ended",
-          endedAt: endTime,
+          status: finalStatus,
+          endedAt: wasPendingRequest ? null : endTime,
+          cancelledAt: wasPendingRequest ? endTime : call.cancelledAt,
           duration: duration,
           isActive: false,
           endedBy: endedBy.id,
@@ -1248,7 +1260,7 @@ export const videoCallController = {
           callId,
           roomId: call.roomId,
           duration,
-          status: "ended",
+          status: finalStatus,
           endedBy: endedBy.fullName,
           endedById: endedBy.id,
           endedByType: endedBy.type,
@@ -1257,11 +1269,26 @@ export const videoCallController = {
 
         const statusPayload = {
           callId,
-          status: "ended",
+          status: finalStatus,
           from: endedBy.id,
           timestamp: endedAt,
         };
 
+        const terminationEvent = wasPendingRequest ? "call_cancelled" : "call_ended";
+        videoCallController.emitToParticipant(
+          global.io,
+          call.initiator.id,
+          call.initiator.type,
+          terminationEvent,
+          endedPayload,
+        );
+        videoCallController.emitToParticipant(
+          global.io,
+          call.receiver.id,
+          call.receiver.type,
+          terminationEvent,
+          endedPayload,
+        );
         videoCallController.emitToParticipant(
           global.io,
           call.initiator.id,
@@ -1280,6 +1307,9 @@ export const videoCallController = {
         // Compatibility event name for clients expecting kebab-case.
         global.io.to(`call_${callId}`).emit("call-ended", endedPayload);
         global.io.to(`call_${callId}`).emit("call_ended", endedPayload);
+        if (wasPendingRequest) {
+          global.io.to(`call_${callId}`).emit("call_cancelled", endedPayload);
+        }
         global.io
           .to(`call_${callId}`)
           .emit("call-status-update", statusPayload);
@@ -1302,7 +1332,9 @@ export const videoCallController = {
 
       res.json({
         success: true,
-        message: "Call ended successfully",
+        message: wasPendingRequest
+          ? "Call request cancelled successfully"
+          : "Call ended successfully",
         callSummary: {
           callId,
           duration,
@@ -1353,7 +1385,9 @@ export const videoCallController = {
 
       // Reset the call for new request
       const expiresAt = new Date();
-      expiresAt.setSeconds(expiresAt.getSeconds() + 45);
+      expiresAt.setSeconds(
+        expiresAt.getSeconds() + CALL_REQUEST_TIMEOUT_SECONDS,
+      );
 
       call.status = "pending";
       call.isActive = true;
@@ -1403,7 +1437,7 @@ export const videoCallController = {
             callType: call.type,
             message: call.requestMessage,
             expiresAt,
-            remainingSeconds: 45,
+            remainingSeconds: CALL_REQUEST_TIMEOUT_SECONDS,
             timestamp: new Date(),
           },
         );
@@ -1458,17 +1492,43 @@ export const videoCallController = {
 
           console.log(`Cancelled expired call request: ${callId}`);
 
-          // Notify initiator
+          // Notify both participants so any ringing modal closes immediately.
           if (global.io) {
+            const expiredPayload = {
+              callId,
+              roomId: call.roomId,
+              status: "expired",
+              message: `Call request expired after ${CALL_REQUEST_TIMEOUT_SECONDS} seconds`,
+              timestamp: now,
+            };
+
             videoCallController.emitToParticipant(
               global.io,
               call.initiator.id,
               call.initiator.type,
               "call_expired",
-              {
-                callId,
-                message: "Call request expired after 45 seconds",
-              },
+              expiredPayload,
+            );
+            videoCallController.emitToParticipant(
+              global.io,
+              call.receiver.id,
+              call.receiver.type,
+              "call_expired",
+              expiredPayload,
+            );
+            videoCallController.emitToParticipant(
+              global.io,
+              call.initiator.id,
+              call.initiator.type,
+              "call-status-update",
+              expiredPayload,
+            );
+            videoCallController.emitToParticipant(
+              global.io,
+              call.receiver.id,
+              call.receiver.type,
+              "call-status-update",
+              expiredPayload,
             );
           }
         }
@@ -1735,6 +1795,73 @@ getCallHistory: async (req, res) => {
     });
   }
 },
+
+  deleteCall: async (req, res) => {
+    try {
+      const { callId } = req.params;
+      const userId = req.user?._id || req.user?.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: "Authentication required",
+        });
+      }
+
+      const query = mongoose.Types.ObjectId.isValid(callId)
+        ? { $or: [{ callId }, { _id: callId }] }
+        : { callId };
+
+      const call = await Call.findOne(query);
+
+      if (!call) {
+        return res.status(404).json({
+          success: false,
+          error: "Call not found",
+        });
+      }
+
+      const isParticipant =
+        String(call.callerId) === String(userId) ||
+        String(call.receiverId) === String(userId);
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          success: false,
+          error: "You can delete only your own call history",
+        });
+      }
+
+      const canDelete =
+        !call.isActive ||
+        TERMINAL_CALL_STATUSES.includes(call.status) ||
+        call.endedAt ||
+        call.rejectedAt ||
+        call.cancelledAt;
+
+      if (!canDelete) {
+        return res.status(409).json({
+          success: false,
+          error: "Active call cannot be deleted",
+        });
+      }
+
+      await call.deleteOne();
+
+      return res.json({
+        success: true,
+        message: "Call deleted successfully",
+        deletedCallId: call.callId,
+      });
+    } catch (error) {
+      console.error("Error deleting call:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to delete call",
+        message: error.message,
+      });
+    }
+  },
 
   // 12. Get active calls
   getActiveCalls: async (req, res) => {

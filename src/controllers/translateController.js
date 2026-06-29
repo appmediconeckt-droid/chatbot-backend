@@ -100,6 +100,29 @@ const normalizeLanguageCode = (language) => {
   return language.trim().split("-")[0].toLowerCase();
 };
 
+const translateWithMyMemory = async ({
+  trimmedText,
+  sourceLanguage,
+  targetLanguage,
+}) => {
+  const fallbackSourceLanguage = sourceLanguage || "Autodetect";
+  const langPair = `${fallbackSourceLanguage}|${targetLanguage}`;
+  const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmedText)}&langpair=${encodeURIComponent(langPair)}`;
+
+  const response = await axios.get(myMemoryUrl, { timeout: 10000 });
+  const translatedText =
+    response.data?.responseData?.translatedText || trimmedText;
+
+  return {
+    originalText: trimmedText,
+    translatedText,
+    source: "mymemory",
+    sourceLanguage: sourceLanguage || null,
+    targetLanguage,
+    data: response.data,
+  };
+};
+
 export const translatePlainText = async ({ text, to, from }) => {
   const trimmedText = typeof text === "string" ? text.trim() : "";
   const targetLanguage = normalizeLanguageCode(to);
@@ -129,9 +152,9 @@ export const translatePlainText = async ({ text, to, from }) => {
 
   // Try Azure first if credentials exist.
   // Azure Translator auto-detects source language when `from` is omitted.
-  const endpoint = process.env.AZURE_TRANSLATOR_ENDPOINT?.replace(/\/$/, "");
-  const key = process.env.AZURE_TRANSLATOR_KEY;
-  const region = process.env.AZURE_TRANSLATOR_REGION;
+  const endpoint = process.env.AZURE_TRANSLATOR_ENDPOINT?.trim().replace(/\/$/, "");
+  const key = process.env.AZURE_TRANSLATOR_KEY?.trim();
+  const region = process.env.AZURE_TRANSLATOR_REGION?.trim();
 
   if (endpoint && key) {
     try {
@@ -173,31 +196,36 @@ export const translatePlainText = async ({ text, to, from }) => {
         data: response.data,
       };
     } catch (azureError) {
-      console.warn(
-        "Azure Translator failed, falling back to MyMemory:",
-        azureError.message,
-      );
+      const status = azureError?.response?.status;
+
+      console.warn("Azure Translator failed, using fallback:", {
+        status,
+        data: azureError?.response?.data,
+        message: azureError.message,
+      });
     }
   }
 
   // Fallback to MyMemory Translation API.
   // MyMemory supports Autodetect as the source side of langpair, so do not
   // force English when caller intentionally omits `from`.
-  const fallbackSourceLanguage = sourceLanguage || "Autodetect";
-  const langPair = `${fallbackSourceLanguage}|${targetLanguage}`;
-  const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmedText)}&langpair=${encodeURIComponent(langPair)}`;
+  try {
+    return await translateWithMyMemory({
+      trimmedText,
+      sourceLanguage,
+      targetLanguage,
+    });
+  } catch (fallbackError) {
+    console.error("Fallback Translator failed:", {
+      status: fallbackError?.response?.status,
+      data: fallbackError?.response?.data,
+      message: fallbackError.message,
+    });
 
-  const response = await axios.get(myMemoryUrl, { timeout: 10000 });
-  const translatedText = response.data?.responseData?.translatedText || trimmedText;
-
-  return {
-    originalText: trimmedText,
-    translatedText,
-    source: "mymemory",
-    sourceLanguage: sourceLanguage || null,
-    targetLanguage,
-    data: response.data,
-  };
+    const error = new Error("Translation service unavailable.");
+    error.statusCode = fallbackError?.response?.status || 503;
+    throw error;
+  }
 };
 
 export const translateText = async (req, res) => {
@@ -213,7 +241,10 @@ export const translateText = async (req, res) => {
       ...translation,
     });
   } catch (error) {
-    console.error("Translation error:", error.message);
+    console.error("Translation error:", {
+      statusCode: error.statusCode,
+      message: error.message,
+    });
 
     return res.status(error.statusCode || 500).json({
       success: false,

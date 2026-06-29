@@ -81,7 +81,7 @@ export const updateLocation = async (req, res) => {
           },
         },
       },
-      { new: true },
+      { returnDocument: "after" },
     ).select("fullName role locationData locationConsent");
 
     if (!updated) {
@@ -320,7 +320,7 @@ export const adminVerifyLocation = async (req, res) => {
           "locationData.verificationNotes": notes,
         },
       },
-      { new: true },
+      { returnDocument: "after" },
     ).select("fullName role locationData");
 
     if (!updated) {

@@ -111,7 +111,7 @@ export const refreshUserRatingEligibility = async (userId) => {
           remindLaterUntil: null,
         },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );
   }
 };

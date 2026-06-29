@@ -19,6 +19,15 @@ const getOpenAIClient = () => {
   return _openaiClient;
 };
 const MAX_HISTORY_TURNS = 10;
+const GUEST_CHAT_LIMIT_MS = 5 * 60 * 1000;
+
+const getLanguageName = (code) => {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) || code;
+  } catch (_) {
+    return code || "English";
+  }
+};
 
 export const chatWithAI = async (req, res) => {
   try {
@@ -75,6 +84,27 @@ export const chatWithAI = async (req, res) => {
     } else {
       sessionId = uuidv4();
       if (Array.isArray(clientHistory)) history = clientHistory;
+    }
+
+    // Guests get a five-minute preview. This is server-enforced so changing
+    // the browser timer cannot extend the public chat session.
+    if (!userId && req.body.sessionId) {
+      const firstGuestTurn = await Chat.findOne({ sessionId, userId: null })
+        .sort({ createdAt: 1 })
+        .select("createdAt")
+        .lean();
+
+      if (
+        firstGuestTurn?.createdAt &&
+        Date.now() - new Date(firstGuestTurn.createdAt).getTime() >= GUEST_CHAT_LIMIT_MS
+      ) {
+        return res.status(403).json({
+          success: false,
+          code: "GUEST_CHAT_LIMIT_REACHED",
+          message: "Your five-minute guest chat has ended. Please sign up to continue.",
+          data: { signupRequired: true },
+        });
+      }
     }
 
     console.log("[AI-CHAT DEBUG]", {
@@ -175,11 +205,7 @@ export const chatWithAI = async (req, res) => {
     const clientLang = req.body.language; // e.g. "hi-IN", "ta-IN", "en-IN"
     const clientLangCode = clientLang ? clientLang.split('-')[0] : null;
     const detectedLanguage = clientLangCode
-      ? { code: clientLangCode, name: ({
-          hi: 'Hindi', ta: 'Tamil', te: 'Telugu', kn: 'Kannada',
-          ml: 'Malayalam', bn: 'Bengali', gu: 'Gujarati', mr: 'Marathi',
-          pa: 'Punjabi', en: 'English',
-        }[clientLangCode] || 'English') }
+      ? { code: clientLangCode, name: getLanguageName(clientLangCode) }
       : detectLanguage(message);
 
     // Analyze mood
@@ -421,7 +447,7 @@ HOW TO RECOMMEND (only when the rules above are met):
 ═══════════════════════════════════════════════════════════════
 
 🌐 LANGUAGE & RESPONSE STYLE — CRITICAL:
-${detectedLanguage.code === 'hi' ? `
+${false && detectedLanguage.code === 'hi' ? `
 HINDI MODE — Write ALL responses in Hinglish (Hindi words spelled in English letters / Roman script).
 DO NOT use Devanagari script (no हिंदी लिपि). Write exactly like Indians text each other.
 Examples of correct Hinglish style:
@@ -429,28 +455,28 @@ Examples of correct Hinglish style:
   - "Yeh bahut common hai, aap akele nahi ho."
   - "Try karo: 10 minute ke liye ankhein band karo aur gehri saansein lo."
 NEVER write: "आप बिल्कुल ठीक हैं" — always write: "Aap bilkul theek hain"
-` : ''}${detectedLanguage.code === 'ta' ? `
+` : ''}${false && detectedLanguage.code === 'ta' ? `
 TAMIL MODE — Write responses in Tamil-English mix (Tanglish). Tamil words in Roman script.
 Example: "Neenga romba nalla pannuringa, tension padaathinga. Oru nimisham kannai moodi, mella moochu viduvom."
-` : ''}${detectedLanguage.code === 'te' ? `
+` : ''}${false && detectedLanguage.code === 'te' ? `
 TELUGU MODE — Write responses in Telugu-English mix (Tenglish). Telugu words in Roman script.
 Example: "Meeru chala bagunnaru, worry cheyyakandi. Oka minute kannu moosukooni, mella breath teesukoni."
-` : ''}${detectedLanguage.code === 'kn' ? `
+` : ''}${false && detectedLanguage.code === 'kn' ? `
 KANNADA MODE — Write responses in Kannada-English mix. Kannada words in Roman script.
 Example: "Neevu tumba chennagi maduttaiddeeri, chintisi beedi. Ondu nimisha kannu muuchi, nidhanavaagi ushiraadu."
-` : ''}${detectedLanguage.code === 'ml' ? `
+` : ''}${false && detectedLanguage.code === 'ml' ? `
 MALAYALAM MODE — Write responses in Malayalam-English mix. Malayalam words in Roman script.
 Example: "Ningal valare nannayirikkunnu, veyarikaruthu. Oru nimisham kannu adachu, sanamayi shwasikkuka."
-` : ''}${detectedLanguage.code === 'bn' ? `
+` : ''}${false && detectedLanguage.code === 'bn' ? `
 BENGALI MODE — Write responses in Banglish (Bengali words in Roman script).
 Example: "Tumi khub bhalo korcho, chinta koro na. Ek minute chokh bondho kore, dhire dhire shwas nao."
-` : ''}${detectedLanguage.code === 'mr' ? `
+` : ''}${false && detectedLanguage.code === 'mr' ? `
 MARATHI MODE — Write responses in Marathi-English mix. Marathi words in Roman script.
 Example: "Tumi khup chhan karat ahat, turunt kaahi hovat nahi. Ek minute dola mitta karoon, sahaj shwas ghya."
-` : ''}${detectedLanguage.code === 'gu' ? `
+` : ''}${false && detectedLanguage.code === 'gu' ? `
 GUJARATI MODE — Write responses in Gujarati-English mix. Gujarati words in Roman script.
 Example: "Tame khub saaru karo chho, chinta na karo. Ek minute aankhon band kari ne, dhire dhire shwas lo."
-` : ''}${(detectedLanguage.code === 'en') ? `
+` : ''}${false && (detectedLanguage.code === 'en') ? `
 ENGLISH MODE — Use Indian English style, warm and conversational. Not American formal.
 ` : ''}
 
@@ -491,6 +517,13 @@ Gender unknown — use gender-neutral phrasing where possible.
 
 ═══════════════════════════════════════════════════════════════
 
+FINAL LANGUAGE OUTPUT RULE — THIS OVERRIDES ALL EARLIER LANGUAGE EXAMPLES:
+- Reply only in the language selected by the user: ${detectedLanguage.name}.
+- Use that language's normal native writing system. Hindi must use Devanagari (for example: "आप अकेले नहीं हैं"), Tamil must use Tamil script, Telugu must use Telugu script, and so on.
+- Never write Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Urdu, or any other selected non-English language in Roman/English letters.
+- Do not mix English/Hinglish/Tanglish into a reply. Keep only unavoidable proper names, web addresses, and phone numbers unchanged.
+- The user's own message must never be translated, rewritten, or corrected; reply to it in the selected language.
+
 Your goal: Be a supportive friend who helps them feel heard, understood, and guided towards solutions.
 `;
 
@@ -504,8 +537,13 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     //   2. Profile partial (Google-auth user missing fields) → ask ONLY what's missing
     //   3. Guest / no profile → ask age + gender in chat (one-time per session)
     // Crisis still takes priority over greeting (next block).
+    // English has a static onboarding message. Every other selected language
+    // goes through the model so its first reply follows the native-script rule
+    // rather than the old Roman-script greeting templates.
     const isFirstTurnOnboarding =
-      isFirstTurn && !(crisisDetection.isCrisis && crisisDetection.level !== "medium");
+      isFirstTurn &&
+      detectedLanguage.code === "en" &&
+      !(crisisDetection.isCrisis && crisisDetection.level !== "medium");
 
     if (isFirstTurnOnboarding) {
       const lang = detectedLanguage.code;

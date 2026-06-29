@@ -44,7 +44,7 @@ export const uploadProfilePhotoController = async (req, res) => {
                     publicId: publicId
                 }
             },
-            { new: true }
+            { returnDocument: "after" }
         );
         
         res.status(200).json({

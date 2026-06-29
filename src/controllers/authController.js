@@ -816,7 +816,7 @@ export const updateUserById = async (req, res) => {
         $set: updates,
         ...(Object.keys(unsetUpdates).length > 0 ? { $unset: unsetUpdates } : {}),
       },
-      { new: true, runValidators: true },
+      { returnDocument: "after", runValidators: true },
     ).select("-password -emailOTP -phoneOTP");
 
     if (!updatedUser) {
@@ -2893,7 +2893,7 @@ export const uploadProfilePhoto = async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { $set: { profilePhoto: photoPath } },
-      { new: true },
+      { returnDocument: "after" },
     ).select("-password");
 
     return res.status(200).json({
