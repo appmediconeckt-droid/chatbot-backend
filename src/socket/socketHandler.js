@@ -54,6 +54,10 @@ class SocketHandler {
     });
   }
 
+  isCounsellorRole(role) {
+    return role === "counsellor" || role === "counselor";
+  }
+
   async markUserOnline(socket) {
     const userId = socket.userId?.toString();
     if (!userId) return;
@@ -285,7 +289,7 @@ class SocketHandler {
       let chats;
       if (socket.userRole === "user") {
         chats = await Chat.find({ userId: socket.userId, isActive: true });
-      } else if (socket.userRole === "counsellor") {
+      } else if (this.isCounsellorRole(socket.userRole)) {
         chats = await Chat.find({
           counselorId: socket.userId,
           isActive: true,
@@ -317,7 +321,7 @@ class SocketHandler {
       const isAuthorized =
         (socket.userRole === "user" &&
           chat.userId.toString() === socket.userId) ||
-        (socket.userRole === "counsellor" &&
+        (this.isCounsellorRole(socket.userRole) &&
           chat.counselorId.toString() === socket.userId);
 
       if (!isAuthorized) {
@@ -383,7 +387,7 @@ class SocketHandler {
       const isAuthorized =
         (socket.userRole === "user" &&
           populatedChat.userId._id.toString() === socket.userId) ||
-        (socket.userRole === "counsellor" &&
+        (this.isCounsellorRole(socket.userRole) &&
           populatedChat.counselorId._id.toString() === socket.userId);
 
       if (!isAuthorized) {
@@ -421,8 +425,10 @@ class SocketHandler {
         id: message._id,
         messageId: message.messageId,
         chatId: message.chatId,
+        publicChatId: populatedChat.chatId,
         content: message.content,
         senderRole: message.senderRole,
+        senderId: message.senderId,
         contentType: message.contentType,
         createdAt: message.createdAt,
         isRead: message.isRead,

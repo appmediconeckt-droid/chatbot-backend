@@ -53,6 +53,7 @@ setInterval(() => {
 }, 60 * 1000).unref?.();
 
 const MAX_LOCATION_HISTORY = 20;
+const MAX_COUNSELLOR_DOCUMENTS = 5;
 
 const getClientIp = (req) =>
   (req.headers["x-forwarded-for"]?.split(",")[0] || req.socket?.remoteAddress || "").trim();
@@ -600,6 +601,40 @@ export const updateUserById = async (req, res) => {
     } else if (certificationsToDelete.length > 0 && !req.body.certifications) {
       // If only deletions happened (no new/updated certifications)
       updates.certifications = processedCertifications;
+    }
+
+    const hasCertificationPayload =
+      req.body.certifications !== undefined ||
+      Object.keys(req.files || {}).some(
+        (field) => field.includes("certifications") || field === "certificationDocuments",
+      );
+
+    if (currentUser.role === "counsellor" && hasCertificationPayload) {
+      const existingCertificationIds = new Set(
+        (currentUser.certifications || [])
+          .map((cert) => cert?._id?.toString())
+          .filter(Boolean),
+      );
+
+      if (updates.certifications?.length > MAX_COUNSELLOR_DOCUMENTS) {
+        return res.status(400).json({
+          success: false,
+          message: `You can upload a maximum of ${MAX_COUNSELLOR_DOCUMENTS} certification documents.`,
+        });
+      }
+
+      const missingDocumentEntries = (updates.certifications || []).filter((cert) => {
+        const certId = cert?._id?.toString();
+        const isExistingCertification = certId && existingCertificationIds.has(certId);
+        return !isExistingCertification && !cert?.documentUrl && !cert?.documentPublicId;
+      });
+
+      if (missingDocumentEntries.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Please upload a document image for each new certification before updating your profile.",
+        });
+      }
     }
 
     // Log final certifications before update

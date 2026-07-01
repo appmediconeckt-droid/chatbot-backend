@@ -762,6 +762,71 @@ const sendCrisisAlert = async (counselor, userMessage, userId) => {
   console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. Message: ${userMessage.substring(0, 100)}...`);
 };
 
+// Return the authenticated user's latest AI chat session in the shape the web
+// dashboard expects: [{ role: "user"|"assistant", content: "..." }].
+export const getMyChatHistory = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+    }
+
+    const latestChat = await Chat.findOne({ userId })
+      .sort({ createdAt: -1 })
+      .select("sessionId")
+      .lean();
+
+    if (!latestChat) {
+      return res.status(200).json({
+        success: true,
+        sessionId: null,
+        history: [],
+      });
+    }
+
+    const query = latestChat.sessionId
+      ? { userId, sessionId: latestChat.sessionId }
+      : { userId };
+
+    const chats = await Chat.find(query)
+      .sort({ createdAt: 1 })
+      .limit(100)
+      .lean();
+
+    const history = chats.flatMap((chat) => {
+      const messages = [];
+      if (chat.userMessage) {
+        messages.push({
+          role: "user",
+          content: chat.userMessage,
+          chatId: chat._id,
+          createdAt: chat.createdAt,
+        });
+      }
+      if (chat.aiResponse) {
+        messages.push({
+          role: "assistant",
+          content: chat.aiResponse,
+          chatId: chat._id,
+          createdAt: chat.createdAt,
+        });
+      }
+      return messages;
+    });
+
+    return res.status(200).json({
+      success: true,
+      sessionId: latestChat.sessionId || null,
+      history,
+    });
+  } catch (err) {
+    console.error("getMyChatHistory error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // Wipe all chat history for the authenticated user. Lets them start over
 // with a clean onboarding turn. Auth-protected — callers can only delete
 // their own messages.

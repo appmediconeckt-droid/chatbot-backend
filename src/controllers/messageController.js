@@ -17,6 +17,10 @@ const findChatByIdentifier = async (identifier) => {
   return await Chat.findOne({ chatId: identifier });
 };
 
+const visibleMessageFilter = (userId) => ({
+  deletedFor: { $ne: userId },
+});
+
 export const startChat = async (req, res) => {
   try {
     const { counselorId } = req.body;
@@ -366,7 +370,10 @@ export const acceptChat = async (req, res) => {
       );
 
     // Get messages
-    const messages = await Message.find({ chatId: chat._id }).sort({
+    const messages = await Message.find({
+      chatId: chat._id,
+      ...visibleMessageFilter(req.user._id),
+    }).sort({
       createdAt: 1,
     });
 
@@ -628,7 +635,10 @@ export const getChats = async (req, res) => {
 
     const chatsWithDetails = await Promise.all(
       chats.map(async (chat) => {
-        const lastMessage = await Message.findOne({ chatId: chat._id }).sort({
+        const lastMessage = await Message.findOne({
+          chatId: chat._id,
+          ...visibleMessageFilter(req.user._id),
+        }).sort({
           createdAt: -1,
         });
 
@@ -638,12 +648,14 @@ export const getChats = async (req, res) => {
             chatId: chat._id,
             senderRole: "counsellor",
             isRead: false,
+            ...visibleMessageFilter(req.user._id),
           });
         } else {
           unreadCount = await Message.countDocuments({
             chatId: chat._id,
             senderRole: "user",
             isRead: false,
+            ...visibleMessageFilter(req.user._id),
           });
         }
 
@@ -782,7 +794,10 @@ export const getChatMessages = async (req, res) => {
       });
     }
 
-    const messages = await Message.find({ chatId: chat._id }).sort({
+    const messages = await Message.find({
+      chatId: chat._id,
+      ...visibleMessageFilter(req.user._id),
+    }).sort({
       createdAt: 1,
     });
 
@@ -795,6 +810,7 @@ export const getChatMessages = async (req, res) => {
             chatId: chat._id,
             senderRole: "counsellor",
             isRead: false,
+            ...visibleMessageFilter(req.user._id),
           },
           { isRead: true, readAt: new Date() },
         );
@@ -804,6 +820,7 @@ export const getChatMessages = async (req, res) => {
             chatId: chat._id,
             senderRole: "user",
             isRead: false,
+            ...visibleMessageFilter(req.user._id),
           },
           { isRead: true, readAt: new Date() },
         );
@@ -948,6 +965,7 @@ export const sendMessage = async (req, res) => {
       id: populatedMessage._id,
       messageId: populatedMessage.messageId,
       chatId: chat._id,
+      publicChatId: chat.chatId,
       content: populatedMessage.content,
       senderRole: populatedMessage.senderRole,
       senderName: populatedMessage.senderId?.fullName,
@@ -967,15 +985,39 @@ export const sendMessage = async (req, res) => {
       global.io.to(chatRoom).emit("new-message", messagePayloadForSocket);
 
       // Also notify the recipient's personal room for sidebar/badge updates
+      const recipientId =
+        req.user.role === "user" ? chat.counselorId : chat.userId;
       const recipientRoom =
         req.user.role === "user"
           ? `counsellor_${chat.counselorId}`
           : `user_${chat.userId}`;
-      global.io.to(recipientRoom).emit("message-notification", {
+      const recipientAltRoom =
+        req.user.role === "user" ? `counselor_${chat.counselorId}` : null;
+      global.io.to(`user_${recipientId}`).emit("new-message", messagePayloadForSocket);
+      global.io.to(recipientRoom).emit("new-message", messagePayloadForSocket);
+      if (recipientAltRoom) {
+        global.io.to(recipientAltRoom).emit("new-message", messagePayloadForSocket);
+      }
+      global.io.to(`user_${recipientId}`).emit("message-notification", {
         chatId: chat._id,
+        publicChatId: chat.chatId,
         message: messagePayloadForSocket,
         sender: { id: req.user._id, role: req.user.role },
       });
+      global.io.to(recipientRoom).emit("message-notification", {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        message: messagePayloadForSocket,
+        sender: { id: req.user._id, role: req.user.role },
+      });
+      if (recipientAltRoom) {
+        global.io.to(recipientAltRoom).emit("message-notification", {
+          chatId: chat._id,
+          publicChatId: chat.chatId,
+          message: messagePayloadForSocket,
+          sender: { id: req.user._id, role: req.user.role },
+        });
+      }
     }
 
     res.json({
@@ -1022,7 +1064,7 @@ export const deleteChat = async (req, res) => {
 // Clear all messages in chat
 export const clearChat = async (req, res) => {
   try {
-    const chat = await Chat.findById(req.params.chatId);
+    const chat = await findChatByIdentifier(req.params.chatId);
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
@@ -1039,19 +1081,19 @@ export const clearChat = async (req, res) => {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    // Delete all messages
-    const result = await Message.deleteMany({ chatId: chat._id });
-
-    // Update chat
-    chat.lastMessage = null;
-    chat.lastMessageAt = null;
-    chat.updatedAt = new Date();
-    await chat.save();
+    // Hide all messages only for the current participant.
+    const result = await Message.updateMany(
+      {
+        chatId: chat._id,
+        ...visibleMessageFilter(req.user._id),
+      },
+      { $addToSet: { deletedFor: req.user._id } },
+    );
 
     res.json({
       success: true,
-      message: "Chat cleared successfully",
-      deletedCount: result.deletedCount,
+      message: "Chat cleared for you successfully",
+      deletedCount: result.modifiedCount,
     });
   } catch (error) {
     console.error("Error clearing chat:", error);
@@ -1071,6 +1113,7 @@ export const getUnreadCount = async (req, res) => {
           chatId: chat._id,
           senderRole: "counsellor",
           isRead: false,
+          ...visibleMessageFilter(req.user._id),
         });
         unreadCount += count;
       }
@@ -1084,6 +1127,7 @@ export const getUnreadCount = async (req, res) => {
           chatId: chat._id,
           senderRole: "user",
           isRead: false,
+          ...visibleMessageFilter(req.user._id),
         });
         unreadCount += count;
       }
@@ -1287,8 +1331,8 @@ export const markAllRead = async (req, res) => {
   }
 };
 
-// Delete one personal-chat message (including its image/file reference).
-// Either participant may remove an individual item from their shared personal chat.
+// Hide one personal-chat message for the current participant only.
+// The other participant keeps seeing the message in their own chat history.
 export const deletePersonalMessage = async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -1303,24 +1347,26 @@ export const deletePersonalMessage = async (req, res) => {
     const isParticipant = [String(chat.userId), String(chat.counselorId)].includes(String(req.user._id));
     if (!isParticipant) return res.status(403).json({ success: false, error: "Unauthorized" });
 
-    await message.deleteOne();
-
-    const lastMessage = await Message.findOne({ $or: [{ chatId: chat._id }, { chatId: chat.chatId }] })
-      .sort({ createdAt: -1 });
-    chat.lastMessage = lastMessage?.content || "";
-    chat.lastMessageAt = lastMessage?.createdAt || null;
-    chat.updatedAt = new Date();
-    await chat.save();
+    await Message.updateOne(
+      { _id: message._id },
+      { $addToSet: { deletedFor: req.user._id } },
+    );
 
     if (global.io) {
-      global.io.to(`chat_${chat.chatId}`).emit("message-deleted", {
+      global.io.to(`user_${req.user._id}`).emit("message-deleted", {
         chatId: String(chat._id),
         messageId: String(message._id),
         publicMessageId: message.messageId,
+        deletedForUserId: String(req.user._id),
       });
     }
 
-    return res.json({ success: true, messageId: String(message._id), publicMessageId: message.messageId });
+    return res.json({
+      success: true,
+      messageId: String(message._id),
+      publicMessageId: message.messageId,
+      deleteMode: "for_me",
+    });
   } catch (error) {
     console.error("Error deleting personal chat message:", error);
     return res.status(500).json({ success: false, error: "Failed to delete message" });
