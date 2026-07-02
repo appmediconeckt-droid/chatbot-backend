@@ -33,10 +33,34 @@ const chatSchema = new mongoose.Schema({
   type: Date,
   default: null
 },
-cancelledAt: {
+  cancelledAt: {
   type: Date,
   default: null
 },
+  sessionType: {
+    type: String,
+    enum: ['chat', 'voice', 'video'],
+    default: 'chat'
+  },
+  amount: {
+    type: Number,
+    default: 0
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['free', 'hold', 'paid', 'refunded', 'released'],
+    default: 'free'
+  },
+  paymentTransactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Transaction',
+    default: null
+  },
+  paidSessionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ChatSession',
+    default: null
+  },
   acceptedAt: Date,
   rejectedAt: Date,
   closedAt: Date,

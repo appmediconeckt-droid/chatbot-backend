@@ -2,6 +2,17 @@ import mongoose from "mongoose";
 import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import User from "../models/userModel.js";
+import {
+  activatePaidSession,
+  completePaidSession,
+  createPaidSessionHold,
+  expirePendingPaidChatRequests,
+  getPaidSessionConfig,
+  getRequestExpiryDate,
+  getSessionAmount,
+  isPaidSessionsEnabled,
+  refundPaidSession,
+} from "../services/paidSessionService.js";
 
 // ==================== HELPER FUNCTION ====================
 
@@ -24,6 +35,9 @@ const visibleMessageFilter = (userId) => ({
 export const startChat = async (req, res) => {
   try {
     const { counselorId } = req.body;
+    const sessionType = ["chat", "voice", "video"].includes(req.body?.sessionType)
+      ? req.body.sessionType
+      : "chat";
 
     if (req.user.role !== "user") {
       return res
@@ -51,6 +65,20 @@ export const startChat = async (req, res) => {
         error: "This counselor is currently unavailable for chat.",
         reason: counselor.chatPermission.disabledReason || "admin_decision",
       });
+    }
+
+    if (isPaidSessionsEnabled()) {
+      const amount = getSessionAmount(sessionType);
+      const user = await User.findById(req.user._id).select("walletBalance");
+      if ((user?.walletBalance || 0) < amount) {
+        return res.status(402).json({
+          success: false,
+          error: "Insufficient wallet balance",
+          requiredAmount: amount,
+          walletBalance: user?.walletBalance || 0,
+          paidMode: true,
+        });
+      }
     }
 
     // Check for existing chat
@@ -115,10 +143,18 @@ export const startChat = async (req, res) => {
         existingChat.closedAt = null;
         existingChat.cancelledAt = null;
         existingChat.acceptedAt = null;
-        existingChat.expiresAt = null;
+        existingChat.expiresAt = isPaidSessionsEnabled() ? getRequestExpiryDate() : null;
+        existingChat.sessionType = sessionType;
 
         existingChat.updatedAt = new Date();
         await existingChat.save();
+
+        const paidHold = await createPaidSessionHold({
+          userId: req.user._id,
+          counselorId,
+          chat: existingChat,
+          sessionType,
+        });
 
         // Add new request message
         await Message.create({
@@ -156,6 +192,10 @@ export const startChat = async (req, res) => {
               email: populatedChat.userId.email,
             },
             startedAt: populatedChat.startedAt,
+            paymentStatus: populatedChat.paymentStatus,
+            amount: populatedChat.amount,
+            paidMode: isPaidSessionsEnabled(),
+            walletBalance: paidHold?.walletBalance,
           },
         });
       }
@@ -168,8 +208,17 @@ export const startChat = async (req, res) => {
       userId: req.user._id,
       counselorId: counselorId,
       status: "pending",
+      sessionType,
+      expiresAt: isPaidSessionsEnabled() ? getRequestExpiryDate() : null,
       startedAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    const paidHold = await createPaidSessionHold({
+      userId: req.user._id,
+      counselorId,
+      chat,
+      sessionType,
     });
 
     // Add request message
@@ -208,10 +257,24 @@ export const startChat = async (req, res) => {
           email: populatedChat.userId.email,
         },
         startedAt: populatedChat.startedAt,
+        paymentStatus: populatedChat.paymentStatus,
+        amount: populatedChat.amount,
+        paidMode: isPaidSessionsEnabled(),
+        walletBalance: paidHold?.walletBalance,
       },
     });
   } catch (error) {
     console.error("Error starting chat:", error);
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message,
+        requiredAmount: error.requiredAmount,
+        walletBalance: error.walletBalance,
+        paidMode: isPaidSessionsEnabled(),
+      });
+    }
 
     // Handle duplicate key error by finding and reactivating the existing chat
     if (error.code === 11000) {
@@ -234,10 +297,17 @@ export const startChat = async (req, res) => {
         existingChat.closedAt = null;
         existingChat.cancelledAt = null;
         existingChat.acceptedAt = null;
-        existingChat.expiresAt = null;
+        existingChat.expiresAt = isPaidSessionsEnabled() ? getRequestExpiryDate() : null;
 
         existingChat.updatedAt = new Date();
         await existingChat.save();
+
+        const paidHold = await createPaidSessionHold({
+          userId: req.user._id,
+          counselorId: req.body.counselorId,
+          chat: existingChat,
+          sessionType: req.body?.sessionType || "chat",
+        });
 
         // Add new request message
         await Message.create({
@@ -275,6 +345,10 @@ export const startChat = async (req, res) => {
               email: populatedChat.userId.email,
             },
             startedAt: populatedChat.startedAt,
+            paymentStatus: populatedChat.paymentStatus,
+            amount: populatedChat.amount,
+            paidMode: isPaidSessionsEnabled(),
+            walletBalance: paidHold?.walletBalance,
           },
         });
       }
@@ -351,6 +425,7 @@ export const acceptChat = async (req, res) => {
     chat.acceptedAt = new Date();
     chat.updatedAt = new Date();
     await chat.save();
+    await activatePaidSession(chat);
 
     // Add acceptance message
     const acceptMsg = await Message.create({
@@ -408,6 +483,8 @@ export const acceptChat = async (req, res) => {
         chatId: populatedChat.chatId,
         status: populatedChat.status,
         acceptedAt: populatedChat.acceptedAt,
+        paymentStatus: populatedChat.paymentStatus,
+        amount: populatedChat.amount,
         user: {
           id: populatedChat.userId._id,
           name: populatedChat.userId.fullName,
@@ -444,7 +521,7 @@ export const acceptChat = async (req, res) => {
 
 // Placeholder: Background job removed - requests no longer expire automatically
 export const cancelExpiredRequests = async () => {
-  return 0;
+  return expirePendingPaidChatRequests();
 };
 
 // Reject chat request (counselor only)
@@ -481,6 +558,7 @@ export const rejectChat = async (req, res) => {
     chat.rejectedAt = new Date();
     chat.updatedAt = new Date();
     await chat.save();
+    await refundPaidSession(chat, "counselor_rejected");
 
     // Add rejection message
     const rejectMsg = await Message.create({
@@ -520,6 +598,8 @@ export const rejectChat = async (req, res) => {
         chatId: chat.chatId,
         status: chat.status,
         rejectedAt: chat.rejectedAt,
+        paymentStatus: chat.paymentStatus,
+        amount: chat.amount,
       },
     });
   } catch (error) {
@@ -539,6 +619,7 @@ export const getPendingRequests = async (req, res) => {
 
     const counselorId = req.user._id;
     const now = new Date();
+    await expirePendingPaidChatRequests();
 
     // 1. Fetch all pending chats for this counselor
     const pendingChats = await Chat.find({
@@ -594,7 +675,10 @@ export const getPendingRequests = async (req, res) => {
         },
         requestMessage: messageMap[chat._id.toString()] || "No message",
         requestedAt: chat.startedAt,
+        expiresAt: chat.expiresAt,
         status: chat.status,
+        paymentStatus: chat.paymentStatus,
+        amount: chat.amount,
       };
     });
 
@@ -709,6 +793,55 @@ export const getChats = async (req, res) => {
   } catch (error) {
     console.error("Error fetching chats:", error);
     res.status(500).json({ error: "Error fetching chats" });
+  }
+};
+
+export const getPaymentConfig = async (_req, res) => {
+  res.json(getPaidSessionConfig());
+};
+
+export const completeChatSession = async (req, res) => {
+  try {
+    const chat = await findChatByIdentifier(req.params.chatId);
+
+    if (!chat) {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+
+    const isAuthorized =
+      (req.user.role === "user" &&
+        chat.userId.toString() === req.user._id.toString()) ||
+      (req.user.role === "counsellor" &&
+        chat.counselorId.toString() === req.user._id.toString());
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const paidSession = await completePaidSession(chat);
+
+    if (!paidSession) {
+      chat.status = "closed";
+      chat.closedAt = new Date();
+      chat.isActive = false;
+      await chat.save();
+    }
+
+    res.json({
+      success: true,
+      message: "Chat session completed",
+      chat: {
+        id: chat._id,
+        chatId: chat.chatId,
+        status: chat.status,
+        paymentStatus: chat.paymentStatus,
+        amount: chat.amount,
+      },
+      session: paidSession,
+    });
+  } catch (error) {
+    console.error("Error completing chat session:", error);
+    res.status(500).json({ error: "Error completing chat session" });
   }
 };
 

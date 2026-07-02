@@ -278,6 +278,7 @@ import translateRoutes from "./routes/translateRoutes.js";
 import avatarRoutes from "./routes/avatarRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
 import aiRealtimeRoute from "./routes/aiRealtimeRoute.js"
+import { expirePendingPaidChatRequests } from "./services/paidSessionService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -448,6 +449,16 @@ const appointmentCleanupInterval = setInterval(() => {
 appointmentCleanupInterval.unref?.();
 deleteExpiredUnresolvedAppointments().catch((error) => {
   console.error("Initial appointment cleanup failed:", error.message);
+});
+
+const paidChatExpiryInterval = setInterval(() => {
+  expirePendingPaidChatRequests().catch((error) => {
+    console.error("Paid chat expiry cleanup failed:", error.message);
+  });
+}, 5 * 60 * 1000);
+paidChatExpiryInterval.unref?.();
+expirePendingPaidChatRequests().catch((error) => {
+  console.error("Initial paid chat expiry cleanup failed:", error.message);
 });
 
 

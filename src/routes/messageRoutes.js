@@ -8,7 +8,9 @@ import {
   startChat,
   acceptChat,
   rejectChat,
+  completeChatSession,
   getPendingRequests,
+  getPaymentConfig,
   getMyChatStatuses,
   getChatMessages,
   sendMessage,
@@ -29,7 +31,9 @@ const router = express.Router();
 router.post("/start", authenticateToken, startChat);
 router.patch("/accept/:chatId", authenticateToken, acceptChat);
 router.patch("/reject/:chatId", authenticateToken, rejectChat);
+router.patch("/complete/:chatId", authenticateToken, completeChatSession);
 router.get("/pending-requests", authenticateToken, getPendingRequests);
+router.get("/payment-config", getPaymentConfig);
 
 // ==================== CHAT MANAGEMENT ROUTES ====================
 router.get("/chats", authenticateToken, getChats);

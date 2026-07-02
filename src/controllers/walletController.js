@@ -2,6 +2,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import User from '../models/userModel.js';
 import Transaction from '../models/transactionModel.js';
+import CounselorEarning from '../models/CounselorEarning.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -146,6 +147,87 @@ export const getWalletData = async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching wallet data:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+export const getCounselorWalletData = async (req, res) => {
+    try {
+        const counselorId = req.user._id;
+        const counselor = await User.findById(counselorId).lean();
+
+        const earnings = await CounselorEarning.find({ counselorId })
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean();
+
+        const withdrawals = await Transaction.find({
+            userId: counselorId,
+            description: /withdrawal/i
+        }).sort({ createdAt: -1 }).limit(20).lean();
+
+        const totalEarned = earnings.reduce((sum, item) => sum + (item.earningAmount || 0), 0);
+        const pendingPayout = earnings
+            .filter((item) => item.payoutStatus === 'pending')
+            .reduce((sum, item) => sum + (item.earningAmount || 0), 0);
+
+        res.status(200).json({
+            balance: counselor?.walletBalance || 0,
+            totalEarned,
+            pendingPayout,
+            earnings,
+            withdrawals,
+            payoutAccount: counselor?.payoutAccount || null
+        });
+    } catch (error) {
+        console.error('Error fetching counselor wallet data:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+export const requestWithdrawal = async (req, res) => {
+    try {
+        const counselorId = req.user._id;
+        const amount = Number(req.body.amount);
+
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ message: 'Invalid amount' });
+        }
+
+        const counselor = await User.findById(counselorId);
+        if (!counselor) {
+            return res.status(404).json({ message: 'Counselor not found' });
+        }
+
+        if ((counselor.walletBalance || 0) < amount) {
+            return res.status(400).json({ message: 'Insufficient balance' });
+        }
+
+        counselor.walletBalance = (counselor.walletBalance || 0) - amount;
+        await counselor.save();
+
+        const transaction = await Transaction.create({
+            userId: counselorId,
+            amount,
+            status: 'pending',
+            type: 'debit',
+            description: 'Counselor withdrawal request',
+            metadata: {
+                accountName: req.body.accountName || '',
+                accountNumber: req.body.accountNumber || '',
+                ifsc: req.body.ifsc || '',
+                bankName: req.body.bankName || ''
+            }
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Withdrawal request submitted',
+            balance: counselor.walletBalance,
+            withdrawal: transaction
+        });
+    } catch (error) {
+        console.error('Error requesting withdrawal:', error);
         res.status(500).json({ message: 'Internal server error' });
     }
 };
