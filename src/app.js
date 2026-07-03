@@ -263,6 +263,8 @@ import callRoutes from "./routes/callRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
 import { deleteExpiredUnresolvedAppointments } from "./controllers/appointmentController.js";
+import { getMyChatHistory } from "./controllers/chatController.js";
+import { getPaymentConfig } from "./controllers/messageController.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
@@ -270,6 +272,7 @@ import ratingRoutes from "./routes/ratingRoutes.js";
 import ratingsApiRoutes from "./routes/ratingsApiRoutes.js";
 import SocketHandler from "./socket/socketHandler.js";
 import { authenticateSocket } from "./middleware/auth.js";
+import { authMiddleware } from "./middleware/authMiddleware.js";
 import { resetAllUsersPresence } from "./utils/presenceManager.js";
 // import adminRoutes from "./routes/adminRoutes.js";
 // import { initChatCleanupJob } from "./jobs/chatCleanupJob.js";
@@ -422,7 +425,9 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.get("/api/chat/payment-config", getPaymentConfig);
 app.use("/api/chat", messageRoutes);
+app.get("/api/ai-chat/history", authMiddleware, getMyChatHistory);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/progress", progressRoutes); // <--- Mood tracking & progress endpoints
 app.use("/api/call", callRoutes);

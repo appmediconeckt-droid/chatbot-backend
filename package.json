@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "test": "cross-env NODE_ENV=test mocha --timeout 10000 --exit --require @babel/register test/**/*.test.js",
     "test:watch": "cross-env NODE_ENV=test mocha --timeout 10000 --watch --require @babel/register test/**/*.test.js",
     "test:coverage": "nyc npm test",
