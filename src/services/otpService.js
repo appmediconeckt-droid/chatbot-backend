@@ -263,6 +263,65 @@ class OTPService {
     );
   }
 
+  async sendForgotPasswordOTP(email, otp) {
+    const year = new Date().getFullYear();
+    const textContent =
+      `Mediconeckt Global Pvt Ltd - Password Reset\n\n` +
+      `We received a request to reset your Mediconeckt account password.\n` +
+      `Use the code below to continue:\n\n` +
+      `Password reset code: ${otp}\n` +
+      `Expires in: 10 minutes\n\n` +
+      `Do not share this code. If you did not request a password reset, ignore this email.\n\n` +
+      `Questions? Contact: support@mediconeckt.com\n\n` +
+      `Copyright ${year} Mediconeckt Global Pvt Ltd | Bhopal, India`;
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Password Reset - Mediconeckt</title>
+</head>
+<body style="margin:0;padding:0;background:#f9f9f9;font-family:Arial,sans-serif;">
+  <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:white;">
+    <div style="background:#2e7d32;padding:20px;text-align:center;color:white;">
+      <h2 style="margin:0;font-size:22px;">Mediconeckt Global Pvt Ltd</h2>
+      <p style="margin:6px 0 0;font-size:14px;">Healthcare Connecting Platform</p>
+    </div>
+    <div style="padding:30px;">
+      <h3 style="color:#222;margin-top:0;">Reset Your Password</h3>
+      <p style="color:#444;line-height:1.7;">We received a request to reset your password. Enter this one-time code in the app to continue.</p>
+      <div style="text-align:center;margin:30px 0;">
+        <div style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#fff;padding:15px 30px;background:#2e7d32;border-radius:8px;display:inline-block;">${otp}</div>
+      </div>
+      <p style="color:#444;line-height:1.7;"><strong>Code Expiration:</strong> This code is valid for 10 minutes. Do not share it with anyone.</p>
+      <p style="color:#444;line-height:1.7;">If you did not request a password reset, you can safely ignore this email.</p>
+      <hr style="border:none;border-top:1px solid #e6e6e6;margin:24px 0;" />
+      <p style="font-size:12px;color:#666;line-height:1.7;">This is a transactional email from Mediconeckt sent for account security.<br/>For support, contact us at <a href="mailto:support@mediconeckt.com" style="color:#2e7d32;text-decoration:none;">support@mediconeckt.com</a><br/>Copyright ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    try {
+      const data = await sendBrevoEmail({
+        to: email,
+        subject: "[Mediconeckt] Password reset code",
+        html,
+        text: textContent,
+      });
+
+      console.log(
+        `Forgot password OTP sent to ${email} | MessageID: ${data?.messageId}`,
+      );
+      return data;
+    } catch (error) {
+      console.error(`Forgot password OTP failed for ${email}:`, error.message);
+      throw error;
+    }
+  }
+
   verifyOTP(user, type, enteredOTP) {
     const otpData = type === "email" ? user.emailOTP : user.phoneOTP;
 

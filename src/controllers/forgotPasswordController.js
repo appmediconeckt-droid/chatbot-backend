@@ -1,18 +1,9 @@
 // controllers/forgotPasswordController.js
 import User from '../models/userModel.js';
 import ForgotPasswordToken from '../models/ForgotPasswordToken.js';
-import nodemailer from 'nodemailer';
+import otpService from '../services/otpService.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-
-// ==================== EMAIL CONFIGURATION ====================
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER || 'your-email@gmail.com',
-    pass: process.env.EMAIL_PASSWORD || 'your-email-password',
-  },
-});
 
 // ==================== GENERATE OTP ====================
 const generateOTP = () => {
@@ -56,7 +47,7 @@ const sendOTPEmail = async (email, otp) => {
     `,
   };
 
-  await transporter.sendMail(mailOptions);
+  await otpService.sendForgotPasswordOTP(email, otp);
 };
 
 // ==================== SEND FORGOT PASSWORD OTP ====================
@@ -81,7 +72,7 @@ export const sendForgotPasswordOTP = async (req, res) => {
 
     const otp = generateOTP();
 
-    await ForgotPasswordToken.create({
+    const tokenRecord = await ForgotPasswordToken.create({
       email: email.toLowerCase(),
       otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -91,6 +82,11 @@ export const sendForgotPasswordOTP = async (req, res) => {
       await sendOTPEmail(email, otp);
     } catch (emailError) {
       console.error('Email sending error:', emailError);
+      await ForgotPasswordToken.deleteOne({ _id: tokenRecord._id });
+      return res.status(502).json({
+        success: false,
+        message: 'Unable to send OTP email right now. Please try again later.',
+      });
     }
 
     return res.status(200).json({
@@ -243,7 +239,7 @@ export const resendForgotPasswordOTP = async (req, res) => {
 
     const otp = generateOTP();
 
-    await ForgotPasswordToken.create({
+    const tokenRecord = await ForgotPasswordToken.create({
       email: email.toLowerCase(),
       otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -253,6 +249,11 @@ export const resendForgotPasswordOTP = async (req, res) => {
       await sendOTPEmail(email, otp);
     } catch (emailError) {
       console.error('Email sending error:', emailError);
+      await ForgotPasswordToken.deleteOne({ _id: tokenRecord._id });
+      return res.status(502).json({
+        success: false,
+        message: 'Unable to send OTP email right now. Please try again later.',
+      });
     }
 
     return res.status(200).json({
