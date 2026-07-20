@@ -301,6 +301,7 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
       totalAmount: charge,
       commission,
       earningAmount,
+      earningStatus: "completed",
       payoutStatus: "pending",
     });
     await User.findByIdAndUpdate(session.counselorId, {
@@ -567,6 +568,7 @@ export const chargeFixedCall = async ({ callId, userId, counselorId, sessionType
         totalAmount: amount,
         commission,
         earningAmount: earning,
+        earningStatus: "completed",
         payoutStatus: "pending",
       },
     },
@@ -644,6 +646,7 @@ export const completePaidSession = async (chat) => {
       totalAmount: session.amount,
       commission: commissionAmount,
       earningAmount: counselorEarning,
+      earningStatus: "completed",
       payoutStatus: "pending",
     });
 

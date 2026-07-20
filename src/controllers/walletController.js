@@ -198,11 +198,18 @@ export const getCounselorWalletData = async (req, res) => {
         const counselorId = req.user._id;
         const counselor = await User.findById(counselorId).lean();
 
-        const earnings = await CounselorEarning.find({ counselorId })
+        const earningRecords = await CounselorEarning.find({ counselorId })
             .populate('userId', 'fullName profilePhoto')
             .sort({ createdAt: -1 })
             .limit(100)
             .lean();
+        // Older earning records predate earningStatus. If the user's wallet was
+        // debited and an earning record exists, the earning itself is complete;
+        // payoutStatus only describes withdrawal/settlement.
+        const earnings = earningRecords.map((item) => ({
+            ...item,
+            earningStatus: item.earningStatus || 'completed'
+        }));
 
         const withdrawals = await Transaction.find({
             userId: counselorId,
@@ -210,9 +217,9 @@ export const getCounselorWalletData = async (req, res) => {
         }).sort({ createdAt: -1 }).limit(20).lean();
 
         const totalEarned = earnings.reduce((sum, item) => sum + (item.earningAmount || 0), 0);
-        const pendingPayout = earnings
-            .filter((item) => item.payoutStatus === 'pending')
-            .reduce((sum, item) => sum + (item.earningAmount || 0), 0);
+        // The counselor wallet is the actual withdrawable amount. Summing all
+        // pending earning rows would keep showing already-requested withdrawals.
+        const pendingPayout = Number(counselor?.walletBalance || 0);
         const grossRevenue = earnings.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
         const platformCommission = earnings.reduce((sum, item) => sum + (item.commission || 0), 0);
         const commissionRate = Number(process.env.PLATFORM_COMMISSION_PERCENT || 20);
@@ -253,6 +260,14 @@ export const requestWithdrawal = async (req, res) => {
             return res.status(400).json({ message: 'Invalid amount' });
         }
 
+        const accountName = String(req.body.accountName || '').trim();
+        const accountNumber = String(req.body.accountNumber || '').trim();
+        const ifsc = String(req.body.ifsc || '').trim().toUpperCase();
+        const bankName = String(req.body.bankName || '').trim();
+        if (!accountName || !accountNumber || !ifsc || !bankName) {
+            return res.status(400).json({ message: 'Complete bank details are required' });
+        }
+
         const counselor = await User.findById(counselorId);
         if (!counselor) {
             return res.status(404).json({ message: 'Counselor not found' });
@@ -272,10 +287,10 @@ export const requestWithdrawal = async (req, res) => {
             type: 'debit',
             description: 'Counselor withdrawal request',
             metadata: {
-                accountName: req.body.accountName || '',
-                accountNumber: req.body.accountNumber || '',
-                ifsc: req.body.ifsc || '',
-                bankName: req.body.bankName || ''
+                accountName,
+                accountNumber,
+                ifsc,
+                bankName
             }
         });
 

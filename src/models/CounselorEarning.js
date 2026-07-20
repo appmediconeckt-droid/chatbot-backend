@@ -53,6 +53,12 @@ const counselorEarningSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    earningStatus: {
+      type: String,
+      enum: ["completed", "refunded", "reversed"],
+      default: "completed",
+      index: true,
+    },
     payoutStatus: {
       type: String,
       enum: ["pending", "approved", "paid", "rejected"],
