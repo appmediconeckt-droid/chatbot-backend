@@ -11,6 +11,9 @@ import {
   completeChatSession,
   getPendingRequests,
   getPaymentConfig,
+  startChatUsage,
+  stopChatUsage,
+  touchChatUsage,
   getMyChatStatuses,
   getChatMessages,
   sendMessage,
@@ -34,6 +37,9 @@ router.patch("/reject/:chatId", authenticateToken, rejectChat);
 router.patch("/complete/:chatId", authenticateToken, completeChatSession);
 router.get("/pending-requests", authenticateToken, getPendingRequests);
 router.get("/payment-config", getPaymentConfig);
+router.post("/chat/:chatId/billing/start", authenticateToken, startChatUsage);
+router.post("/chat/:chatId/billing/stop", authenticateToken, stopChatUsage);
+router.post("/chat/:chatId/billing/heartbeat", authenticateToken, touchChatUsage);
 
 // ==================== CHAT MANAGEMENT ROUTES ====================
 router.get("/chats", authenticateToken, getChats);
@@ -47,6 +53,8 @@ router.post(
 );
 router.delete("/message/:messageId", authenticateToken, deletePersonalMessage);
 router.delete("/chat/:chatId", authenticateToken, deleteChat);
+// Backward-compatible aliases used by older web/mobile clients.
+router.delete("/chats/:chatId", authenticateToken, deleteChat);
 router.delete("/clear/:chatId", authenticateToken, clearChat);
 router.post("/mark-all-read", authenticateToken, markAllRead);
 router.get("/unread-count", authenticateToken, getUnreadCount);

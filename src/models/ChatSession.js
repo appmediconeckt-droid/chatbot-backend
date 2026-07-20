@@ -29,6 +29,30 @@ const chatSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    ratePerMinute: {
+      type: Number,
+      default: 0,
+    },
+    rateDurationMinutes: {
+      type: Number,
+      default: 30,
+    },
+    activeSegmentStartedAt: {
+      type: Date,
+      default: null,
+    },
+    billedSeconds: {
+      type: Number,
+      default: 0,
+    },
+    billedMinutes: {
+      type: Number,
+      default: 0,
+    },
+    lastBilledAt: {
+      type: Date,
+      default: null,
+    },
     commissionRate: {
       type: Number,
       default: 20,

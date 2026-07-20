@@ -4,6 +4,7 @@ import User from '../models/userModel.js';
 import Transaction from '../models/transactionModel.js';
 import CounselorEarning from '../models/CounselorEarning.js';
 import dotenv from 'dotenv';
+import { createNotificationSafely } from '../services/notificationService.js';
 
 dotenv.config();
 
@@ -87,6 +88,20 @@ export const verifyPayment = async (req, res) => {
             user.walletBalance = (user.walletBalance || 0) + transaction.amount;
             await user.save();
 
+            await createNotificationSafely({
+                recipientId: userId,
+                type: 'payment',
+                title: 'Wallet payment successful',
+                message: `₹${transaction.amount.toFixed(2)} was added to your wallet.`,
+                data: {
+                    transactionId: transaction._id,
+                    amount: transaction.amount,
+                    transactionType: 'credit',
+                    balance: user.walletBalance
+                },
+                actionUrl: '/wallet'
+            });
+
             res.status(200).json({
                 success: true,
                 message: 'Payment verified and wallet updated',
@@ -106,20 +121,43 @@ export const getWalletData = async (req, res) => {
     try {
         const userId = req.user._id;
         const user = await User.findById(userId);
+        const transactionFilter = { userId };
+        const from = req.query.from ? new Date(`${req.query.from}T00:00:00.000+05:30`) : null;
+        const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999+05:30`) : null;
 
-        // Fetch last 10 transactions
-        const transactions = await Transaction.find({ userId }).sort({ createdAt: -1 }).limit(10);
+        if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+            return res.status(400).json({ message: 'Invalid date range' });
+        }
+        if (from && to && from > to) {
+            return res.status(400).json({ message: 'From date cannot be after To date' });
+        }
+        if (from || to) {
+            transactionFilter.createdAt = {};
+            if (from) transactionFilter.createdAt.$gte = from;
+            if (to) transactionFilter.createdAt.$lte = to;
+        }
+
+        // A selected statement range returns the complete range (up to a safe
+        // export limit); the regular wallet view keeps a smaller recent list.
+        const transactions = await Transaction.find(transactionFilter)
+            .populate('counselorId', 'fullName profilePhoto specialization')
+            .sort({ createdAt: -1 })
+            .limit(from || to ? 1000 : 50)
+            .lean();
 
         // Calculate Monthly Spending
         const startOfMonth = new Date();
         startOfMonth.setDate(1);
         startOfMonth.setHours(0, 0, 0, 0);
 
+        const debitDateFilter = from || to
+            ? transactionFilter.createdAt
+            : { $gte: startOfMonth };
         const monthlyDebits = await Transaction.find({
             userId,
             type: 'debit',
             status: 'completed',
-            createdAt: { $gte: startOfMonth }
+            createdAt: debitDateFilter
         });
 
         const totalSpent = monthlyDebits.reduce((acc, curr) => acc + curr.amount, 0);
@@ -139,6 +177,10 @@ export const getWalletData = async (req, res) => {
             transactions,
             spendingSummary: {
                 total: totalSpent,
+                period: {
+                    from: from?.toISOString() || startOfMonth.toISOString(),
+                    to: to?.toISOString() || new Date().toISOString()
+                },
                 breakdown: [
                     { label: 'Consultations', amount: summary.consultations, percentage: totalSpent > 0 ? (summary.consultations / totalSpent) * 100 : 0 },
                     { label: 'Other', amount: summary.other, percentage: totalSpent > 0 ? (summary.other / totalSpent) * 100 : 0 }
@@ -157,8 +199,9 @@ export const getCounselorWalletData = async (req, res) => {
         const counselor = await User.findById(counselorId).lean();
 
         const earnings = await CounselorEarning.find({ counselorId })
+            .populate('userId', 'fullName profilePhoto')
             .sort({ createdAt: -1 })
-            .limit(20)
+            .limit(100)
             .lean();
 
         const withdrawals = await Transaction.find({
@@ -170,11 +213,27 @@ export const getCounselorWalletData = async (req, res) => {
         const pendingPayout = earnings
             .filter((item) => item.payoutStatus === 'pending')
             .reduce((sum, item) => sum + (item.earningAmount || 0), 0);
+        const grossRevenue = earnings.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+        const platformCommission = earnings.reduce((sum, item) => sum + (item.commission || 0), 0);
+        const commissionRate = Number(process.env.PLATFORM_COMMISSION_PERCENT || 20);
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const monthlyEarned = earnings
+            .filter((item) => new Date(item.createdAt) >= monthStart)
+            .reduce((sum, item) => sum + (item.earningAmount || 0), 0);
 
         res.status(200).json({
             balance: counselor?.walletBalance || 0,
             totalEarned,
             pendingPayout,
+            grossRevenue,
+            platformCommission,
+            monthlyEarned,
+            split: {
+                counselorPercentage: 100 - commissionRate,
+                platformPercentage: commissionRate
+            },
             earnings,
             withdrawals,
             payoutAccount: counselor?.payoutAccount || null

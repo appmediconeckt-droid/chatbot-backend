@@ -164,6 +164,20 @@ const callSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    paymentTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Transaction",
+      default: null,
+    },
+    paymentAmount: {
+      type: Number,
+      default: 0,
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "paid", "failed"],
+      default: "unpaid",
+    },
   },
   {
     timestamps: true,

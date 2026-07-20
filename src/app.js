@@ -265,7 +265,9 @@ import appointmentRoutes from "./routes/appointmentRoutes.js";
 import { deleteExpiredUnresolvedAppointments } from "./controllers/appointmentController.js";
 import { getMyChatHistory } from "./controllers/chatController.js";
 import { getPaymentConfig } from "./controllers/messageController.js";
+import { settleInactiveChatSessions } from "./services/paidSessionService.js";
 import walletRoutes from "./routes/walletRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
 import progressRoutes from "./routes/progressRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import ratingRoutes from "./routes/ratingRoutes.js";
@@ -434,6 +436,7 @@ app.use("/api/call", callRoutes);
 app.use("/api/video", videoRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/counselors", ratingRoutes);
 app.use("/api/ratings", ratingsApiRoutes);
@@ -452,6 +455,15 @@ const appointmentCleanupInterval = setInterval(() => {
   });
 }, 60 * 1000);
 appointmentCleanupInterval.unref?.();
+const chatBillingSettlementInterval = setInterval(() => {
+  settleInactiveChatSessions().catch((error) => {
+    console.error("Inactive chat billing settlement failed:", error.message);
+  });
+}, 30 * 1000);
+chatBillingSettlementInterval.unref?.();
+settleInactiveChatSessions().catch((error) => {
+  console.error("Initial inactive chat billing settlement failed:", error.message);
+});
 deleteExpiredUnresolvedAppointments().catch((error) => {
   console.error("Initial appointment cleanup failed:", error.message);
 });

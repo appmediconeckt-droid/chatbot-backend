@@ -288,11 +288,14 @@ class SocketHandler {
     try {
       let chats;
       if (socket.userRole === "user") {
-        chats = await Chat.find({ userId: socket.userId, isActive: true });
+        chats = await Chat.find({
+          userId: socket.userId,
+          status: { $in: ["accepted", "active"] },
+        });
       } else if (this.isCounsellorRole(socket.userRole)) {
         chats = await Chat.find({
           counselorId: socket.userId,
-          isActive: true,
+          status: { $in: ["accepted", "active"] },
         });
       }
 
@@ -414,11 +417,22 @@ class SocketHandler {
         contentType: contentType,
       });
 
-      // Update chat
+      // A message restores a conversation hidden by either participant and
+      // also repairs records affected by the legacy shared isActive delete.
+      const wasRestored = Boolean(
+        populatedChat.deletedByUser ||
+          populatedChat.deletedByCounselor ||
+          !populatedChat.isActive,
+      );
       await Chat.findByIdAndUpdate(populatedChat._id, {
-        lastMessage: content,
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
+        $set: {
+          lastMessage: content,
+          lastMessageAt: new Date(),
+          updatedAt: new Date(),
+          isActive: true,
+          deletedByUser: false,
+          deletedByCounselor: false,
+        },
       });
 
       const messageData = {
@@ -458,6 +472,25 @@ class SocketHandler {
           role: socket.userRole,
         },
       });
+
+      const chatListUpdate = {
+        chatId: populatedChat._id,
+        publicChatId: populatedChat.chatId,
+        restored: wasRestored,
+        lastMessage: messageData,
+      };
+      this.io
+        .to(`user_${populatedChat.userId._id}`)
+        .emit("chat-list-update", chatListUpdate);
+      this.io
+        .to(`user_${populatedChat.counselorId._id}`)
+        .emit("chat-list-update", chatListUpdate);
+      this.io
+        .to(`counsellor_${populatedChat.counselorId._id}`)
+        .emit("chat-list-update", chatListUpdate);
+      this.io
+        .to(`counselor_${populatedChat.counselorId._id}`)
+        .emit("chat-list-update", chatListUpdate);
 
       console.log(
         `Message sent in chat ${populatedChat._id} by ${socket.userRole}_${socket.userId}`,

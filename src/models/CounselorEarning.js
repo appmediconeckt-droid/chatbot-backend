@@ -16,13 +16,25 @@ const counselorEarningSchema = new mongoose.Schema(
     sessionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ChatSession",
-      required: true,
+      default: null,
+      index: true,
+    },
+    transactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Transaction",
+      default: null,
       unique: true,
+      sparse: true,
+    },
+    callId: {
+      type: String,
+      default: null,
+      index: true,
     },
     chatId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Chat",
-      required: true,
+      default: null,
     },
     sessionType: {
       type: String,

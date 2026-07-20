@@ -45,9 +45,7 @@ async function connectDB() {
 
   // If a connection is being established, wait for it
   if (mongoose.connection.readyState === 2) {
-    await new Promise((resolve) => {
-      mongoose.connection.once("connected", resolve);
-    });
+    await mongoose.connection.asPromise();
     cachedConnection = mongoose.connection;
     return cachedConnection;
   }
@@ -55,8 +53,10 @@ async function connectDB() {
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
       // These options help with serverless cold starts
-      serverSelectionTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 20000,
       socketTimeoutMS: 45000,
+      heartbeatFrequencyMS: 10000,
       maxPoolSize: 10,
       minPoolSize: 0, // Allow pool to shrink to 0 when idle
     });

@@ -12,13 +12,13 @@ router.get("/stream/token", authenticateToken, getStreamToken);
 // Call Request Management
 router.post("/calls/initiate", authenticateToken, videoCallController.initiateCall);
 router.get("/calls/pending/:userId", videoCallController.getPendingRequests);
-router.put("/calls/:callId/accept", videoCallController.acceptCall);
-router.put("/calls/:callId/reject", videoCallController.rejectCall);
-router.post("/calls/:callId/resend", videoCallController.resendCallRequest);
+router.put("/calls/:callId/accept", authenticateToken, videoCallController.acceptCall);
+router.put("/calls/:callId/reject", authenticateToken, videoCallController.rejectCall);
+router.post("/calls/:callId/resend", authenticateToken, videoCallController.resendCallRequest);
 
 // Call Management
-router.post("/calls/:callId/join", videoCallController.joinCall);
-router.put("/calls/:callId/end", videoCallController.endCall);
+router.post("/calls/:callId/join", authenticateToken, videoCallController.joinCall);
+router.put("/calls/:callId/end", authenticateToken, videoCallController.endCall);
 
 // History & Status
 router.get("/calls/history/:userId", videoCallController.getCallHistory);

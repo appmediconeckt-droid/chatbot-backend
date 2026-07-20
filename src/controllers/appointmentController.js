@@ -1,5 +1,6 @@
 // mindCrawller/src/controllers/appointmentController.js
 import Appointment from "../models/appointmentModel.js";
+import { createNotificationSafely } from "../services/notificationService.js";
 
 // Delete appointments that never became a completed/confirmed session once
 // their scheduled date/time is past. Support both American and British
@@ -81,6 +82,16 @@ export const book = async (req, res) => {
       });
     }
 
+    await createNotificationSafely({
+      recipientId: counselorId,
+      actorId: req.user._id,
+      type: "appointment",
+      title: "New appointment request",
+      message: `${req.user.fullName || "A user"} requested an appointment for ${new Date(date).toLocaleString("en-IN")}.`,
+      data: { appointmentId: appointment._id, status: appointment.status, date },
+      actionUrl: "/counselor/appointments",
+    });
+
     return res.status(201).json(appointment);
   } catch (err) {
     console.error("❌ book appointment error", err);
@@ -155,14 +166,24 @@ export const updateStatus = async (req, res) => {
 
     // Basic authorization: user must be either patient or counselor
     if (
-      appointment.patient.toString() !== userId &&
-      appointment.counselor.toString() !== userId
+      appointment.patient.toString() !== userId.toString() &&
+      appointment.counselor.toString() !== userId.toString()
     ) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     appointment.status = status;
     await appointment.save();
+
+    await createNotificationSafely({
+      recipientId: appointment.patient,
+      actorId: req.user._id,
+      type: "appointment",
+      title: `Appointment ${status}`,
+      message: `Your appointment request has been ${status}.`,
+      data: { appointmentId: appointment._id, status, date: appointment.date },
+      actionUrl: "/appointments",
+    });
 
     return res.json({
       message: `Appointment ${status} successfully`,

@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
+import { chargeFixedCall } from "../services/paidSessionService.js";
+import { createNotificationSafely } from "../services/notificationService.js";
 
 // In-memory storage (replace with database in production)
 const callHistory = [];
@@ -287,6 +289,22 @@ export const videoCallController = {
             );
           }
 
+          await createNotificationSafely({
+            recipientId: receiverId,
+            actorId: initiatorId,
+            type: "call",
+            title: `Incoming ${callType === "voice" || callType === "audio" ? "voice" : "video"} call request`,
+            message: `${initiatorDetails.fullName} sent a new call request.`,
+            data: {
+              callId: existingCall.callId,
+              roomId: existingCall.roomId,
+              callType,
+              status: "pending",
+              expiresAt,
+            },
+            actionUrl: "/calls",
+          });
+
           return res.status(201).json({
             success: true,
             message: "New call request sent",
@@ -448,6 +466,16 @@ export const videoCallController = {
         expiresAt,
       });
 
+      await createNotificationSafely({
+        recipientId: receiverId,
+        actorId: initiatorId,
+        type: "call",
+        title: `Incoming ${callType === "voice" || callType === "audio" ? "voice" : "video"} call request`,
+        message: `${initiatorDetails.fullName} wants to start a ${callType === "voice" || callType === "audio" ? "voice" : "video"} call.`,
+        data: { callId, roomId, callType, status: "pending", expiresAt },
+        actionUrl: "/calls",
+      });
+
       res.status(201).json({
         success: true,
         message: "Call request sent successfully",
@@ -573,7 +601,7 @@ export const videoCallController = {
     try {
       const { callId } = req.params;
       const acceptorId = String(
-        req.body?.acceptorId || req.body?.userId || "",
+        req.user?._id || req.user?.id || "",
       ).trim();
       const requestedAcceptorType = normalizeParticipantType(
         req.body?.acceptorType || req.body?.userType,
@@ -656,6 +684,24 @@ export const videoCallController = {
         });
       }
 
+      const initiatorIsUser =
+        normalizeParticipantType(call.initiator.type) === "user";
+      const receiverIsUser =
+        normalizeParticipantType(call.receiver.type) === "user";
+      if (!initiatorIsUser && !receiverIsUser) {
+        return res.status(400).json({
+          success: false,
+          error: "A paid call must include one user and one counselor",
+        });
+      }
+      const billing = await chargeFixedCall({
+        callId,
+        userId: initiatorIsUser ? call.initiator.id : call.receiver.id,
+        counselorId: initiatorIsUser ? call.receiver.id : call.initiator.id,
+        sessionType:
+          call.type === "voice" || call.type === "audio" ? "voice" : "video",
+      });
+
       // Update call status to accepted/active
       call.status = "active";
       call.acceptedAt = new Date();
@@ -697,6 +743,9 @@ export const videoCallController = {
           status: "active",
           acceptedAt: new Date(),
           isActive: true,
+          paymentTransactionId: billing?.transaction?._id || null,
+          paymentAmount: billing?.amount || 0,
+          paymentStatus: billing ? "paid" : "unpaid",
         },
       );
 
@@ -788,9 +837,11 @@ export const videoCallController = {
       });
     } catch (error) {
       console.error("Error accepting call:", error);
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         success: false,
-        error: "Failed to accept call",
+        error: error.message || "Failed to accept call",
+        walletBalance: error.walletBalance,
+        requiredAmount: error.requiredAmount,
         details: error.message,
       });
     }
@@ -1442,6 +1493,22 @@ export const videoCallController = {
           },
         );
       }
+
+      await createNotificationSafely({
+        recipientId: call.receiver.id,
+        actorId: call.initiator.id,
+        type: "call",
+        title: `Incoming ${call.type === "voice" || call.type === "audio" ? "voice" : "video"} call request`,
+        message: `${call.initiator.fullName} resent the call request.`,
+        data: {
+          callId,
+          roomId: call.roomId,
+          callType: call.type,
+          status: "pending",
+          expiresAt,
+        },
+        actionUrl: "/calls",
+      });
 
       res.json({
         success: true,

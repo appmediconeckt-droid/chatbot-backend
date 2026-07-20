@@ -69,9 +69,22 @@ const chatSchema = new mongoose.Schema({
     default: Date.now
   },
   lastMessage: String,
-  lastMessageAt: Date
+  lastMessageAt: Date,
+  deletedByUser: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  deletedByCounselor: {
+    type: Boolean,
+    default: false,
+    index: true
+  }
 });
 
-// export default mongoose.model('Chat', chatSchema);
+// A user/counselor pair owns one durable conversation. Hiding it never
+// deletes that conversation or its messages.
+chatSchema.index({ userId: 1, counselorId: 1 }, { unique: true });
+
 const Chat = mongoose.model('Chat', chatSchema);
 export default Chat;

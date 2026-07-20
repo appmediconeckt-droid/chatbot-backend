@@ -2,8 +2,14 @@ import mongoose from "mongoose";
 import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import User from "../models/userModel.js";
+import { createNotificationSafely } from "../services/notificationService.js";
 import {
   activatePaidSession,
+  startTimedChatUsage,
+  stopTimedChatUsage,
+  requestTimedChatStop,
+  recordTimedChatActivity,
+  touchTimedChatUsage,
   completePaidSession,
   createPaidSessionHold,
   expirePendingPaidChatRequests,
@@ -13,6 +19,34 @@ import {
   isPaidSessionsEnabled,
   refundPaidSession,
 } from "../services/paidSessionService.js";
+
+const handleTimedChatUsage = (action) => async (req, res) => {
+  try {
+    const chat = await findChatByIdentifier(req.params.chatId);
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+    if (String(chat.userId) !== String(req.user._id)) {
+      return res.status(403).json({ error: "Only the user can update chat billing" });
+    }
+    const billing =
+      action === "start"
+        ? await startTimedChatUsage(chat)
+        : action === "heartbeat"
+          ? await touchTimedChatUsage(chat)
+          : await requestTimedChatStop(chat);
+    res.json({ success: true, billing });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || "Unable to update chat billing",
+      walletBalance: error.walletBalance,
+      requiredAmount: error.requiredAmount,
+    });
+  }
+};
+
+export const startChatUsage = handleTimedChatUsage("start");
+export const stopChatUsage = handleTimedChatUsage("stop");
+export const touchChatUsage = handleTimedChatUsage("heartbeat");
 
 // ==================== HELPER FUNCTION ====================
 
@@ -31,6 +65,37 @@ const findChatByIdentifier = async (identifier) => {
 const visibleMessageFilter = (userId) => ({
   deletedFor: { $ne: userId },
 });
+
+const restoreChatForBothParticipants = (chat) => {
+  const wasRestored = Boolean(
+    chat.deletedByUser ||
+      chat.deletedByCounselor ||
+      (!chat.isActive && ["accepted", "active"].includes(chat.status)),
+  );
+  chat.deletedByUser = false;
+  chat.deletedByCounselor = false;
+  // Repairs conversations hidden by the legacy shared-delete behavior.
+  if (["accepted", "active"].includes(chat.status)) {
+    chat.isActive = true;
+  }
+  return wasRestored;
+};
+
+const assertSufficientChatBalance = async (userId, sessionType) => {
+  if (!isPaidSessionsEnabled()) return;
+
+  const amount = getSessionAmount(sessionType);
+  const user = await User.findById(userId).select("walletBalance");
+  const requiredAmount =
+    sessionType === "chat" ? Number((amount / 30).toFixed(2)) : amount;
+  if ((user?.walletBalance || 0) < requiredAmount) {
+    const error = new Error("Insufficient wallet balance");
+    error.statusCode = 402;
+    error.requiredAmount = requiredAmount;
+    error.walletBalance = user?.walletBalance || 0;
+    throw error;
+  }
+};
 
 export const startChat = async (req, res) => {
   try {
@@ -67,20 +132,6 @@ export const startChat = async (req, res) => {
       });
     }
 
-    if (isPaidSessionsEnabled()) {
-      const amount = getSessionAmount(sessionType);
-      const user = await User.findById(req.user._id).select("walletBalance");
-      if ((user?.walletBalance || 0) < amount) {
-        return res.status(402).json({
-          success: false,
-          error: "Insufficient wallet balance",
-          requiredAmount: amount,
-          walletBalance: user?.walletBalance || 0,
-          paidMode: true,
-        });
-      }
-    }
-
     // Check for existing chat
     let existingChat = await Chat.findOne({
       userId: req.user._id,
@@ -89,6 +140,14 @@ export const startChat = async (req, res) => {
 
     // If chat exists, handle it
     if (existingChat) {
+      // Opening a known conversation from an appointment/profile restores it
+      // for the requesting user without creating a duplicate conversation.
+      if (existingChat.deletedByUser) {
+        existingChat.deletedByUser = false;
+        existingChat.updatedAt = new Date();
+        await existingChat.save();
+      }
+
       // Check if chat is in a state that allows reactivation
       const canReactivate =
         existingChat.status === "cancelled" ||
@@ -125,15 +184,24 @@ export const startChat = async (req, res) => {
             "fullName specialization profilePhoto rating isActive",
           );
 
-        return res.status(400).json({
-          error: "Chat already active. Please continue your conversation.",
+        return res.status(200).json({
+          success: true,
+          message: "Existing chat restored",
           status: existingChat.status,
           chatId: existingChat._id,
+          chat: {
+            id: populatedChat._id,
+            chatId: populatedChat.chatId,
+            status: populatedChat.status,
+            user: populatedChat.userId,
+            counselor: populatedChat.counselorId,
+          },
         });
       }
 
       // For cancelled, rejected, closed, or inactive chats, reactivate
       if (canReactivate) {
+        await assertSufficientChatBalance(req.user._id, sessionType);
         console.log("Reactivating chat from status:", existingChat.status);
 
         // Reset the chat for new request
@@ -163,6 +231,15 @@ export const startChat = async (req, res) => {
           senderRole: "user",
           content: `👋 I'd like to start a conversation.`,
           contentType: "TEXT",
+        });
+        await createNotificationSafely({
+          recipientId: counselorId,
+          actorId: req.user._id,
+          type: "message",
+          title: "New chat request",
+          message: `${req.user.fullName || "A user"} wants to start a conversation.`,
+          data: { chatId: existingChat._id, publicChatId: existingChat.chatId, request: true },
+          actionUrl: `/chat/${existingChat._id}`,
         });
 
         const populatedChat = await Chat.findById(existingChat._id)
@@ -203,6 +280,7 @@ export const startChat = async (req, res) => {
 
     // ONLY create new chat if NO existing chat exists
     console.log("No existing chat found, creating brand new chat");
+    await assertSufficientChatBalance(req.user._id, sessionType);
 
     const chat = await Chat.create({
       userId: req.user._id,
@@ -228,6 +306,15 @@ export const startChat = async (req, res) => {
       senderRole: "user",
       content: `👋 Hello! I'd like to start a conversation with you.`,
       contentType: "TEXT",
+    });
+    await createNotificationSafely({
+      recipientId: counselorId,
+      actorId: req.user._id,
+      type: "message",
+      title: "New chat request",
+      message: `${req.user.fullName || "A user"} wants to start a conversation.`,
+      data: { chatId: chat._id, publicChatId: chat.chatId, request: true },
+      actionUrl: `/chat/${chat._id}`,
     });
 
     const populatedChat = await Chat.findById(chat._id)
@@ -316,6 +403,15 @@ export const startChat = async (req, res) => {
           senderRole: "user",
           content: `🔄 Sending a new request.`,
           contentType: "TEXT",
+        });
+        await createNotificationSafely({
+          recipientId: req.body.counselorId,
+          actorId: req.user._id,
+          type: "message",
+          title: "New chat request",
+          message: `${req.user.fullName || "A user"} sent a new chat request.`,
+          data: { chatId: existingChat._id, publicChatId: existingChat.chatId, request: true },
+          actionUrl: `/chat/${existingChat._id}`,
         });
 
         const populatedChat = await Chat.findById(existingChat._id)
@@ -694,14 +790,15 @@ export const getChats = async (req, res) => {
   try {
     let chats;
     let query = {
-      isActive: true,
       status: { $in: ["accepted", "active"] },
     };
 
     if (req.user.role === "user") {
       query.userId = req.user._id;
+      query.deletedByUser = { $ne: true };
     } else if (req.user.role === "counsellor") {
       query.counselorId = req.user._id;
+      query.deletedByCounselor = { $ne: true };
     } else {
       return res.status(403).json({ error: "Invalid user role" });
     }
@@ -1077,6 +1174,10 @@ export const sendMessage = async (req, res) => {
       messagePayload.attachmentSize = attachment.size || null;
     }
 
+    // Any new message makes the durable conversation visible to both sides,
+    // so an incoming message can never be silently hidden.
+    const wasRestored = restoreChatForBothParticipants(chat);
+
     // Create message using chat._id (ObjectId)
     const message = await Message.create(messagePayload);
 
@@ -1151,7 +1252,42 @@ export const sendMessage = async (req, res) => {
           sender: { id: req.user._id, role: req.user.role },
         });
       }
+      const chatListUpdate = {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        restored: wasRestored,
+        lastMessage: messagePayloadForSocket,
+      };
+      global.io.to(`user_${chat.userId}`).emit("chat-list-update", chatListUpdate);
+      global.io.to(`user_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
+      global.io.to(`counsellor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
+      global.io.to(`counselor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
     }
+
+    const notificationRecipientId =
+      req.user.role === "user" ? chat.counselorId : chat.userId;
+    await createNotificationSafely({
+      recipientId: notificationRecipientId,
+      actorId: req.user._id,
+      type: "message",
+      title: `New message from ${populatedMessage.senderId?.fullName || "User"}`,
+      message: hasAttachment
+        ? `${messagePayload.attachmentName || "Attachment"} received`
+        : messageContent.slice(0, 160),
+      data: {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        messageId: populatedMessage._id,
+        contentType: populatedMessage.contentType,
+      },
+      actionUrl: `/chat/${chat._id}`,
+    });
+
+    // Billing follows real conversation activity, not React renders or every
+    // individual message. Each message extends one inactivity-window session.
+    recordTimedChatActivity(chat).catch((billingError) => {
+      console.error("Chat activity billing update failed:", billingError.message);
+    });
 
     res.json({
       success: true,
@@ -1166,7 +1302,7 @@ export const sendMessage = async (req, res) => {
 // Delete chat (soft delete)
 export const deleteChat = async (req, res) => {
   try {
-    const chat = await Chat.findById(req.params.chatId);
+    const chat = await findChatByIdentifier(req.params.chatId);
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
@@ -1183,11 +1319,36 @@ export const deleteChat = async (req, res) => {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    // Soft delete
-    chat.isActive = false;
+    // Participant-specific soft hide. Existing messages are hidden only for
+    // the participant who deleted the conversation. They remain intact for
+    // the other participant and in the database. Messages created after this
+    // operation do not contain this participant in deletedFor, so a restored
+    // conversation starts with only the new messages (WhatsApp-style).
+    const hiddenMessagesResult = await Message.updateMany(
+      {
+        chatId: chat._id,
+        ...visibleMessageFilter(req.user._id),
+      },
+      { $addToSet: { deletedFor: req.user._id } },
+    );
+
+    if (req.user.role === "user") {
+      chat.deletedByUser = true;
+    } else {
+      chat.deletedByCounselor = true;
+    }
+    if (["accepted", "active"].includes(chat.status)) {
+      chat.isActive = true;
+    }
     await chat.save();
 
-    res.json({ message: "Chat deleted successfully" });
+    res.json({
+      success: true,
+      message: "Chat hidden successfully",
+      chatId: chat._id,
+      hiddenFor: req.user.role,
+      hiddenMessageCount: hiddenMessagesResult.modifiedCount,
+    });
   } catch (error) {
     console.error("Error deleting chat:", error);
     res.status(500).json({ error: "Error deleting chat" });

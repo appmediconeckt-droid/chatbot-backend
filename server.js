@@ -52,7 +52,10 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 // IMPORTANT: Load environment variables FIRST
 // Prefer an explicit .env path in src/ when running via nodemon from project root.
-dotenv.config({ path: process.env.DOTENV_PATH || "./src/.env" });
+dotenv.config();
+if (process.env.DOTENV_PATH) {
+  dotenv.config({ path: process.env.DOTENV_PATH, override: true });
+}
 
 if (!process.env.MONGO_URI) {
   console.warn(
@@ -83,8 +86,25 @@ function handleServerError(error) {
   }
 }
 
+async function connectWithRetry() {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await connectDB();
+    } catch (error) {
+      attempt += 1;
+      const retryDelay = Math.min(30000, attempt * 3000);
+      console.error(
+        `MongoDB unavailable (${error.name || "connection error"}). ` +
+          `Retrying in ${Math.ceil(retryDelay / 1000)}s; process will stay alive.`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+    }
+  }
+}
+
 // Connect to MongoDB using cached connection
-connectDB()
+connectWithRetry()
   .then(() => {
     server.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);

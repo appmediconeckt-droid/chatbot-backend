@@ -4,13 +4,13 @@ dotenv.config();
 import crypto from "crypto";
 import twilio from "twilio";
 
-const FROM_NAME = "Mediconeckt Global Pvt Ltd";
+const FROM_NAME = "Mindcrawller  Global Pvt Ltd";
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
-const FROM_EMAIL = process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.EMAIL || "support@mediconeckt.com";
+const FROM_EMAIL = process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.EMAIL || "support@mindcrawller.com";
 
 // Validate that FROM_EMAIL is set
-if (!FROM_EMAIL || FROM_EMAIL === "support@mediconeckt.com") {
+if (!FROM_EMAIL || FROM_EMAIL === "support@mindcrawller.com") {
   console.warn('⚠️ WARNING: Using fallback sender email. Please verify it in Brevo dashboard.');
   console.warn('   Current FROM_EMAIL:', FROM_EMAIL);
   console.warn('   Set EMAIL_FROM in .env to a verified Brevo sender.');
@@ -35,20 +35,20 @@ async function sendBrevoEmail({ to, subject, html, text }) {
       htmlContent: html,
       textContent: safeText,
       replyTo: {
-        email: "support@mediconeckt.com",
-        name: "Mediconeckt Support",
+        email: "support@mindcrawller.com",
+        name: "Mindcrawller Support",
       },
       // ✅ SPAM FIX: Add List-Unsubscribe header (critical for Gmail/Outlook)
       headers: {
         "List-Unsubscribe":
-          "<mailto:support@mediconeckt.com?subject=unsubscribe>",
-        "X-Mailer": "Mediconeckt Mail Service",
+          "<mailto:support@mindcrawller.com?subject=unsubscribe>",
+        "X-Mailer": "Mindcrawller Mail Service",
         "X-Priority": "3",
       },
       // ✅ SPAM FIX: Request AMP for Email (Gmail friendly)
       amp4email: false,
       // ✅ SPAM FIX: Enable proper tracking & authentication
-      trackingParams: "utm_source=mediconeckt&utm_medium=email",
+      trackingParams: "utm_source=mindcrawller&utm_medium=email",
     }),
   });
 
@@ -68,7 +68,7 @@ const buildEmailOTPHtml = (otp) => `
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Email Verification - Mediconeckt</title>
+  <title>Email Verification - mindcrawller</title>
   <style>
     body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
     .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
@@ -88,24 +88,24 @@ const buildEmailOTPHtml = (otp) => `
 <body>
   <div class="container">
     <div class="header">
-      <h2>Mediconeckt Global Pvt Ltd</h2>
+      <h2>Mindcrawller Global Pvt Ltd</h2>
       <p>Healthcare Connecting Platform</p>
     </div>
     <div class="content">
       <h3>Verify Your Email Address</h3>
-      <p>Thank you for creating an account with Mediconeckt. To complete your registration and access all features of our healthcare platform, please verify your email address by entering the verification code below.</p>
+      <p>Thank you for creating an account with Mindcrawller . To complete your registration and access all features of our healthcare platform, please verify your email address by entering the verification code below.</p>
       <p>Your one-time verification code is:</p>
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
       <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes from when this email was sent. Do not share this code with anyone.</p>
-      <p>Once verified, you will gain full access to your Mediconeckt account including appointments, health records, and doctor consultations.</p>
-      <p><strong>Security Note:</strong> If you did not create a Mediconeckt account, you can safely ignore this email. No account will be activated without verification.</p>
+      <p>Once verified, you will gain full access to your Mindcrawller account including appointments, health records, and doctor consultations.</p>
+      <p><strong>Security Note:</strong> If you did not create a Mindcrawller account, you can safely ignore this email. No account will be activated without verification.</p>
       <hr class="divider" />
       <div class="footer">
-        <p>This is a transactional email from Mediconeckt sent to confirm your email address.<br/>
-        For support, contact us at <a href="mailto:support@mediconeckt.com">support@mediconeckt.com</a><br/>
-        &copy; ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+        <p>This is a transactional email from Mindcrawller sent to confirm your email address.<br/>
+        For support, contact us at <a href="mailto:support@mindcrawller.com">support@mindcrawller.com</a><br/>
+        &copy; ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
       </div>
     </div>
   </div>
@@ -115,12 +115,12 @@ const buildEmailOTPHtml = (otp) => `
 
 const buildLoginOTPHtml = (otp) => `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en">    
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Login Verification - Mediconeckt</title>
+  <title>Login Verification - Mindcrawller</title>
   <style>
     body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
     .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
@@ -142,25 +142,25 @@ const buildLoginOTPHtml = (otp) => `
 <body>
   <div class="container">
     <div class="header">
-      <h2>Mediconeckt Global Pvt Ltd</h2>
+      <h2>Mindcrawller Global Pvt Ltd</h2>
       <p>Healthcare Connecting Platform</p>
     </div>
     <div class="content">
       <h3>Confirm Your Login</h3>
-      <p>We received a request to sign in to your Mediconeckt account. To confirm this is you and keep your account secure, please enter the verification code below.</p>
+      <p>We received a request to sign in to your Mindcrawller account. To confirm this is you and keep your account secure, please enter the verification code below.</p>
       <p>Your one-time login verification code is:</p>
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
-      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes. Do not share this code with anyone, including Mediconeckt support staff.</p>
+      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes. Do not share this code with anyone, including Mindcrawller support staff.</p>
       <div class="warning">
         <p><strong>⚠️ Security Alert:</strong> If you did not attempt to log in, your account credentials may be compromised. Change your password immediately and contact our support team.</p>
       </div>
       <hr class="divider" />
       <div class="footer">
-        <p>This is a transactional email from Mediconeckt sent for account security.<br/>
-        For support, contact us at <a href="mailto:support@mediconeckt.com">support@mediconeckt.com</a><br/>
-        &copy; ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+        <p>This is a transactional email from Mindcrawller sent for account security.<br/>
+        For support, contact us at <a href="mailto:support@mindcrawller.com">support@mindcrawller.com</a><br/>
+        &copy; ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
       </div>
     </div>
   </div>
@@ -176,18 +176,18 @@ class OTPService {
   async sendLoginOTP(email, otp) {
     try {
       const textContent =
-        `Mediconeckt Global Pvt Ltd - Login Verification\n\n` +
-        `We received a request to sign in to your Mediconeckt account.\n` +
+        `Mindcrawller Global Pvt Ltd - Login Verification\n\n` +
+        `We received a request to sign in to your Mindcrawller account.\n` +
         `To keep your account secure, please verify with the code below:\n\n` +
         `Verification Code: ${otp}\n` +
         `Expires in: 10 minutes\n\n` +
         `SECURITY: Do not share this code with anyone.\n` +
-        `If this wasn't you, change your password immediately at support@mediconeckt.com\n\n` +
-        `© ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, India`;
+        `If this wasn't you, change your password immediately at support@mindcrawller.com\n\n` +
+        `© ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
 
       const data = await sendBrevoEmail({
         to: email,
-        subject: "[Mediconeckt] Your login verification code",
+        subject: "[Mindcrawller ] Your login verification code",
         html: buildLoginOTPHtml(otp),
         text: textContent,
       });
@@ -206,14 +206,14 @@ class OTPService {
     console.log(`📧 Sending email verification OTP to ${email}`);
 
     const textContent =
-      `Mediconeckt Global Pvt Ltd - Email Verification\n\n` +
-      `Thank you for registering with Mediconeckt.\n` +
+      `Mindcrawller  Global Pvt Ltd - Email Verification\n\n` +
+      `Thank you for registering with Mindcrawller.\n` +
       `Please verify your email to access all features.\n\n` +
       `Verification Code: ${otp}\n` +
       `Expires in: 10 minutes\n\n` +
       `Do not share this code. If you didn't sign up, ignore this email.\n\n` +
-      `Questions? Contact: support@mediconeckt.com\n\n` +
-      `© ${new Date().getFullYear()} Mediconeckt Global Pvt Ltd | Bhopal, India`;
+      `Questions? Contact: support@mindcrawller.com\n\n` +
+      `© ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
 
     const maxRetries = 3;
     let lastError;
@@ -222,7 +222,7 @@ class OTPService {
       try {
         const data = await sendBrevoEmail({
           to: email,
-          subject: "[Mediconeckt] Email verification code",
+          subject: "[Mindcrawller ] Email verification code",
           html: buildEmailOTPHtml(otp),
           text: textContent,
         });
@@ -266,14 +266,14 @@ class OTPService {
   async sendForgotPasswordOTP(email, otp) {
     const year = new Date().getFullYear();
     const textContent =
-      `Mediconeckt Global Pvt Ltd - Password Reset\n\n` +
-      `We received a request to reset your Mediconeckt account password.\n` +
+      `Mindcrawller  Global Pvt Ltd - Password Reset\n\n` +
+      `We received a request to reset your Mindcrawller account password.\n` +
       `Use the code below to continue:\n\n` +
       `Password reset code: ${otp}\n` +
       `Expires in: 10 minutes\n\n` +
       `Do not share this code. If you did not request a password reset, ignore this email.\n\n` +
-      `Questions? Contact: support@mediconeckt.com\n\n` +
-      `Copyright ${year} Mediconeckt Global Pvt Ltd | Bhopal, India`;
+      `Questions? Contact: support@mindcrawller.com\n\n` +
+      `Copyright ${year} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
 
     const html = `
 <!DOCTYPE html>
@@ -281,12 +281,12 @@ class OTPService {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Password Reset - Mediconeckt</title>
+  <title>Password Reset - Mindcrawller</title>
 </head>
 <body style="margin:0;padding:0;background:#f9f9f9;font-family:Arial,sans-serif;">
   <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:white;">
     <div style="background:#2e7d32;padding:20px;text-align:center;color:white;">
-      <h2 style="margin:0;font-size:22px;">Mediconeckt Global Pvt Ltd</h2>
+      <h2 style="margin:0;font-size:22px;">Mindcrawller  Global Pvt Ltd</h2>
       <p style="margin:6px 0 0;font-size:14px;">Healthcare Connecting Platform</p>
     </div>
     <div style="padding:30px;">
@@ -298,7 +298,7 @@ class OTPService {
       <p style="color:#444;line-height:1.7;"><strong>Code Expiration:</strong> This code is valid for 10 minutes. Do not share it with anyone.</p>
       <p style="color:#444;line-height:1.7;">If you did not request a password reset, you can safely ignore this email.</p>
       <hr style="border:none;border-top:1px solid #e6e6e6;margin:24px 0;" />
-      <p style="font-size:12px;color:#666;line-height:1.7;">This is a transactional email from Mediconeckt sent for account security.<br/>For support, contact us at <a href="mailto:support@mediconeckt.com" style="color:#2e7d32;text-decoration:none;">support@mediconeckt.com</a><br/>Copyright ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+      <p style="font-size:12px;color:#666;line-height:1.7;">This is a transactional email from Mindcrawller sent for account security.<br/>For support, contact us at <a href="mailto:support@mindcrawller.com" style="color:#2e7d32;text-decoration:none;">support@mindcrawller.com</a><br/>Copyright ${year} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
     </div>
   </div>
 </body>
@@ -307,7 +307,7 @@ class OTPService {
     try {
       const data = await sendBrevoEmail({
         to: email,
-        subject: "[Mediconeckt] Password reset code",
+        subject: "[Mindcrawller ] Password reset code",
         html,
         text: textContent,
       });
