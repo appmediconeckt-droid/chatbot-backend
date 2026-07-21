@@ -202,6 +202,55 @@ class OTPService {
     }
   }
 
+  async sendPasswordResetOTP(email, otp) {
+    const year = new Date().getFullYear();
+    const html = `
+      <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:#fff;font-family:Arial,sans-serif;">
+        <div style="background:#667eea;padding:20px;text-align:center;color:#fff;">
+          <h2 style="margin:0;">Mediconeckt Global Pvt Ltd</h2>
+          <p style="margin:6px 0 0;">Password reset verification</p>
+        </div>
+        <div style="padding:30px;">
+          <h3 style="color:#333;margin-top:0;">Reset your password</h3>
+          <p style="color:#555;line-height:1.6;">Use the verification code below to reset your Mediconeckt password.</p>
+          <div style="margin:28px 0;text-align:center;">
+            <span style="display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:8px;padding:15px 28px;font-size:32px;font-weight:bold;letter-spacing:8px;">${otp}</span>
+          </div>
+          <p style="color:#555;line-height:1.6;">This code is valid for 10 minutes. Do not share it with anyone.</p>
+          <p style="color:#777;font-size:13px;line-height:1.6;">If you did not request a password reset, you can safely ignore this email.</p>
+          <hr style="border:none;border-top:1px solid #e6e6e6;margin:24px 0;" />
+          <p style="color:#777;font-size:12px;">&copy; ${year} Mediconeckt Global Pvt Ltd | Bhopal, India</p>
+        </div>
+      </div>
+    `;
+    const text =
+      `Mediconeckt password reset verification\n\n` +
+      `Verification code: ${otp}\n` +
+      `This code expires in 10 minutes.\n\n` +
+      `Do not share this code. If you did not request a password reset, ignore this email.\n\n` +
+      `© ${year} Mediconeckt Global Pvt Ltd`;
+
+    try {
+      const data = await sendBrevoEmail({
+        to: email,
+        subject: "[Mediconeckt] Password reset verification code",
+        html,
+        text,
+      });
+
+      console.log(
+        `✅ Password reset OTP sent to ${email} | MessageID: ${data?.messageId}`,
+      );
+      return data;
+    } catch (error) {
+      console.error(
+        `❌ Password reset OTP failed for ${email}:`,
+        error.message,
+      );
+      throw error;
+    }
+  }
+
   async sendEmailOTP(email, otp) {
     console.log(`📧 Sending email verification OTP to ${email}`);
 
