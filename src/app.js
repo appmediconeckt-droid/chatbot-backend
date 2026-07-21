@@ -511,6 +511,7 @@ global.io = io;
 // Initialize your existing socket handler (for chat, etc.)
 const socketHandler = new SocketHandler(io);
 socketHandler.initialize();
+global.socketHandler = socketHandler;
 
 // Reset all users to offline on startup
 resetAllUsersPresence().catch(err => {

@@ -13,6 +13,15 @@ const razorpay = new Razorpay({
     key_secret: process.env.RAZORPAY_KEY_SECRET || 'YOUR_KEY_SECRET'
 });
 
+const getInstantPayoutConfig = () => {
+    const feePercent = Math.max(0, Number(process.env.INSTANT_PAYOUT_FEE_PERCENT || 2));
+    const etaMinutes = Math.max(1, Number(process.env.INSTANT_PAYOUT_ETA_MINUTES || 30));
+    const standardEtaDays = Math.max(1, Number(process.env.STANDARD_PAYOUT_ETA_DAYS || 3));
+    return { feePercent, etaMinutes, standardEtaDays };
+};
+
+const roundMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
 // Create Razorpay Order
 export const createOrder = async (req, res) => {
     try {
@@ -199,7 +208,9 @@ export const getCounselorWalletData = async (req, res) => {
         const counselor = await User.findById(counselorId).lean();
 
         const earningRecords = await CounselorEarning.find({ counselorId })
-            .populate('userId', 'fullName profilePhoto')
+            // Counselor-facing earnings must never expose the user's real
+            // name or profile photo. Only the chosen anonymous handle is sent.
+            .populate('userId', 'anonymous')
             .sort({ createdAt: -1 })
             .limit(100)
             .lean();
@@ -208,6 +219,13 @@ export const getCounselorWalletData = async (req, res) => {
         // payoutStatus only describes withdrawal/settlement.
         const earnings = earningRecords.map((item) => ({
             ...item,
+            userId: item.userId ? {
+                _id: item.userId._id,
+                anonymous: String(item.userId.anonymous || '').trim() || 'Anonymous User'
+            } : {
+                _id: null,
+                anonymous: 'Anonymous User'
+            },
             earningStatus: item.earningStatus || 'completed'
         }));
 
@@ -229,6 +247,15 @@ export const getCounselorWalletData = async (req, res) => {
         const monthlyEarned = earnings
             .filter((item) => new Date(item.createdAt) >= monthStart)
             .reduce((sum, item) => sum + (item.earningAmount || 0), 0);
+        const instantPayoutCount = Math.max(
+            Number(counselor?.instantPayoutCount || 0),
+            await Transaction.countDocuments({
+                userId: counselorId,
+                description: /withdrawal/i,
+                'metadata.payoutType': 'instant'
+            })
+        );
+        const payoutConfig = getInstantPayoutConfig();
 
         res.status(200).json({
             balance: counselor?.walletBalance || 0,
@@ -241,9 +268,29 @@ export const getCounselorWalletData = async (req, res) => {
                 counselorPercentage: 100 - commissionRate,
                 platformPercentage: commissionRate
             },
+            payoutOptions: {
+                instant: {
+                    available: true,
+                    isFirstFree: instantPayoutCount === 0,
+                    feePercent: instantPayoutCount === 0 ? 0 : payoutConfig.feePercent,
+                    regularFeePercent: payoutConfig.feePercent,
+                    etaMinutes: payoutConfig.etaMinutes
+                },
+                standard: {
+                    feePercent: 0,
+                    etaDays: payoutConfig.standardEtaDays
+                }
+            },
             earnings,
             withdrawals,
-            payoutAccount: counselor?.payoutAccount || null
+            payoutAccount: counselor?.payoutAccount?.isVerified ? {
+                accountName: counselor.payoutAccount.accountName,
+                bankName: counselor.payoutAccount.bankName,
+                ifsc: counselor.payoutAccount.ifsc,
+                last4: String(counselor.payoutAccount.accountNumber || '').slice(-4),
+                isVerified: true,
+                verifiedAt: counselor.payoutAccount.verifiedAt
+            } : null
         });
     } catch (error) {
         console.error('Error fetching counselor wallet data:', error);
@@ -255,17 +302,10 @@ export const requestWithdrawal = async (req, res) => {
     try {
         const counselorId = req.user._id;
         const amount = Number(req.body.amount);
+        const payoutType = req.body.payoutType === 'instant' ? 'instant' : 'standard';
 
         if (!amount || amount <= 0) {
             return res.status(400).json({ message: 'Invalid amount' });
-        }
-
-        const accountName = String(req.body.accountName || '').trim();
-        const accountNumber = String(req.body.accountNumber || '').trim();
-        const ifsc = String(req.body.ifsc || '').trim().toUpperCase();
-        const bankName = String(req.body.bankName || '').trim();
-        if (!accountName || !accountNumber || !ifsc || !bankName) {
-            return res.status(400).json({ message: 'Complete bank details are required' });
         }
 
         const counselor = await User.findById(counselorId);
@@ -273,32 +313,128 @@ export const requestWithdrawal = async (req, res) => {
             return res.status(404).json({ message: 'Counselor not found' });
         }
 
-        if ((counselor.walletBalance || 0) < amount) {
-            return res.status(400).json({ message: 'Insufficient balance' });
+        let payoutAccount = counselor.payoutAccount;
+        let shouldSavePayoutAccount = false;
+        if (!payoutAccount?.isVerified) {
+            const accountName = String(req.body.accountName || '').trim();
+            const accountNumber = String(req.body.accountNumber || '').replace(/\s+/g, '');
+            const ifsc = String(req.body.ifsc || '').trim().toUpperCase();
+            const bankName = String(req.body.bankName || '').trim();
+            if (!accountName || !accountNumber || !ifsc || !bankName) {
+                return res.status(400).json({ message: 'Complete bank details are required for the first withdrawal' });
+            }
+            if (!/^\d{8,20}$/.test(accountNumber)) {
+                return res.status(400).json({ message: 'Enter a valid 8 to 20 digit account number' });
+            }
+            if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) {
+                return res.status(400).json({ message: 'Enter a valid IFSC code' });
+            }
+            counselor.payoutAccount = {
+                accountName, accountNumber, ifsc, bankName,
+                isVerified: true, verifiedAt: new Date()
+            };
+            payoutAccount = counselor.payoutAccount;
+            shouldSavePayoutAccount = true;
         }
 
-        counselor.walletBalance = (counselor.walletBalance || 0) - amount;
-        await counselor.save();
+        // Sync the counter for accounts that made instant withdrawals before the
+        // dedicated counter was introduced, then reserve funds atomically.
+        const previousInstantPayouts = payoutType === 'instant'
+            ? await Transaction.countDocuments({
+                userId: counselorId,
+                description: /withdrawal/i,
+                'metadata.payoutType': 'instant'
+            })
+            : 0;
+        if (payoutType === 'instant' && counselor.instantPayoutCount == null) {
+            await User.updateOne(
+                { _id: counselorId, instantPayoutCount: { $exists: false } },
+                { $set: { instantPayoutCount: 0 } }
+            );
+        }
+        if (payoutType === 'instant' && previousInstantPayouts > Number(counselor.instantPayoutCount || 0)) {
+            await User.updateOne(
+                { _id: counselorId },
+                { $max: { instantPayoutCount: previousInstantPayouts } }
+            );
+            counselor.instantPayoutCount = previousInstantPayouts;
+        }
 
-        const transaction = await Transaction.create({
-            userId: counselorId,
-            amount,
-            status: 'pending',
-            type: 'debit',
-            description: 'Counselor withdrawal request',
-            metadata: {
-                accountName,
-                accountNumber,
-                ifsc,
-                bankName
-            }
-        });
+        const payoutConfig = getInstantPayoutConfig();
+        const isFirstInstantFree = payoutType === 'instant' && Number(counselor.instantPayoutCount || 0) === 0;
+        const feePercent = payoutType === 'instant' && !isFirstInstantFree ? payoutConfig.feePercent : 0;
+        const feeAmount = roundMoney(amount * feePercent / 100);
+        const netAmount = roundMoney(amount - feeAmount);
+        if (netAmount <= 0) {
+            return res.status(400).json({ message: 'Withdrawal amount must be greater than the instant payout fee' });
+        }
+
+        const update = { $inc: { walletBalance: -amount } };
+        if (payoutType === 'instant') update.$inc.instantPayoutCount = 1;
+        if (shouldSavePayoutAccount) update.$set = { payoutAccount };
+        if (!payoutAccount?.isVerified) {
+            return res.status(400).json({ message: 'A verified payout account is required' });
+        }
+        const withdrawalFilter = { _id: counselorId, walletBalance: { $gte: amount } };
+        if (payoutType === 'instant') {
+            withdrawalFilter.instantPayoutCount = Number(counselor.instantPayoutCount || 0);
+        }
+        const updatedCounselor = await User.findOneAndUpdate(
+            withdrawalFilter,
+            update,
+            { new: true }
+        );
+        if (!updatedCounselor) {
+            return res.status(409).json({ message: 'Balance or instant payout eligibility changed. Please refresh and try again.' });
+        }
+
+        let transaction;
+        try {
+            transaction = await Transaction.create({
+                userId: counselorId,
+                amount,
+                status: 'pending',
+                type: 'debit',
+                description: 'Counselor withdrawal request',
+                metadata: {
+                    accountName: payoutAccount.accountName,
+                    accountNumber: payoutAccount.accountNumber,
+                    ifsc: payoutAccount.ifsc,
+                    bankName: payoutAccount.bankName,
+                    payoutAccountVerified: true,
+                    payoutType,
+                    requestedAmount: amount,
+                    feePercent,
+                    feeAmount,
+                    netAmount,
+                    firstInstantFree: isFirstInstantFree,
+                    estimatedArrival: payoutType === 'instant'
+                        ? `Within ${payoutConfig.etaMinutes} minutes`
+                        : `Within ${payoutConfig.standardEtaDays} business days`
+                }
+            });
+        } catch (transactionError) {
+            const rollback = { $inc: { walletBalance: amount } };
+            if (payoutType === 'instant') rollback.$inc.instantPayoutCount = -1;
+            await User.updateOne({ _id: counselorId }, rollback);
+            throw transactionError;
+        }
 
         res.status(200).json({
             success: true,
-            message: 'Withdrawal request submitted',
-            balance: counselor.walletBalance,
-            withdrawal: transaction
+            message: payoutType === 'instant'
+                ? `Instant withdrawal submitted. You will receive ₹${netAmount.toFixed(2)} within ${payoutConfig.etaMinutes} minutes.`
+                : 'Standard withdrawal request submitted',
+            balance: updatedCounselor.walletBalance,
+            withdrawal: transaction,
+            payoutSummary: { payoutType, requestedAmount: amount, feePercent, feeAmount, netAmount },
+            payoutAccount: {
+                accountName: payoutAccount.accountName,
+                bankName: payoutAccount.bankName,
+                ifsc: payoutAccount.ifsc,
+                last4: String(payoutAccount.accountNumber || '').slice(-4),
+                isVerified: true
+            }
         });
     } catch (error) {
         console.error('Error requesting withdrawal:', error);

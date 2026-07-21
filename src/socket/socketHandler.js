@@ -58,6 +58,11 @@ class SocketHandler {
     return role === "counsellor" || role === "counselor";
   }
 
+  isUserOnline(userId) {
+    if (!userId) return false;
+    return (this.onlineUsers.get(String(userId))?.size || 0) > 0;
+  }
+
   async markUserOnline(socket) {
     const userId = socket.userId?.toString();
     if (!userId) return;
@@ -104,6 +109,17 @@ class SocketHandler {
 
     if (userSockets.size > 0) return;
 
+    // Tell clients immediately that the last live connection is gone. The
+    // delayed database update below is only a reconnect grace period and must
+    // not make the directory show a disconnected counselor as online.
+    const disconnectedAt = new Date();
+    this.io.emit("presence-update", {
+      userId,
+      role: socket.userRole,
+      isOnline: false,
+      lastSeen: disconnectedAt,
+    });
+
     // Mobile networks and polling transports can reconnect briefly. Keep the
     // authenticated user online during that window; a reconnect cancels this
     // timer. Explicit logout still invalidates the session immediately.
@@ -115,7 +131,7 @@ class SocketHandler {
       if (currentSockets?.size > 0) return;
 
       this.onlineUsers.delete(userId);
-      const lastSeen = new Date();
+      const lastSeen = disconnectedAt;
 
       try {
         await User.findByIdAndUpdate(userId, {

@@ -2706,32 +2706,19 @@ export const getAllCounsellors = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // A database `isOnline` flag is driven by the socket connection and can
-    // briefly be false during a network reconnect. A live Session is the
-    // authoritative login state: it remains active until the counsellor logs
-    // out, so it is the correct value for the counselor-directory badge.
-    const counsellorIds = counsellors.map((counsellor) => counsellor._id);
-    const activeSessionUserIds = await Session.distinct("userId", {
-      userId: { $in: counsellorIds },
-      isActive: true,
+    const counsellorsWithLoginStatus = counsellors.map((counsellor) => {
+      // A saved login session is not presence. Only a currently connected
+      // authenticated socket makes a counselor online in the directory.
+      const liveOnline = global.socketHandler?.isUserOnline(counsellor._id) === true;
+      return {
+        ...counsellor,
+        isOnline: liveOnline,
+        isLoggedIn: liveOnline,
+        hasActiveSession: liveOnline,
+        socketOnline: liveOnline,
+        presenceStatus: liveOnline ? "online" : "offline",
+      };
     });
-    const activeSessionIds = new Set(
-      activeSessionUserIds.map((userId) => userId.toString()),
-    );
-
-    const counsellorsWithLoginStatus = counsellors.map((counsellor) => ({
-      ...counsellor,
-      // Keep both existing flags compatible with the frontend.
-      isOnline: activeSessionIds.has(counsellor._id.toString()),
-      isLoggedIn: activeSessionIds.has(counsellor._id.toString()),
-      // New explicit flags: use these in new screens if socket-level detail
-      // is useful without letting a temporary reconnect change the badge.
-      hasActiveSession: activeSessionIds.has(counsellor._id.toString()),
-      socketOnline: Boolean(counsellor.isOnline),
-      presenceStatus: activeSessionIds.has(counsellor._id.toString())
-        ? "online"
-        : "offline",
-    }));
 
     return res.status(200).json({
       message: "Counsellors fetched successfully",

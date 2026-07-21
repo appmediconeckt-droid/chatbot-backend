@@ -287,8 +287,21 @@ const userSchema = new mongoose.Schema({
         type: String
     },
     walletBalance: {
-        type: Number,
-        default: 0
+      type: Number,
+      default: 0
+    },
+    instantPayoutCount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    payoutAccount: {
+        accountName: { type: String, default: "" },
+        accountNumber: { type: String, default: "" },
+        ifsc: { type: String, default: "" },
+        bankName: { type: String, default: "" },
+        isVerified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null }
     },
 
     // ── Geolocation / fraud verification ──────────────────────────
