@@ -1232,26 +1232,6 @@ export const sendMessage = async (req, res) => {
       if (recipientAltRoom) {
         global.io.to(recipientAltRoom).emit("new-message", messagePayloadForSocket);
       }
-      global.io.to(`user_${recipientId}`).emit("message-notification", {
-        chatId: chat._id,
-        publicChatId: chat.chatId,
-        message: messagePayloadForSocket,
-        sender: { id: req.user._id, role: req.user.role },
-      });
-      global.io.to(recipientRoom).emit("message-notification", {
-        chatId: chat._id,
-        publicChatId: chat.chatId,
-        message: messagePayloadForSocket,
-        sender: { id: req.user._id, role: req.user.role },
-      });
-      if (recipientAltRoom) {
-        global.io.to(recipientAltRoom).emit("message-notification", {
-          chatId: chat._id,
-          publicChatId: chat.chatId,
-          message: messagePayloadForSocket,
-          sender: { id: req.user._id, role: req.user.role },
-        });
-      }
       const chatListUpdate = {
         chatId: chat._id,
         publicChatId: chat.chatId,
@@ -1263,25 +1243,6 @@ export const sendMessage = async (req, res) => {
       global.io.to(`counsellor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
       global.io.to(`counselor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
     }
-
-    const notificationRecipientId =
-      req.user.role === "user" ? chat.counselorId : chat.userId;
-    await createNotificationSafely({
-      recipientId: notificationRecipientId,
-      actorId: req.user._id,
-      type: "message",
-      title: `New message from ${populatedMessage.senderId?.fullName || "User"}`,
-      message: hasAttachment
-        ? `${messagePayload.attachmentName || "Attachment"} received`
-        : messageContent.slice(0, 160),
-      data: {
-        chatId: chat._id,
-        publicChatId: chat.chatId,
-        messageId: populatedMessage._id,
-        contentType: populatedMessage.contentType,
-      },
-      actionUrl: `/chat/${chat._id}`,
-    });
 
     // Billing follows real conversation activity, not React renders or every
     // individual message. Each message extends one inactivity-window session.

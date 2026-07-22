@@ -468,27 +468,6 @@ class SocketHandler {
       const chatRoom = `chat_${populatedChat.chatId}`;
       this.io.to(chatRoom).emit("new-message", messageData);
 
-      // Notify other user
-      const otherUserRoom =
-        socket.userRole === "user"
-          ? `counsellor_${populatedChat.counselorId._id}`
-          : `user_${populatedChat.userId._id}`;
-
-      const senderInfo =
-        socket.userRole === "user"
-          ? populatedChat.userId
-          : populatedChat.counselorId;
-
-      this.io.to(otherUserRoom).emit("message-notification", {
-        chatId: populatedChat._id,
-        message: messageData,
-        sender: {
-          id: senderInfo._id,
-          name: senderInfo.fullName,
-          role: socket.userRole,
-        },
-      });
-
       const chatListUpdate = {
         chatId: populatedChat._id,
         publicChatId: populatedChat.chatId,

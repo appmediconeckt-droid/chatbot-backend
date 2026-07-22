@@ -21,8 +21,8 @@ export const getPaidSessionConfig = () => ({
   enabled: isPaidSessionsEnabled(),
   billing: {
     chat: "per_minute",
-    voice: "fixed",
-    video: "fixed",
+    voice: "per_minute",
+    video: "per_minute",
   },
   fees: {
     chat: Number(process.env.COUNSELOR_CHAT_FEE || 100),
@@ -37,6 +37,20 @@ export const getPaidSessionConfig = () => ({
 export const getSessionAmount = (sessionType = "chat") => {
   const { fees } = getPaidSessionConfig();
   return fees[sessionType] ?? fees.chat;
+};
+
+export const calculateCallCharge = ({
+  durationSeconds,
+  rate,
+  rateDurationMinutes,
+}) => {
+  const billedSeconds = Math.max(0, Math.floor(Number(durationSeconds) || 0));
+  const packageMinutes = Number(rateDurationMinutes);
+  const packageRate = Number(rate);
+  if (packageMinutes <= 0 || packageRate < 0) return 0;
+  return Number(
+    ((billedSeconds / (packageMinutes * 60)) * packageRate).toFixed(2),
+  );
 };
 
 export const getRequestExpiryDate = () => {
@@ -507,10 +521,19 @@ export const refundPaidSession = async (chat, reason = "request_not_accepted") =
   return session;
 };
 
-export const chargeFixedCall = async ({ callId, userId, counselorId, sessionType }) => {
+export const chargeCallByDuration = async ({
+  callId,
+  userId,
+  counselorId,
+  sessionType,
+  durationSeconds,
+}) => {
   if (!isPaidSessionsEnabled()) return null;
   const callType = sessionType === "voice" ? "voice" : "video";
-  const amount = getSessionAmount(callType);
+  const rate = getSessionAmount(callType);
+  const rateDurationMinutes = getPaidSessionConfig().durationMinutes;
+  const billedSeconds = Math.max(0, Math.floor(Number(durationSeconds) || 0));
+  const amount = calculateCallCharge({ durationSeconds, rate, rateDurationMinutes });
   const existing = await Transaction.findOne({
     "metadata.callId": callId,
     type: "debit",
@@ -519,6 +542,11 @@ export const chargeFixedCall = async ({ callId, userId, counselorId, sessionType
   if (existing) {
     const user = await User.findById(userId).select("walletBalance");
     return { transaction: existing, amount: existing.amount, walletBalance: user?.walletBalance || 0 };
+  }
+
+  if (amount <= 0) {
+    const user = await User.findById(userId).select("walletBalance");
+    return { transaction: null, amount: 0, walletBalance: user?.walletBalance || 0 };
   }
 
   const [user, counselor] = await Promise.all([
@@ -546,8 +574,16 @@ export const chargeFixedCall = async ({ callId, userId, counselorId, sessionType
     amount,
     status: "completed",
     type: "debit",
-    description: `${callType === "voice" ? "Voice" : "Video"} call with ${counselor?.fullName || "Counselor"}`,
-    metadata: { callId, sessionType: callType, fixedPrice: true },
+    description: `${callType === "voice" ? "Voice" : "Video"} call with ${counselor?.fullName || "Counselor"} (${Number((billedSeconds / 60).toFixed(2))} min)`,
+    metadata: {
+      callId,
+      sessionType: callType,
+      billingType: "per_minute",
+      billedSeconds,
+      billedMinutes: Number((billedSeconds / 60).toFixed(2)),
+      rate,
+      rateDurationMinutes,
+    },
   });
   const earning = Number(
     (amount * (1 - getPaidSessionConfig().commissionRate / 100)).toFixed(2),
@@ -584,7 +620,7 @@ export const chargeFixedCall = async ({ callId, userId, counselorId, sessionType
       type: "payment",
       title: `${callType === "voice" ? "Voice" : "Video"} call payment deducted`,
       message: `₹${amount.toFixed(2)} was deducted from your wallet.`,
-      data: { transactionId: transaction._id, callId, sessionType: callType, amount },
+      data: { transactionId: transaction._id, callId, sessionType: callType, amount, billedSeconds },
       actionUrl: "/wallet",
     }),
     createNotificationSafely({

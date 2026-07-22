@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
-import { chargeFixedCall } from "../services/paidSessionService.js";
+import { chargeCallByDuration } from "../services/paidSessionService.js";
 import { createNotificationSafely } from "../services/notificationService.js";
 
 // In-memory storage (replace with database in production)
@@ -694,14 +694,6 @@ export const videoCallController = {
           error: "A paid call must include one user and one counselor",
         });
       }
-      const billing = await chargeFixedCall({
-        callId,
-        userId: initiatorIsUser ? call.initiator.id : call.receiver.id,
-        counselorId: initiatorIsUser ? call.receiver.id : call.initiator.id,
-        sessionType:
-          call.type === "voice" || call.type === "audio" ? "voice" : "video",
-      });
-
       // Update call status to accepted/active
       call.status = "active";
       call.acceptedAt = new Date();
@@ -743,9 +735,9 @@ export const videoCallController = {
           status: "active",
           acceptedAt: new Date(),
           isActive: true,
-          paymentTransactionId: billing?.transaction?._id || null,
-          paymentAmount: billing?.amount || 0,
-          paymentStatus: billing ? "paid" : "unpaid",
+          paymentTransactionId: null,
+          paymentAmount: 0,
+          paymentStatus: "unpaid",
         },
       );
 
@@ -1246,6 +1238,21 @@ export const videoCallController = {
       );
       const finalStatus = wasPendingRequest ? "cancelled" : "ended";
 
+      const initiatorIsUser =
+        normalizeParticipantType(call.initiator.type) === "user";
+      const receiverIsUser =
+        normalizeParticipantType(call.receiver.type) === "user";
+      const billing = !wasPendingRequest && (initiatorIsUser || receiverIsUser)
+        ? await chargeCallByDuration({
+            callId,
+            userId: initiatorIsUser ? call.initiator.id : call.receiver.id,
+            counselorId: initiatorIsUser ? call.receiver.id : call.initiator.id,
+            sessionType:
+              call.type === "voice" || call.type === "audio" ? "voice" : "video",
+            durationSeconds: duration,
+          })
+        : null;
+
       const endedBy =
         String(call.initiator.id) === String(userId) ? call.initiator : call.receiver;
 
@@ -1282,6 +1289,9 @@ export const videoCallController = {
           duration: duration,
           isActive: false,
           endedBy: endedBy.id,
+          paymentTransactionId: billing?.transaction?._id || null,
+          paymentAmount: billing?.amount || 0,
+          paymentStatus: billing?.transaction ? "paid" : "unpaid",
         },
       );
 
@@ -1391,6 +1401,8 @@ export const videoCallController = {
           duration,
           endedAt: endTime,
           endedBy: endedBy.fullName,
+          billedAmount: billing?.amount || 0,
+          walletBalance: billing?.walletBalance,
         },
       });
     } catch (error) {

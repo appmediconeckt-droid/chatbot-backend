@@ -22,6 +22,25 @@ const getInstantPayoutConfig = () => {
 
 const roundMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+const normalizeWithdrawalStatus = (transaction = {}) => {
+    const metadataStatus = transaction.metadata?.payoutStatus || transaction.metadata?.approvalStatus;
+    const rawStatus = String(metadataStatus || transaction.status || 'pending').toLowerCase();
+
+    if (['completed', 'paid', 'success', 'settled'].includes(rawStatus)) return 'paid';
+    if (['hold', 'approved', 'processing', 'processed'].includes(rawStatus)) return 'approved';
+    if (['failed', 'rejected', 'cancelled', 'canceled'].includes(rawStatus)) return 'rejected';
+    if (rawStatus === 'refunded') return 'refunded';
+    return 'pending';
+};
+
+const withdrawalStatusMessage = (status) => ({
+    pending: 'Waiting for admin approval',
+    approved: 'Approved; bank transfer is pending',
+    paid: 'Payment sent to bank account',
+    rejected: 'Rejected; amount returned to wallet',
+    refunded: 'Amount returned to wallet'
+}[status] || status);
+
 // Create Razorpay Order
 export const createOrder = async (req, res) => {
     try {
@@ -229,10 +248,25 @@ export const getCounselorWalletData = async (req, res) => {
             earningStatus: item.earningStatus || 'completed'
         }));
 
-        const withdrawals = await Transaction.find({
+        const withdrawalRecords = await Transaction.find({
             userId: counselorId,
             description: /withdrawal/i
         }).sort({ createdAt: -1 }).limit(20).lean();
+        // The separate admin backend uses `hold` after approval. Expose a
+        // payout-domain status so counselors see Approved instead of the raw
+        // accounting status. `paid` is returned only after settlement.
+        const withdrawals = withdrawalRecords.map((transaction) => {
+            const status = normalizeWithdrawalStatus(transaction);
+            return {
+                ...transaction,
+                rawStatus: transaction.status,
+                status,
+                statusMessage: withdrawalStatusMessage(status),
+                approvedAt: transaction.metadata?.approvedAt || null,
+                paidAt: transaction.metadata?.paidAt || null,
+                transactionReference: transaction.metadata?.transactionReference || ''
+            };
+        });
 
         const totalEarned = earnings.reduce((sum, item) => sum + (item.earningAmount || 0), 0);
         // The counselor wallet is the actual withdrawable amount. Summing all
@@ -403,6 +437,8 @@ export const requestWithdrawal = async (req, res) => {
                     bankName: payoutAccount.bankName,
                     payoutAccountVerified: true,
                     payoutType,
+                    payoutStatus: 'pending',
+                    approvalStatus: 'pending',
                     requestedAmount: amount,
                     feePercent,
                     feeAmount,
