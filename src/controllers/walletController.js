@@ -224,15 +224,36 @@ export const getWalletData = async (req, res) => {
 export const getCounselorWalletData = async (req, res) => {
     try {
         const counselorId = req.user._id;
+        const from = String(req.query.from || '').trim();
+        const to = String(req.query.to || '').trim();
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        if ((from && !datePattern.test(from)) || (to && !datePattern.test(to))) {
+            return res.status(400).json({ message: 'Dates must use YYYY-MM-DD format' });
+        }
+        // Dashboard dates are India calendar dates; MongoDB timestamps remain UTC.
+        const fromDate = from ? new Date(`${from}T00:00:00.000+05:30`) : null;
+        const toDate = to ? new Date(`${to}T23:59:59.999+05:30`) : null;
+        if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+            return res.status(400).json({ message: 'Invalid date range' });
+        }
+        if (fromDate && toDate && fromDate > toDate) {
+            return res.status(400).json({ message: 'From date cannot be after To date' });
+        }
+        const createdAt = {};
+        if (fromDate) createdAt.$gte = fromDate;
+        if (toDate) createdAt.$lte = toDate;
+        const dateFilter = Object.keys(createdAt).length ? { createdAt } : {};
         const counselor = await User.findById(counselorId).lean();
 
-        const earningRecords = await CounselorEarning.find({ counselorId })
+        let earningQuery = CounselorEarning.find({ counselorId, ...dateFilter })
             // Counselor-facing earnings must never expose the user's real
             // name or profile photo. Only the chosen anonymous handle is sent.
             .populate('userId', 'anonymous')
-            .sort({ createdAt: -1 })
-            .limit(100)
-            .lean();
+            .sort({ createdAt: -1 });
+        // A selected range explicitly requests the complete period. Keep the
+        // default response bounded for the live dashboard.
+        if (!from && !to) earningQuery = earningQuery.limit(100);
+        const earningRecords = await earningQuery.lean();
         // Older earning records predate earningStatus. If the user's wallet was
         // debited and an earning record exists, the earning itself is complete;
         // payoutStatus only describes withdrawal/settlement.
@@ -250,8 +271,9 @@ export const getCounselorWalletData = async (req, res) => {
 
         const withdrawalRecords = await Transaction.find({
             userId: counselorId,
-            description: /withdrawal/i
-        }).sort({ createdAt: -1 }).limit(20).lean();
+            description: /withdrawal/i,
+            ...dateFilter
+        }).sort({ createdAt: -1 }).limit(from || to ? 0 : 20).lean();
         // The separate admin backend uses `hold` after approval. Expose a
         // payout-domain status so counselors see Approved instead of the raw
         // accounting status. `paid` is returned only after settlement.
@@ -298,6 +320,13 @@ export const getCounselorWalletData = async (req, res) => {
             grossRevenue,
             platformCommission,
             monthlyEarned,
+            period: {
+                from: from || null,
+                to: to || null,
+                filtered: Boolean(from || to),
+                earningCount: earnings.length,
+                withdrawalCount: withdrawals.length
+            },
             split: {
                 counselorPercentage: 100 - commissionRate,
                 platformPercentage: commissionRate

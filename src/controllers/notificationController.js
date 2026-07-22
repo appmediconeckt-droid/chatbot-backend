@@ -1,11 +1,13 @@
 import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
 
+const visibleNotificationTypes = ["appointment", "payment"];
+
 export const getNotifications = async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-  const filter = { recipientId: req.user._id };
-  if (req.query.type) filter.type = req.query.type;
+  const filter = { recipientId: req.user._id, type: { $in: visibleNotificationTypes } };
+  if (visibleNotificationTypes.includes(req.query.type)) filter.type = req.query.type;
   if (req.query.unread === "true") filter.isRead = false;
 
   const [notifications, total, unreadCount] = await Promise.all([
@@ -16,7 +18,7 @@ export const getNotifications = async (req, res) => {
       .limit(limit)
       .lean(),
     Notification.countDocuments(filter),
-    Notification.countDocuments({ recipientId: req.user._id, isRead: false }),
+    Notification.countDocuments({ recipientId: req.user._id, type: { $in: visibleNotificationTypes }, isRead: false }),
   ]);
 
   res.json({
@@ -30,6 +32,7 @@ export const getNotifications = async (req, res) => {
 export const getUnreadCount = async (req, res) => {
   const unreadCount = await Notification.countDocuments({
     recipientId: req.user._id,
+    type: { $in: visibleNotificationTypes },
     isRead: false,
   });
   res.json({ success: true, unreadCount });
@@ -50,7 +53,7 @@ export const markAsRead = async (req, res) => {
 
 export const markAllAsRead = async (req, res) => {
   const result = await Notification.updateMany(
-    { recipientId: req.user._id, isRead: false },
+    { recipientId: req.user._id, type: { $in: visibleNotificationTypes }, isRead: false },
     { isRead: true, readAt: new Date() },
   );
   res.json({ success: true, updatedCount: result.modifiedCount });

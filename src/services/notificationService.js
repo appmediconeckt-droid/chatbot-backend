@@ -1,5 +1,7 @@
 import Notification from "../models/Notification.js";
 
+const enabledNotificationTypes = new Set(["appointment", "payment"]);
+
 export const createNotification = async ({
   recipientId,
   actorId = null,
@@ -10,6 +12,7 @@ export const createNotification = async ({
   actionUrl = "",
 }) => {
   if (!recipientId) return null;
+  if (!enabledNotificationTypes.has(type)) return null;
 
   const notification = await Notification.create({
     recipientId,
