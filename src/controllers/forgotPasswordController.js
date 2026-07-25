@@ -1,53 +1,13 @@
 // controllers/forgotPasswordController.js
 import User from '../models/userModel.js';
 import ForgotPasswordToken from '../models/ForgotPasswordToken.js';
-import otpService from '../services/otpService.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import otpService from '../services/otpService.js';
 
 // ==================== GENERATE OTP ====================
 const generateOTP = () => {
   return crypto.randomInt(100000, 999999).toString();
-};
-
-// ==================== SEND OTP EMAIL ====================
-const sendOTPEmail = async (email, otp) => {
-  const mailOptions = {
-    from: process.env.EMAIL_USER || 'your-email@gmail.com',
-    to: email,
-    subject: 'Password Reset OTP - Mediconeckt ChatBot',
-    html: `
-      <div style="max-width: 600px; margin: 0 auto; padding: 30px; font-family: Arial, sans-serif; background: #f8f9fa; border-radius: 12px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #667eea; margin: 0;">Mediconeckt ChatBot</h1>
-          <p style="color: #666; margin: 5px 0 0;">Your Mental Health Companion</p>
-        </div>
-        
-        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #333; margin-top: 0;">Password Reset Request</h2>
-          <p style="color: #666; line-height: 1.6;">We received a request to reset your password. Use the OTP below to reset your password:</p>
-          
-          <div style="text-align: center; padding: 20px 0; margin: 20px 0; background: #f0f4ff; border-radius: 8px;">
-            <div style="font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 8px; font-family: monospace;">
-              ${otp}
-            </div>
-          </div>
-          
-          <p style="color: #666; font-size: 14px; line-height: 1.6;">
-            This OTP is valid for <strong>10 minutes</strong>. If you didn't request a password reset, please ignore this email.
-          </p>
-          
-          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-          
-          <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
-            © 2024 Mediconeckt ChatBot. All rights reserved.
-          </p>
-        </div>
-      </div>
-    `,
-  };
-
-  await otpService.sendForgotPasswordOTP(email, otp);
 };
 
 // ==================== SEND FORGOT PASSWORD OTP ====================
@@ -62,7 +22,8 @@ export const sendForgotPasswordOTP = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -72,21 +33,19 @@ export const sendForgotPasswordOTP = async (req, res) => {
 
     const otp = generateOTP();
 
+    await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
     const tokenRecord = await ForgotPasswordToken.create({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
 
     try {
-      await sendOTPEmail(email, otp);
+      await otpService.sendPasswordResetOTP(normalizedEmail, otp);
     } catch (emailError) {
       console.error('Email sending error:', emailError);
-      await ForgotPasswordToken.deleteOne({ _id: tokenRecord._id });
-      return res.status(502).json({
-        success: false,
-        message: 'Unable to send OTP email right now. Please try again later.',
-      });
+      await ForgotPasswordToken.findByIdAndDelete(tokenRecord._id);
+      throw emailError;
     }
 
     return res.status(200).json({
@@ -115,9 +74,10 @@ export const verifyForgotPasswordOTP = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
     const tokenRecord = await ForgotPasswordToken.findOne({
-      email: email.toLowerCase(),
-      otp: otp,
+      email: normalizedEmail,
+      otp: String(otp),
     }).sort({ createdAt: -1 });
 
     if (!tokenRecord) {
@@ -178,14 +138,27 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    if (newPassword.length < 3) {
+    if (newPassword.length < 6) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 3 characters long',
+        message: 'Password must be at least 6 characters long',
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.trim().toLowerCase();
+    const verifiedTokenRecord = await ForgotPasswordToken.findOne({
+      email: normalizedEmail,
+      isUsed: true,
+    }).sort({ createdAt: -1 });
+
+    if (!verifiedTokenRecord || verifiedTokenRecord.isExpired()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please verify a valid OTP before resetting your password',
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -199,7 +172,7 @@ export const resetPassword = async (req, res) => {
     user.password = hashedPassword;
     await user.save();
 
-    await ForgotPasswordToken.deleteMany({ email: email.toLowerCase() });
+    await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
 
     return res.status(200).json({
       success: true,
@@ -227,7 +200,8 @@ export const resendForgotPasswordOTP = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -235,25 +209,22 @@ export const resendForgotPasswordOTP = async (req, res) => {
       });
     }
 
-    await ForgotPasswordToken.deleteMany({ email: email.toLowerCase() });
+    await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
 
     const otp = generateOTP();
 
     const tokenRecord = await ForgotPasswordToken.create({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
 
     try {
-      await sendOTPEmail(email, otp);
+      await otpService.sendPasswordResetOTP(normalizedEmail, otp);
     } catch (emailError) {
       console.error('Email sending error:', emailError);
-      await ForgotPasswordToken.deleteOne({ _id: tokenRecord._id });
-      return res.status(502).json({
-        success: false,
-        message: 'Unable to send OTP email right now. Please try again later.',
-      });
+      await ForgotPasswordToken.findByIdAndDelete(tokenRecord._id);
+      throw emailError;
     }
 
     return res.status(200).json({

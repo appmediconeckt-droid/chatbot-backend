@@ -339,13 +339,13 @@ const DB_STATE_LABEL = {
 // 1. CORS configuration
 // ---------------------------
 const allowedOrigins = [
-  "https://mediconeckt.vercel.app/",
   "http://localhost:4173",
   "http://localhost:3000",
   "http://localhost:5173",
   "http://192.168.0.138:5173",
   "https://your-frontend-domain.com",
   "https://aichatbotmediconeckt.netlify.app",
+  "https://humaeli.com",
 ];
 
 const normalizeOrigin = (origin) => origin?.replace(/\/$/, "");
