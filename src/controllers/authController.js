@@ -1669,6 +1669,29 @@ export const completeRegistration = async (req, res) => {
 };
 
 /// ================= LOGIN USER (One‑device policy – now only *detect*) =================
+const WEB_SESSION_STALE_MS = Math.max(
+  60_000,
+  Number(process.env.WEB_SESSION_STALE_MS) || 120_000,
+);
+
+const expireStaleLoginSessions = async (userId) => {
+  const staleBefore = new Date(Date.now() - WEB_SESSION_STALE_MS);
+  return Session.updateMany(
+    {
+      userId,
+      isActive: true,
+      $or: [
+        { lastActivityAt: { $lt: staleBefore } },
+        {
+          lastActivityAt: { $exists: false },
+          updatedAt: { $lt: staleBefore },
+        },
+      ],
+    },
+    { $set: { isActive: false, logoutAt: new Date() } },
+  );
+};
+
 export const loginUser = async (req, res) => {
   try {
     const { email, password, role } = req.body;
@@ -1702,7 +1725,11 @@ export const loginUser = async (req, res) => {
         .json({ message: "Invalid password", success: false });
     }
 
-    // ---- One-device policy: detect any *other* active session ----
+    // A browser may close without completing /logout. Expire sessions whose
+    // heartbeat stopped before applying the one-device policy.
+    await expireStaleLoginSessions(user._id);
+
+    // ---- One-device policy: detect any *live* active session ----
     const activeSession = await Session.findOne({
       userId: user._id,
       isActive: true,
@@ -1736,6 +1763,7 @@ export const loginUser = async (req, res) => {
       userId: user._id,
       refreshToken,
       isActive: true,
+      lastActivityAt: new Date(),
     });
     await markUserOnline(user);
 
@@ -2522,6 +2550,41 @@ export const refreshAccessToken = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ================= WEB SESSION HEARTBEAT =================
+export const sessionHeartbeat = async (req, res) => {
+  try {
+    const sessionId = req.sessionId;
+    const userId = req.userId || req.user?._id;
+
+    if (!sessionId || !userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Active session not found",
+      });
+    }
+
+    const result = await Session.updateOne(
+      { _id: sessionId, userId, isActive: true },
+      { $set: { lastActivityAt: new Date() } },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Session expired",
+      });
+    }
+
+    return res.status(204).send();
+  } catch (error) {
+    console.error("Session heartbeat error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Could not update session heartbeat",
+    });
   }
 };
 

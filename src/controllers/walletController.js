@@ -5,6 +5,7 @@ import Transaction from '../models/transactionModel.js';
 import CounselorEarning from '../models/CounselorEarning.js';
 import dotenv from 'dotenv';
 import { createNotificationSafely } from '../services/notificationService.js';
+import { creditCapturedWalletPayment } from '../services/walletPaymentService.js';
 
 dotenv.config();
 
@@ -12,6 +13,21 @@ const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_YOUR_KEY_ID',
     key_secret: process.env.RAZORPAY_KEY_SECRET || 'YOUR_KEY_SECRET'
 });
+
+const fetchCapturedPayment = async ({ paymentId, orderId }) => {
+    if (paymentId) {
+        const payment = await razorpay.payments.fetch(paymentId);
+        if (String(payment.order_id) !== String(orderId)) {
+            throw new Error('Payment does not belong to this wallet order');
+        }
+        return payment;
+    }
+
+    const result = await razorpay.orders.fetchPayments(orderId);
+    return result?.items?.find(payment =>
+        payment.status === 'captured' || payment.captured === true
+    ) || null;
+};
 
 const getInstantPayoutConfig = () => {
     const feePercent = Math.max(0, Number(process.env.INSTANT_PAYOUT_FEE_PERCENT || 2));
@@ -64,7 +80,8 @@ export const createOrder = async (req, res) => {
             userId,
             razorpayOrderId: order.id,
             amount,
-            status: 'pending'
+            status: 'pending',
+            metadata: { walletCreditStatus: 'pending' }
         });
         await transaction.save();
 
@@ -97,26 +114,24 @@ export const verifyPayment = async (req, res) => {
 
         if (generated_signature === razorpay_signature) {
             // Payment verified
-            const transaction = await Transaction.findOne({ razorpayOrderId: razorpay_order_id });
+            const transaction = await Transaction.findOne({
+                razorpayOrderId: razorpay_order_id,
+                userId
+            });
             if (!transaction) {
                 return res.status(404).json({ message: 'Transaction not found' });
             }
 
-            if (transaction.status === 'completed') {
-                return res.status(400).json({ message: 'Payment already verified' });
-            }
-
-            transaction.razorpayPaymentId = razorpay_payment_id;
             transaction.razorpaySignature = razorpay_signature;
-            transaction.status = 'completed';
             await transaction.save();
 
-            // Update user wallet balance
-            const user = await User.findById(userId);
-            user.walletBalance = (user.walletBalance || 0) + transaction.amount;
-            await user.save();
+            const credit = await creditCapturedWalletPayment({
+                transaction,
+                paymentId: razorpay_payment_id,
+                source: 'checkout_callback'
+            });
 
-            await createNotificationSafely({
+            if (!credit.alreadyCredited) await createNotificationSafely({
                 recipientId: userId,
                 type: 'payment',
                 title: 'Wallet payment successful',
@@ -125,7 +140,7 @@ export const verifyPayment = async (req, res) => {
                     transactionId: transaction._id,
                     amount: transaction.amount,
                     transactionType: 'credit',
-                    balance: user.walletBalance
+                    balance: credit.balance
                 },
                 actionUrl: '/wallet'
             });
@@ -133,7 +148,8 @@ export const verifyPayment = async (req, res) => {
             res.status(200).json({
                 success: true,
                 message: 'Payment verified and wallet updated',
-                balance: user.walletBalance
+                balance: credit.balance,
+                alreadyCredited: credit.alreadyCredited
             });
         } else {
             res.status(400).json({ success: false, message: 'Invalid payment signature' });
@@ -141,6 +157,119 @@ export const verifyPayment = async (req, res) => {
     } catch (error) {
         console.error('Error verifying Razorpay payment:', error);
         res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// User-triggered recovery for a checkout callback interrupted by a browser or
+// network failure.
+export const reconcileWalletPayment = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const orderId = String(req.body.razorpay_order_id || req.body.orderId || '').trim();
+        const paymentId = String(req.body.razorpay_payment_id || req.body.paymentId || '').trim();
+        if (!orderId) {
+            return res.status(400).json({ success: false, message: 'Razorpay Order ID is required' });
+        }
+
+        const transaction = await Transaction.findOne({ razorpayOrderId: orderId, userId });
+        if (!transaction) {
+            return res.status(404).json({ success: false, message: 'Wallet payment order not found' });
+        }
+
+        const payment = await fetchCapturedPayment({ paymentId, orderId });
+        if (!payment || (payment.status !== 'captured' && payment.captured !== true)) {
+            return res.status(409).json({
+                success: false,
+                message: 'Payment is not captured yet. A bank debit may still be automatically reversed.'
+            });
+        }
+
+        const credit = await creditCapturedWalletPayment({
+            transaction,
+            paymentId: payment.id,
+            source: 'user_reconciliation',
+            gatewayPayment: payment
+        });
+
+        return res.json({
+            success: true,
+            message: credit.alreadyCredited
+                ? 'Payment was already credited'
+                : 'Payment verified and wallet credited',
+            balance: credit.balance,
+            transaction: credit.transaction
+        });
+    } catch (error) {
+        console.error('Wallet reconciliation error:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Could not reconcile payment'
+        });
+    }
+};
+
+// Server-to-server recovery. app.js retains the exact raw JSON body so the
+// Razorpay signature can be verified.
+export const razorpayWebhook = async (req, res) => {
+    try {
+        const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+        if (!secret) {
+            return res.status(503).json({ success: false, message: 'Webhook secret is not configured' });
+        }
+
+        const receivedSignature = String(req.headers['x-razorpay-signature'] || '');
+        const rawBody = typeof req.rawBody === 'string'
+            ? req.rawBody
+            : JSON.stringify(req.body || {});
+        const expectedSignature = crypto
+            .createHmac('sha256', secret)
+            .update(rawBody)
+            .digest('hex');
+        const validSignature =
+            receivedSignature.length === expectedSignature.length &&
+            crypto.timingSafeEqual(Buffer.from(receivedSignature), Buffer.from(expectedSignature));
+
+        if (!validSignature) {
+            return res.status(401).json({ success: false, message: 'Invalid webhook signature' });
+        }
+
+        const event = String(req.body?.event || '');
+        const payment = req.body?.payload?.payment?.entity;
+        if (!payment?.order_id) return res.status(200).json({ success: true, ignored: true });
+
+        const transaction = await Transaction.findOne({ razorpayOrderId: payment.order_id });
+        if (!transaction) return res.status(200).json({ success: true, ignored: true });
+
+        if (event === 'payment.captured') {
+            await creditCapturedWalletPayment({
+                transaction,
+                paymentId: payment.id,
+                source: 'razorpay_webhook',
+                gatewayPayment: payment
+            });
+        } else if (event === 'payment.failed' && transaction.status === 'pending') {
+            await Transaction.updateOne(
+                { _id: transaction._id, status: 'pending' },
+                {
+                    $set: {
+                        status: 'failed',
+                        razorpayPaymentId: payment.id,
+                        metadata: {
+                            ...(transaction.metadata || {}),
+                            walletCreditStatus: 'not_credited',
+                            gatewayStatus: 'failed',
+                            gatewayErrorCode: payment.error_code || null,
+                            gatewayErrorDescription: payment.error_description || null
+                        }
+                    }
+                }
+            );
+        }
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Razorpay webhook error:', error);
+        return res.status(500).json({ success: false, message: 'Webhook processing failed' });
     }
 };
 

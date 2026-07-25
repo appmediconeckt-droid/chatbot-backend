@@ -50,6 +50,13 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: null
     },
+    // Internal idempotency ledger for wallet top-ups. Payment IDs are never
+    // exposed to public profile responses.
+    walletCreditPaymentIds: {
+        type: [String],
+        default: [],
+        select: false
+    },
     age: {
         type: Number,
     },

@@ -31,6 +31,7 @@ import {
   sendProfileChangeOTP,
   verifyProfileChangeOTP,
   debugCounsellorByEmail,
+  sessionHeartbeat,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
 import { authorizeRoles } from "../middleware/authorizeRoles.js";
@@ -65,6 +66,7 @@ authRoutes.post("/logout-other-devices", logoutOtherDevicesAndSendOTP);
 authRoutes.post("/verify-login-otp", verifyLoginOTP);
 
 authRoutes.post("/logout", authMiddleware, logout);
+authRoutes.post("/session-heartbeat", authMiddleware, sessionHeartbeat);
 // Password management for both users and counsellors
 authRoutes.post("/setPassword", authMiddleware, setPassword);
 authRoutes.post("/changePassword", authMiddleware, changePassword);
@@ -153,4 +155,3 @@ authRoutes.post(
 );
 
 export default authRoutes;
-    

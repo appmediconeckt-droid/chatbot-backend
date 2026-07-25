@@ -93,6 +93,7 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
     req.userId = user._id;
     req.userRole = user.role;
     req.newAccessToken = newAccessToken;
+    req.sessionId = session._id;
 
     return next();
   } catch (err) {
@@ -187,6 +188,12 @@ export const authMiddleware = async (req, res, next) => {
       });
     }
 
+    // Successful authenticated requests also count as browser activity.
+    await Session.updateOne(
+      { _id: session._id, isActive: true },
+      { $set: { lastActivityAt: new Date() } },
+    );
+
     // ── 4. Load user ──
     const user = await User.findById(decoded.userId || decoded._id);
     if (!user) {
@@ -217,6 +224,7 @@ export const authMiddleware = async (req, res, next) => {
     req.user = user;
     req.userId = user._id;
     req.userRole = user.role;
+    req.sessionId = session._id;
 
     return next();
   } catch (error) {

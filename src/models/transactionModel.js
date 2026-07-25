@@ -10,7 +10,8 @@ const transactionSchema = new mongoose.Schema({
         type: String
     },
     razorpayPaymentId: {
-        type: String
+        type: String,
+        index: true
     },
     razorpaySignature: {
         type: String

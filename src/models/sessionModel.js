@@ -18,6 +18,13 @@ const sessionSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    // Updated by authenticated requests and the web heartbeat. This lets the
+    // server expire a session left behind by a browser that closed abruptly.
+    lastActivityAt: {
+        type: Date,
+        default: Date.now,
+        index: true
+    },
   
     logoutAt: {
         type: Date,
