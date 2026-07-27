@@ -100,6 +100,42 @@ const normalizeLanguageCode = (language) => {
   return language.trim().split("-")[0].toLowerCase();
 };
 
+const GOOGLE_LANGUAGE_MAP = {
+  he: "iw",
+  fil: "tl",
+  no: "no",
+  "zh-cn": "zh-CN",
+  "zh-tw": "zh-TW",
+};
+
+const translateWithGoogle = async ({
+  trimmedText,
+  sourceLanguage,
+  targetLanguage,
+}) => {
+  const target = GOOGLE_LANGUAGE_MAP[targetLanguage] || targetLanguage;
+  const source = GOOGLE_LANGUAGE_MAP[sourceLanguage] || sourceLanguage || "auto";
+  const googleUrl =
+    "https://translate.googleapis.com/translate_a/single" +
+    `?client=gtx&sl=${encodeURIComponent(source)}` +
+    `&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(trimmedText)}`;
+
+  const response = await axios.get(googleUrl, { timeout: 12000 });
+  const segments = response.data?.[0];
+  const translatedText = Array.isArray(segments)
+    ? segments.map((segment) => segment?.[0] || "").join("")
+    : trimmedText;
+
+  return {
+    originalText: trimmedText,
+    translatedText: translatedText || trimmedText,
+    source: "google",
+    sourceLanguage: sourceLanguage || null,
+    targetLanguage,
+    data: response.data,
+  };
+};
+
 const translateWithMyMemory = async ({
   trimmedText,
   sourceLanguage,
@@ -206,9 +242,22 @@ export const translatePlainText = async ({ text, to, from }) => {
     }
   }
 
-  // Fallback to MyMemory Translation API.
-  // MyMemory supports Autodetect as the source side of langpair, so do not
-  // force English when caller intentionally omits `from`.
+  // Use the same Google translator flow as the mobile application before
+  // falling back to MyMemory, whose public endpoint is frequently rate-limited.
+  try {
+    return await translateWithGoogle({
+      trimmedText,
+      sourceLanguage,
+      targetLanguage,
+    });
+  } catch (googleError) {
+    console.warn("Google Translator failed, using MyMemory:", {
+      status: googleError?.response?.status,
+      message: googleError.message,
+    });
+  }
+
+  // Last fallback: MyMemory Translation API.
   try {
     return await translateWithMyMemory({
       trimmedText,
@@ -226,6 +275,82 @@ export const translatePlainText = async ({ text, to, from }) => {
     error.statusCode = fallbackError?.response?.status || 503;
     throw error;
   }
+};
+
+export const translatePlainTextBatch = async ({ texts, to, from }) => {
+  const cleanTexts = Array.isArray(texts)
+    ? texts.map((text) => (typeof text === "string" ? text.trim() : ""))
+    : [];
+  const targetLanguage = normalizeLanguageCode(to);
+  const sourceLanguage = normalizeLanguageCode(from);
+
+  if (!cleanTexts.length || cleanTexts.some((text) => !text)) {
+    const error = new Error("texts must be a non-empty array of strings");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!targetLanguage) {
+    const error = new Error("to language is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (sourceLanguage && sourceLanguage === targetLanguage) {
+    return cleanTexts;
+  }
+
+  const endpoint = process.env.AZURE_TRANSLATOR_ENDPOINT?.trim().replace(/\/$/, "");
+  const key = process.env.AZURE_TRANSLATOR_KEY?.trim();
+  const region = process.env.AZURE_TRANSLATOR_REGION?.trim();
+
+  if (endpoint && key) {
+    try {
+      const params = new URLSearchParams({ "api-version": "3.0", to: targetLanguage });
+      if (sourceLanguage) params.set("from", sourceLanguage);
+
+      const headers = {
+        "Ocp-Apim-Subscription-Key": key,
+        "Content-Type": "application/json; charset=UTF-8",
+      };
+      if (region) headers["Ocp-Apim-Subscription-Region"] = region;
+
+      const response = await axios.post(
+        `${endpoint}/translate?${params.toString()}`,
+        cleanTexts.map((Text) => ({ Text })),
+        { headers, timeout: 15000 },
+      );
+
+      return cleanTexts.map(
+        (text, index) => response.data?.[index]?.translations?.[0]?.text || text,
+      );
+    } catch (azureError) {
+      console.warn("Azure batch translation failed, using fallback:", azureError.message);
+    }
+  }
+
+  // Keep fallback traffic controlled when Azure credentials are unavailable.
+  const translatedTexts = [];
+  for (let index = 0; index < cleanTexts.length; index += 4) {
+    const group = cleanTexts.slice(index, index + 4);
+    const results = await Promise.all(
+      group.map(async (text) => {
+        try {
+          const result = await translateWithMyMemory({
+            trimmedText: text,
+            sourceLanguage,
+            targetLanguage,
+          });
+          return result.translatedText;
+        } catch {
+          return text;
+        }
+      }),
+    );
+    translatedTexts.push(...results);
+  }
+
+  return translatedTexts;
 };
 
 export const translateText = async (req, res) => {
@@ -249,6 +374,24 @@ export const translateText = async (req, res) => {
     return res.status(error.statusCode || 500).json({
       success: false,
       message: error.statusCode ? error.message : "Translation failed",
+      error: error.message,
+    });
+  }
+};
+
+export const translateBatchText = async (req, res) => {
+  try {
+    const translatedTexts = await translatePlainTextBatch({
+      texts: req.body?.texts,
+      to: req.body?.to || req.body?.targetLanguage,
+      from: req.body?.from || req.body?.sourceLanguage,
+    });
+
+    return res.status(200).json({ success: true, translatedTexts });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.statusCode ? error.message : "Batch translation failed",
       error: error.message,
     });
   }

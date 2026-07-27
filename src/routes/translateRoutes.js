@@ -17,10 +17,14 @@
 
 
 import express from "express";
-import { translateText } from "../controllers/translateController.js";
+import {
+  translateBatchText,
+  translateText,
+} from "../controllers/translateController.js";
 
 const router = express.Router();
 
 router.post("/text", translateText);
+router.post("/batch", translateBatchText);
 
 export default router;

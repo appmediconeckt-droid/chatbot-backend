@@ -125,6 +125,10 @@ const userSchema = new mongoose.Schema({
     bloodGroup: {
         type: String,
         enum: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-", ""],
+        set: (value) => {
+            if (value === null || value === undefined) return value;
+            return String(value).trim().toUpperCase();
+        },
         default: null
     },
     address: {
@@ -190,7 +194,8 @@ const userSchema = new mongoose.Schema({
     },
     aboutMe: {
         type: String,
-        maxlength: 500
+        trim: true,
+        maxlength: 2000
     },
     
     education: {

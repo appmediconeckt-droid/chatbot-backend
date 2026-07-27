@@ -806,7 +806,7 @@ export const getChats = async (req, res) => {
     chats = await Chat.find(query)
       .populate(
         "userId",
-        "fullName email profilePhoto anonymous isActive isOnline lastSeen",
+        "fullName email profilePhoto anonymous age gender dateOfBirth isActive isOnline lastSeen",
       )
       .populate(
         "counselorId",
@@ -861,6 +861,9 @@ export const getChats = async (req, res) => {
             name: otherParty.fullName,
             anonymous: otherParty.anonymous,
             avatar: otherParty.profilePhoto?.url || null,
+            age: otherParty.age ?? null,
+            gender: otherParty.gender || null,
+            dateOfBirth: otherParty.dateOfBirth || null,
             isOnline: otherParty.isOnline || false,
             lastSeen: otherParty.lastSeen || null,
             ...(req.user.role === "user" && {

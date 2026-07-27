@@ -235,11 +235,18 @@ export const checkEligibility = async (req, res) => {
     }
 
     const counselor = status.counselorId || {};
+    const counselorPhoto =
+      typeof counselor.profilePhoto === "string"
+        ? counselor.profilePhoto
+        : counselor.profilePhoto?.url ||
+          counselor.profilePhoto?.secure_url ||
+          null;
+
     return res.json({
       showPopup: true,
       counselorId: counselor._id || status.counselorId,
       counselorName: counselor.fullName || "your counselor",
-      counselorPhoto: counselor.profilePhoto || null,
+      counselorPhoto,
       eligibleReason: status.eligibleReason,
       daysRemaining: 0,
     });

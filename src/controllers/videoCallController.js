@@ -93,7 +93,8 @@ export const videoCallController = {
 
   // Get display name based on who is viewing
   // Rules:
-  // 1. If viewer is counselor and target is user -> show user's real name (ignore anonymous)
+  // 1. If viewer is counselor and target is user -> protect the patient's
+  //    identity and show only their anonymous handle.
   // 2. If viewer is user and target is counselor -> show counselor's real name (ignore anonymous)
   // 3. If both are counselors -> show real names
   // 4. If both are users -> respect anonymous setting (show "Anonymous" if target.anonymous === true)
@@ -104,9 +105,13 @@ export const videoCallController = {
     const vRole = viewerRole === "counsellor" ? "counselor" : viewerRole;
     const tRole = targetRole === "counsellor" ? "counselor" : targetRole;
 
-    // Case 1: Viewer is counselor, target is user -> show user's real name
+    // Case 1: Viewer is counselor, target is user -> never expose real name.
     if (vRole === "counselor" && tRole === "user") {
-      return targetUser.fullName;
+      return (
+        (typeof targetUser.anonymous === "string" &&
+          targetUser.anonymous.trim()) ||
+        "Anonymous User"
+      );
     }
 
     // Case 2: Viewer is user, target is counselor -> show counselor's real name
@@ -566,7 +571,13 @@ export const videoCallController = {
               id: call.initiator.id,
               displayName: callerDisplayName,
               fullName: call.initiator.fullName,
-              isAnonymous: call.initiator.anonymous,
+              ...(String(call.initiator.type).toLowerCase() === "user"
+                ? {
+                    anonymous:
+                      call.initiator.anonymous || "Anonymous User",
+                    isAnonymous: true,
+                  }
+                : { isAnonymous: false }),
               type: call.initiator.type,
               profilePhoto: call.initiator.profilePhoto,
               specialization: call.initiator.specialization,

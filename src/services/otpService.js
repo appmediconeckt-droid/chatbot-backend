@@ -88,7 +88,7 @@ const buildEmailOTPHtml = (otp) => `
 <body>
   <div class="container">
     <div class="header">
-      <h2>Mindcrawller Global Pvt Ltd</h2>
+      <h2>Humaeli - Mental Wellness</h2>
       <p>Healthcare Connecting Platform</p>
     </div>
     <div class="content">
@@ -142,7 +142,7 @@ const buildLoginOTPHtml = (otp) => `
 <body>
   <div class="container">
     <div class="header">
-      <h2>Mindcrawller Global Pvt Ltd</h2>
+      <h2>Humaeli - Mental Wellness</h2>
       <p>Healthcare Connecting Platform</p>
     </div>
     <div class="content">
@@ -176,7 +176,7 @@ class OTPService {
   async sendLoginOTP(email, otp) {
     try {
       const textContent =
-        `Mindcrawller Global Pvt Ltd - Login Verification\n\n` +
+        `Humaeli - Mental Wellness - Login Verification\n\n` +
         `We received a request to sign in to your Mindcrawller account.\n` +
         `To keep your account secure, please verify with the code below:\n\n` +
         `Verification Code: ${otp}\n` +

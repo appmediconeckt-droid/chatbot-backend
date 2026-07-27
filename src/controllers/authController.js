@@ -718,6 +718,23 @@ export const updateUserById = async (req, res) => {
         continue;
       }
 
+      if (field === "bloodGroup") {
+        const bloodGroup = String(req.body[field]).trim().toUpperCase();
+        const validBloodGroups = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
+
+        if (!validBloodGroups.includes(bloodGroup)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid blood group.",
+            field: "bloodGroup",
+            allowedValues: validBloodGroups,
+          });
+        }
+
+        updates.bloodGroup = bloodGroup;
+        continue;
+      }
+
       updates[field] = req.body[field];
     }
 
