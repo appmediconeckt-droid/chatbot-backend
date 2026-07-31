@@ -2,13 +2,7 @@
 import User from '../models/userModel.js';
 import ForgotPasswordToken from '../models/ForgotPasswordToken.js';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import otpService from '../services/otpService.js';
-
-// ==================== GENERATE OTP ====================
-const generateOTP = () => {
-  return crypto.randomInt(100000, 999999).toString();
-};
 
 // ==================== SEND FORGOT PASSWORD OTP ====================
 export const sendForgotPasswordOTP = async (req, res) => {
@@ -31,7 +25,7 @@ export const sendForgotPasswordOTP = async (req, res) => {
       });
     }
 
-    const otp = generateOTP();
+    const otp = otpService.generateOTP(normalizedEmail);
 
     await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
     const tokenRecord = await ForgotPasswordToken.create({
@@ -211,7 +205,7 @@ export const resendForgotPasswordOTP = async (req, res) => {
 
     await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
 
-    const otp = generateOTP();
+    const otp = otpService.generateOTP(normalizedEmail);
 
     const tokenRecord = await ForgotPasswordToken.create({
       email: normalizedEmail,

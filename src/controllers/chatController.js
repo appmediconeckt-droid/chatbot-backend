@@ -608,7 +608,7 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
       if (hasFullProfile) {
         aiResponse = g?.full || "Hi! Welcome back 💙 How are you feeling right now?";
       } else if (isGuest || (!hasAge && !hasGender)) {
-        aiResponse = g?.noAll || "Hi! I'm MindHelper, really glad you reached out. To help you best — could you share your age and how you identify (male, female, or other)? And how are you feeling right now?";
+        aiResponse = g?.noAll || "Hi, I’m Humaeli. To understand you better and provide more personalized support, please share your age range and gender";
       } else if (!hasAge) {
         aiResponse = g?.noAge || "Hi! Welcome back 💙 Quick thing — could you share your age? (Helps me give better tips.) And how are you feeling right now?";
       } else {

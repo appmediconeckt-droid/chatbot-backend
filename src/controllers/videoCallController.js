@@ -705,9 +705,15 @@ export const videoCallController = {
           error: "A paid call must include one user and one counselor",
         });
       }
+      // Billing starts when the receiver accepts the call. Some clients establish
+      // the media connection without calling the optional /join endpoint, so
+      // waiting for join left startTime empty and produced a zero-value payment.
+      const acceptedAt = new Date();
+
       // Update call status to accepted/active
       call.status = "active";
-      call.acceptedAt = new Date();
+      call.acceptedAt = acceptedAt;
+      call.startTime = acceptedAt;
       call.expiresAt = null;
       call.receiver.fullName = acceptorDetails.fullName;
       call.receiver.anonymous = acceptorDetails.anonymous;
@@ -744,7 +750,8 @@ export const videoCallController = {
         { callId: callId },
         {
           status: "active",
-          acceptedAt: new Date(),
+          acceptedAt,
+          startedAt: acceptedAt,
           isActive: true,
           paymentTransactionId: null,
           paymentAmount: 0,
@@ -761,7 +768,6 @@ export const videoCallController = {
           call.receiver.type,
         );
 
-        const acceptedAt = new Date();
         const statusPayload = {
           callId,
           status: "active",
@@ -1241,8 +1247,11 @@ export const videoCallController = {
       }
 
       const endTime = new Date();
-      const duration = call.startTime
-        ? Math.floor((endTime - call.startTime) / 1000)
+      // acceptedAt is a safe fallback for calls created before startTime was
+      // initialized during acceptance.
+      const billingStartedAt = call.startTime || call.acceptedAt;
+      const duration = billingStartedAt
+        ? Math.max(0, Math.floor((endTime - new Date(billingStartedAt)) / 1000))
         : 0;
       const wasPendingRequest = ["pending", "ringing", "waiting", "requested"].includes(
         String(call.status || "").toLowerCase(),
@@ -1278,7 +1287,7 @@ export const videoCallController = {
         receiver: call.receiver,
         createdAt: call.createdAt,
         acceptedAt: call.acceptedAt,
-        startTime: call.startTime,
+        startTime: billingStartedAt,
         endTime: wasPendingRequest ? null : endTime,
         cancelledAt: wasPendingRequest ? endTime : call.cancelledAt,
         duration,

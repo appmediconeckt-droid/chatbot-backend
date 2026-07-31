@@ -17,7 +17,7 @@ export const generateOtp = async (req, res) => {
       return res.status(404).json({ message: "User not found", success: false });
     }
 
-    const otp = otpService.generateOTP();
+    const otp = otpService.generateOTP(normalizedEmail);
 
     // delete old OTPs for this user
     await OTP.deleteMany({ userId: user._id });

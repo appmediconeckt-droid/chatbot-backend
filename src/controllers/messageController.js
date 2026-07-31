@@ -856,6 +856,10 @@ export const getChats = async (req, res) => {
           id: chat._id,
           chatId: chat.chatId,
           status: chat.status,
+          isArchived:
+            req.user.role === "user"
+              ? Boolean(chat.archivedByUser)
+              : Boolean(chat.archivedByCounselor),
           otherParty: {
             id: otherParty._id,
             name: otherParty.fullName,
@@ -1586,6 +1590,51 @@ export const markAllRead = async (req, res) => {
   } catch (error) {
     console.error("Error marking messages as read:", error);
     res.status(500).json({ error: "Error marking messages as read" });
+  }
+};
+
+// Archive/unarchive a conversation only for the current participant.
+export const setChatArchived = async (req, res) => {
+  try {
+    const chat = await findChatByIdentifier(req.params.chatId);
+
+    if (!chat) {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+
+    const isUser = req.user.role === "user";
+    const isCounselor = req.user.role === "counsellor";
+    const isAuthorized =
+      (isUser && chat.userId.toString() === req.user._id.toString()) ||
+      (isCounselor &&
+        chat.counselorId.toString() === req.user._id.toString());
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const archived = req.body?.archived !== false;
+    if (isUser) {
+      chat.archivedByUser = archived;
+      chat.archivedByUserAt = archived ? new Date() : null;
+    } else {
+      chat.archivedByCounselor = archived;
+      chat.archivedByCounselorAt = archived ? new Date() : null;
+    }
+
+    await chat.save();
+
+    res.json({
+      success: true,
+      chatId: chat._id,
+      archived,
+      message: archived
+        ? "Chat archived successfully"
+        : "Chat unarchived successfully",
+    });
+  } catch (error) {
+    console.error("Error updating chat archive status:", error);
+    res.status(500).json({ error: "Error updating chat archive status" });
   }
 };
 

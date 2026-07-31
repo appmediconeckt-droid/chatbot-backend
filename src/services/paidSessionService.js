@@ -44,10 +44,13 @@ export const calculateCallCharge = ({
   rate,
   rateDurationMinutes,
 }) => {
-  const billedSeconds = Math.max(0, Math.floor(Number(durationSeconds) || 0));
   const packageMinutes = Number(rateDurationMinutes);
   const packageRate = Number(rate);
   if (packageMinutes <= 0 || packageRate < 0) return 0;
+  const billedSeconds = Math.min(
+    Math.max(0, Math.floor(Number(durationSeconds) || 0)),
+    packageMinutes * 60,
+  );
   return Number(
     ((billedSeconds / (packageMinutes * 60)) * packageRate).toFixed(2),
   );
@@ -69,9 +72,25 @@ export const createPaidSessionHold = async ({
   }
 
   const amount = getSessionAmount(sessionType);
-  // Chat is billed from the time the counselor accepts it. Calls retain their
-  // fixed-price flow.
-  if (sessionType === "chat") {
+  // Chat and calls are usage-billed. The package price is only used for the
+  // balance eligibility check and as the rate for the configured duration;
+  // it must not be removed from the wallet before any usage occurs.
+  if (["chat", "voice", "video"].includes(sessionType)) {
+    const user = await User.findById(userId).select("walletBalance");
+    if (!user) {
+      const error = new Error("User not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (sessionType !== "chat" && (user.walletBalance || 0) < amount) {
+      const error = new Error("Insufficient wallet balance");
+      error.statusCode = 402;
+      error.requiredAmount = amount;
+      error.walletBalance = user.walletBalance || 0;
+      throw error;
+    }
+
     const session = await ChatSession.create({
       userId,
       counselorId,
@@ -79,10 +98,15 @@ export const createPaidSessionHold = async ({
       sessionType,
       amount: 0,
       ratePerMinute: amount,
-      rateDurationMinutes: 30,
+      rateDurationMinutes: getPaidSessionConfig().durationMinutes,
       commissionRate: getPaidSessionConfig().commissionRate,
       paymentStatus: "free",
       sessionStatus: "pending",
+      metadata: {
+        billingType: "per_minute",
+        packageAmount: amount,
+        packageDurationMinutes: getPaidSessionConfig().durationMinutes,
+      },
       expiresAt: chat.expiresAt || getRequestExpiryDate(),
     });
 
@@ -92,67 +116,8 @@ export const createPaidSessionHold = async ({
     chat.paidSessionId = session._id;
     await chat.save();
 
-    const user = await User.findById(userId).select("walletBalance");
     return { session, amount: 0, walletBalance: user?.walletBalance || 0 };
   }
-
-  const user = await User.findById(userId);
-
-  if (!user) {
-    const error = new Error("User not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if ((user.walletBalance || 0) < amount) {
-    const error = new Error("Insufficient wallet balance");
-    error.statusCode = 402;
-    error.requiredAmount = amount;
-    error.walletBalance = user.walletBalance || 0;
-    throw error;
-  }
-
-  user.walletBalance = (user.walletBalance || 0) - amount;
-  await user.save();
-
-  const transaction = await Transaction.create({
-    userId,
-    counselorId,
-    chatId: chat._id,
-    amount,
-    status: "hold",
-    type: "debit",
-    description: `${sessionType} session payment hold`,
-    metadata: {
-      sessionType,
-      paidFeatureFlag: "PAID_COUNSELOR_SESSIONS_ENABLED",
-    },
-  });
-
-  const session = await ChatSession.create({
-    userId,
-    counselorId,
-    chatId: chat._id,
-    sessionType,
-    amount,
-    commissionRate: getPaidSessionConfig().commissionRate,
-    paymentStatus: "hold",
-    sessionStatus: "pending",
-    paymentTransactionId: transaction._id,
-    expiresAt: chat.expiresAt || getRequestExpiryDate(),
-  });
-
-  transaction.sessionId = session._id;
-  await transaction.save();
-
-  chat.amount = amount;
-  chat.sessionType = sessionType;
-  chat.paymentStatus = "hold";
-  chat.paymentTransactionId = transaction._id;
-  chat.paidSessionId = session._id;
-  await chat.save();
-
-  return { session, transaction, amount, walletBalance: user.walletBalance };
 };
 
 export const activatePaidSession = async (chat) => {
@@ -532,7 +497,10 @@ export const chargeCallByDuration = async ({
   const callType = sessionType === "voice" ? "voice" : "video";
   const rate = getSessionAmount(callType);
   const rateDurationMinutes = getPaidSessionConfig().durationMinutes;
-  const billedSeconds = Math.max(0, Math.floor(Number(durationSeconds) || 0));
+  const billedSeconds = Math.min(
+    Math.max(0, Math.floor(Number(durationSeconds) || 0)),
+    rateDurationMinutes * 60,
+  );
   const amount = calculateCallCharge({ durationSeconds, rate, rateDurationMinutes });
   const existing = await Transaction.findOne({
     "metadata.callId": callId,

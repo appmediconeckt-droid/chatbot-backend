@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
+import Rating from "../models/Rating.js";
 import OTP from "../models/otpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
@@ -27,6 +28,50 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const verifiedUsersStore = new Map();
 const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
+
+// Public aggregate counters used by the landing page. Only totals are exposed.
+export const getLandingStats = async (_req, res) => {
+  try {
+    const [patientsHelped, medicalPartners, activeSupports, ratingSummary] =
+      await Promise.all([
+        User.countDocuments({ role: "user" }),
+        User.countDocuments({ role: "counsellor" }),
+        User.countDocuments({ role: "counsellor", isOnline: true }),
+        Rating.aggregate([
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              satisfied: {
+                $sum: { $cond: [{ $gte: ["$stars", 4] }, 1, 0] },
+              },
+            },
+          },
+        ]),
+      ]);
+
+    const ratings = ratingSummary[0] || { total: 0, satisfied: 0 };
+    const satisfactionRate = ratings.total
+      ? Math.round((ratings.satisfied / ratings.total) * 100)
+      : 0;
+
+    return res.json({
+      success: true,
+      data: {
+        patientsHelped,
+        medicalPartners,
+        activeSupports,
+        satisfactionRate,
+      },
+    });
+  } catch (error) {
+    console.error("Landing stats error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load landing statistics",
+    });
+  }
+};
 // Store OTPs used for the "logout other devices" login flow
 const loginOTPStore = new Map();
 // Store OTPs used for unlinking Google accounts (requires confirm)
@@ -987,7 +1032,7 @@ export const sendEmailOTP = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP();
+    const otp = otpService.generateOTP(email);
 
     try {
       await otpService.sendEmailOTP(email, otp, "User");
@@ -2244,7 +2289,7 @@ export const sendUnlinkGoogleOtp = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP();
+    const otp = otpService.generateOTP(email);
     unlinkGoogleOTPStore.set(String(user._id), {
       otp,
       expiresAt: Date.now() + 10 * 60 * 1000,
@@ -2361,7 +2406,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
     }
 
     // 1️⃣ Generate a short‑lived OTP (6 digits)
-    const otp = otpService.generateOTP();
+    const otp = otpService.generateOTP(email);
     console.log(`Generated OTP for ${email}: ${otp} (valid for 10 minutes);`);
 
     // 2️⃣ Store it in the temporary map (valid for 10 min)
@@ -3404,7 +3449,7 @@ export const resendEmailOTP = async (req, res) => {
         .status(404)
         .json({ message: "No pending verification", success: false });
 
-    const otp = otpService.generateOTP();
+    const otp = otpService.generateOTP(email);
     await otpService.sendEmailOTP(email, otp, "User");
 
     emailOTPStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
@@ -3572,7 +3617,7 @@ export const sendProfileChangeOTP = async (req, res) => {
         });
       }
 
-      const otp = otpService.generateOTP();
+      const otp = otpService.generateOTP(normalized);
       profileChangeOTPStore.set(profileChangeKey(userId, "email"), {
         otp,
         newValue: normalized,

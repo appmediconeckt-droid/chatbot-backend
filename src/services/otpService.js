@@ -4,6 +4,21 @@ dotenv.config();
 import crypto from "crypto";
 import twilio from "twilio";
 
+export const PLAY_REVIEW_TEST_EMAILS = Object.freeze([
+  "playstore.user@humaeli.com",
+  "playstore.counsellor@humaeli.com",
+]);
+
+const configuredPlayReviewEmails = String(
+  process.env.PLAY_REVIEW_TEST_EMAILS || PLAY_REVIEW_TEST_EMAILS.join(","),
+)
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+
+const playReviewEmailSet = new Set(configuredPlayReviewEmails);
+const PLAY_REVIEW_FIXED_OTP = "123456";
+
 const FROM_NAME = "Mindcrawller  Global Pvt Ltd";
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
@@ -169,7 +184,15 @@ const buildLoginOTPHtml = (otp) => `
 `;
 
 class OTPService {
-  generateOTP() {
+  isPlayReviewEmail(email) {
+    return playReviewEmailSet.has(String(email || "").trim().toLowerCase());
+  }
+
+  generateOTP(email = "") {
+    if (this.isPlayReviewEmail(email)) {
+      return PLAY_REVIEW_FIXED_OTP;
+    }
+
     return crypto.randomInt(100000, 999999).toString();
   }
 

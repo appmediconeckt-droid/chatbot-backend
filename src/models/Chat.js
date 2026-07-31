@@ -79,6 +79,24 @@ const chatSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
     index: true
+  },
+  archivedByUser: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  archivedByCounselor: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  archivedByUserAt: {
+    type: Date,
+    default: null
+  },
+  archivedByCounselorAt: {
+    type: Date,
+    default: null
   }
 });
 

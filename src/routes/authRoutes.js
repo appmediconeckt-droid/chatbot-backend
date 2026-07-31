@@ -32,6 +32,7 @@ import {
   verifyProfileChangeOTP,
   debugCounsellorByEmail,
   sessionHeartbeat,
+  getLandingStats,
 } from "../controllers/authController.js";
 import { body } from "express-validator";
 import { authorizeRoles } from "../middleware/authorizeRoles.js";
@@ -88,6 +89,7 @@ authRoutes.post("/verifyOtp", verifyOtp);
 authRoutes.post("/resendOtp", resendOtp);
 
 // PUBLIC COUNSELLOR ROUTES
+authRoutes.get("/landing-stats", getLandingStats);
 authRoutes.get("/counsellors", getAllCounsellors);
 authRoutes.get("/counsellors/:counsellorId", getCounsellorById);
 authRoutes.get("/debug/counsellor", debugCounsellorByEmail);
