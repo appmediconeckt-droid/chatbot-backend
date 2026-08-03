@@ -3389,7 +3389,14 @@ export const getUser = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const { id } = req.body;
+    // Never trust a caller-supplied account ID for self-service deletion.
+    // authMiddleware attaches the verified account to the request.
+    const id = req.userId || req.user?._id;
+    if (!id) {
+      return res
+        .status(401)
+        .json({ message: "Authentication required", success: false });
+    }
     const user = await User.findById(id);
     if (!user)
       return res

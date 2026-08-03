@@ -404,6 +404,16 @@ app.get("/reset-password/:token", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "reset-password.html"));
 });
 
+// Public account-deletion instructions. This URL can be shared in app-store
+// listings and remains available even when a user cannot sign in.
+app.get(["/delete-account", "/account-deletion"], (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "delete-account.html"));
+});
+
+app.get("/account-deletion.css", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "account-deletion.css"));
+});
+
 // ---------------------------
 // 4. Routes
 // ---------------------------
