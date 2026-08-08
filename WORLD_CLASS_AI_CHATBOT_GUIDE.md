@@ -2,7 +2,7 @@
 
 ## Overview
 
-Your Mediconeckt chatbot is now one of the most advanced mental health support systems in the world. It combines:
+Your Humaeli chatbot is now one of the most advanced mental health support systems in the world. It combines:
 
 ✅ **GPT-4o** (Most capable AI model)
 ✅ **Crisis Detection & Emergency Response**
@@ -431,7 +431,7 @@ Your world-class chatbot should achieve:
 
 ## 🎉 Conclusion
 
-Congratulations! Your Mediconeckt chatbot is now a **world-class mental health support system** with:
+Congratulations! Your Humaeli chatbot is now a **world-class mental health support system** with:
 
 🌟 Advanced AI (GPT-4o)
 🌟 Emergency Crisis Response

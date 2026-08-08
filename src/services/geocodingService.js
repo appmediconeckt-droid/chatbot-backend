@@ -5,7 +5,7 @@
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
 const USER_AGENT =
   process.env.NOMINATIM_USER_AGENT ||
-  "MindCrawller-Mediconeckt/1.0 (admin@mediconeckt.local)";
+  "Humaeli/1.0 (info@humaeli.com)";
 
 const isValidCoord = (lat, lng) =>
   typeof lat === "number" &&

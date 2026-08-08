@@ -8,7 +8,7 @@
 
 ## 🌟 Executive Summary
 
-Your Mediconeckt platform now has a **world-class AI-powered mental health chatbot** that combines:
+Your Humaeli platform now has a **world-class AI-powered mental health chatbot** that combines:
 
 - 🤖 **GPT-4o** (most advanced AI model available)
 - 🚨 **Crisis Detection** (automatic emergency response)

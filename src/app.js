@@ -76,7 +76,7 @@
 // //   'http://192.168.0.138:5173',                       // Vite (if used)
 // //   'https://your-frontend-domain.com',      // production domain
 // //   'https://td6lmn5q-5000.inc1.devtunnels.ms',
-// //   'https://aichatbotmediconeckt.netlify.app'
+// //   'https://www.humaeli.com'
 // //    // your tunnel
 // // ];
 
@@ -187,7 +187,7 @@
 //   'http://192.168.0.138:5173',
 //   'https://your-frontend-domain.com',
 //   'https://td6lmn5q-5000.inc1.devtunnels.ms',
-//   'https://aichatbotmediconeckt.netlify.app'
+//   'https://www.humaeli.com'
 // ];
 
 // app.use(cors({
@@ -344,7 +344,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://192.168.0.138:5173",
   "https://your-frontend-domain.com",
-  "https://aichatbotmediconeckt.netlify.app",
+  "https://www.humaeli.com",
   "https://humaeli.com",
 ];
 
@@ -425,7 +425,7 @@ app.get("/api/health", (_req, res) => {
   res.status(isHealthy ? 200 : 503).json({
     success: isHealthy,
     status: isHealthy ? "ok" : "degraded",
-    service: "mindcrawller-backend",
+    service: "humaeli-backend",
     environment: process.env.NODE_ENV || "development",
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
