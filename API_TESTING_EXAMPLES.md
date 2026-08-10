@@ -368,7 +368,7 @@ curl -X POST http://localhost:5000/api/ai-chat/chat-with-ai \
 ```json
 {
   "info": {
-    "name": "Mediconeckt AI Chatbot",
+    "name": "Humaeli AI Chatbot",
     "description": "World-Class Mental Health Chatbot API"
   },
   "auth": {

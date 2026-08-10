@@ -1,7 +1,9 @@
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
-import Rating from "../models/Rating.js";
+import Chat from "../models/Chat.js";
+import Message from "../models/Message.js";
 import OTP from "../models/otpModel.js";
+import LoginOTP from "../models/loginOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
@@ -32,28 +34,13 @@ const phoneOTPStore = new Map();
 // Public aggregate counters used by the landing page. Only totals are exposed.
 export const getLandingStats = async (_req, res) => {
   try {
-    const [patientsHelped, medicalPartners, activeSupports, ratingSummary] =
+    const [patientsHelped, medicalPartners, activeSupports, completedPatients] =
       await Promise.all([
         User.countDocuments({ role: "user" }),
         User.countDocuments({ role: "counsellor" }),
         User.countDocuments({ role: "counsellor", isOnline: true }),
-        Rating.aggregate([
-          {
-            $group: {
-              _id: null,
-              total: { $sum: 1 },
-              satisfied: {
-                $sum: { $cond: [{ $gte: ["$stars", 4] }, 1, 0] },
-              },
-            },
-          },
-        ]),
+        Chat.countDocuments({ status: "closed", closedAt: { $ne: null } }),
       ]);
-
-    const ratings = ratingSummary[0] || { total: 0, satisfied: 0 };
-    const satisfactionRate = ratings.total
-      ? Math.round((ratings.satisfied / ratings.total) * 100)
-      : 0;
 
     return res.json({
       success: true,
@@ -61,7 +48,7 @@ export const getLandingStats = async (_req, res) => {
         patientsHelped,
         medicalPartners,
         activeSupports,
-        satisfactionRate,
+        completedPatients,
       },
     });
   } catch (error) {
@@ -72,8 +59,6 @@ export const getLandingStats = async (_req, res) => {
     });
   }
 };
-// Store OTPs used for the "logout other devices" login flow
-const loginOTPStore = new Map();
 // Store OTPs used for unlinking Google accounts (requires confirm)
 const unlinkGoogleOTPStore = new Map();
 
@@ -86,6 +71,36 @@ const profileChangeOTPStore = new Map();
 const verifiedProfileChanges = new Map();
 const PROFILE_CHANGE_OTP_TTL_MS = 10 * 60 * 1000; // 10 min to enter the OTP
 const PROFILE_CHANGE_VERIFIED_TTL_MS = 15 * 60 * 1000; // 15 min to hit Save
+
+const normalizeEmail = (email = "") => String(email).trim().toLowerCase();
+const normalizeRole = (role = "") => {
+  const normalized = String(role).trim().toLowerCase();
+  if (["counselor", "counsellor", "counsellour"].includes(normalized)) {
+    return "counsellor";
+  }
+  return normalized;
+};
+const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
+
+const saveLoginOTP = async ({ userId, email, otp }) => {
+  const normalizedEmail = normalizeEmail(email);
+  await LoginOTP.deleteMany({ userId });
+  return LoginOTP.create({
+    userId,
+    email: normalizedEmail,
+    otp: String(otp),
+    expiresAt: new Date(Date.now() + LOGIN_OTP_TTL_MS),
+  });
+};
+
+const getPendingLoginOTP = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+  return LoginOTP.findOne({ email: normalizedEmail }).sort({ createdAt: -1 });
+};
+
+const clearLoginOTP = async (userId) => {
+  await LoginOTP.deleteMany({ userId });
+};
 
 setInterval(() => {
   const now = Date.now();
@@ -194,10 +209,6 @@ setInterval(
     }
     for (const [email, data] of phoneOTPStore.entries()) {
       if (data.expiresAt < now) phoneOTPStore.delete(email);
-    }
-    // Clean up login OTPs as well
-    for (const [email, data] of loginOTPStore.entries()) {
-      if (data.expiresAt < now) loginOTPStore.delete(email);
     }
   },
   60 * 60 * 1000,
@@ -1756,7 +1767,9 @@ const expireStaleLoginSessions = async (userId) => {
 
 export const loginUser = async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    const { password } = req.body;
+    const role = normalizeRole(req.body?.role);
 
     if (!email || !password || !role) {
       return res.status(400).json({
@@ -1767,10 +1780,22 @@ export const loginUser = async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (!user || user.role !== role) {
+    if (!user) {
       return res.status(401).json({
-        message: "Invalid credentials or role mismatch",
+        message: "Invalid email or password",
         success: false,
+      });
+    }
+
+    if (normalizeRole(user.role) !== role) {
+      return res.status(401).json({
+        message:
+          normalizeRole(user.role) === "counsellor"
+            ? "This account is registered as a counsellor. Please use counsellor login."
+            : "This account is registered as a user. Please use user login.",
+        success: false,
+        roleMismatch: true,
+        actualRole: user.role,
       });
     }
 
@@ -2391,7 +2416,7 @@ export const unlinkGoogleAccount = async (req, res) => {
 // ================= LOGOUT OTHER DEVICES & SEND EMAIL OTP =================
 export const logoutOtherDevicesAndSendOTP = async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = normalizeEmail(req.body?.email);
     if (!email) {
       return res
         .status(400)
@@ -2405,22 +2430,17 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
         .json({ message: "User not found", success: false });
     }
 
-    // 1️⃣ Generate a short‑lived OTP (6 digits)
+    // 1. Generate a short-lived OTP (6 digits)
     const otp = otpService.generateOTP(email);
     console.log(`Generated OTP for ${email}: ${otp} (valid for 10 minutes);`);
 
-    // 2️⃣ Store it in the temporary map (valid for 10 min)
-    loginOTPStore.set(email, {
-      otp,
-      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
-      userId: user._id,
-    });
+    await saveLoginOTP({ userId: user._id, email, otp });
 
-    // 3️⃣ Send the OTP by email (with retry logic)
     try {
       await otpService.sendLoginOTP(email, otp);
       console.log(`✅ OTP email sent successfully to ${email}`);
     } catch (emailError) {
+      await clearLoginOTP(user._id);
       console.error(
         `❌ Failed to send OTP email to ${email}:`,
         emailError.message,
@@ -2450,26 +2470,27 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
 // ================= VERIFY LOGIN OTP & CREATE NEW SESSION =================
 export const verifyLoginOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    const otp = String(req.body?.otp || "").trim();
     if (!email || !otp) {
       return res
         .status(400)
         .json({ message: "Email and OTP required", success: false });
     }
 
-    const stored = loginOTPStore.get(email);
+    const stored = await getPendingLoginOTP(email);
     if (!stored) {
       return res
         .status(400)
         .json({ message: "No OTP found – request a new one", success: false });
     }
 
-    if (Date.now() > stored.expiresAt) {
-      loginOTPStore.delete(email);
+    if (Date.now() > stored.expiresAt.getTime()) {
+      await clearLoginOTP(stored.userId);
       return res.status(400).json({ message: "OTP expired", success: false });
     }
 
-    if (stored.otp !== otp) {
+    if (String(stored.otp) !== otp) {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
@@ -2508,7 +2529,7 @@ export const verifyLoginOTP = async (req, res) => {
     await markUserOnline(user);
 
     // Clean up the OTP entry
-    loginOTPStore.delete(email);
+    await clearLoginOTP(user._id);
 
     // Optional: if client sends GPS on OTP-login, store it (and append history event=login)
     await saveLoginLocationIfProvided({ req, userId: user._id });
@@ -2831,12 +2852,44 @@ export const getAllCounsellors = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    const counsellorIds = counsellors.map((counsellor) => counsellor._id);
+    const patientConversationCounts = await Message.aggregate([
+      {
+        $match: {
+          senderId: { $in: counsellorIds },
+          senderRole: "counsellor",
+        },
+      },
+      {
+        $group: {
+          _id: {
+            counsellorId: "$senderId",
+            chatId: "$chatId",
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$_id.counsellorId",
+          patientConversationCount: { $sum: 1 },
+        },
+      },
+    ]);
+    const patientConversationCountByCounsellor = new Map(
+      patientConversationCounts.map((item) => [
+        String(item._id),
+        item.patientConversationCount,
+      ]),
+    );
+
     const counsellorsWithLoginStatus = counsellors.map((counsellor) => {
       // A saved login session is not presence. Only a currently connected
       // authenticated socket makes a counselor online in the directory.
       const liveOnline = global.socketHandler?.isUserOnline(counsellor._id) === true;
       return {
         ...counsellor,
+        patientConversationCount:
+          patientConversationCountByCounsellor.get(String(counsellor._id)) || 0,
         isOnline: liveOnline,
         isLoggedIn: liveOnline,
         hasActiveSession: liveOnline,
@@ -3565,7 +3618,7 @@ const sendProfileChangeOtpViaSMS = async (formattedPhone, otp) => {
     process.env.TWILIO_AUTH_TOKEN,
   );
   await twilioClient.messages.create({
-    body: `Your Mediconeckt verification code is: ${otp}. Use it to confirm your new phone number. Expires in 10 minutes.`,
+    body: `Your Humaeli verification code is: ${otp}. Use it to confirm your new phone number. Expires in 10 minutes.`,
     from: process.env.TWILIO_PHONE_NUMBER,
     to: formattedPhone,
   });

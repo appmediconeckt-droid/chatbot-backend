@@ -2,7 +2,7 @@
 
 ## What's Been Built ✅
 
-Your Mediconeckt platform now has a **world-class AI-powered mental health chatbot** that rivals or exceeds:
+Your Humaeli platform now has a **world-class AI-powered mental health chatbot** that rivals or exceeds:
 - Woebot (Y Combinator-backed)
 - Wysa (100M+ users)
 - Replika (25M+ users)

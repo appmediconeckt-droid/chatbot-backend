@@ -26,7 +26,7 @@ This error occurs when Brevo email service rejects the request because:
   1. `EMAIL_FROM` (from .env)
   2. `EMAIL_USER` (from .env)
   3. `EMAIL` (from .env)
-  4. Fallback: `support@mediconeckt.com`
+  4. Fallback: `support@humaeli.com`
 
 ## 🔧 What You Need to Do
 
@@ -44,16 +44,16 @@ Edit `src/.env` and change:
 
 **BEFORE:**
 ```
-EMAIL_FROM=info@mediconeckt.com
-EMAIL_USER=app.mediconeckt@gmail.com
-EMAIL=app.mediconeckt@gmail.com
+EMAIL_FROM=info@humaeli.com
+EMAIL_USER=info@humaeli.com
+EMAIL=info@humaeli.com
 ```
 
 **AFTER (use your verified email):**
 ```
-EMAIL_FROM=app.mediconeckt@gmail.com
-EMAIL_USER=app.mediconeckt@gmail.com
-EMAIL=app.mediconeckt@gmail.com
+EMAIL_FROM=info@humaeli.com
+EMAIL_USER=info@humaeli.com
+EMAIL=info@humaeli.com
 ```
 
 **OR if you have a different verified email in Brevo:**
@@ -71,7 +71,7 @@ npm run dev
 
 You should see:
 ```
-✅ Sender email configured: app.mediconeckt@gmail.com
+✅ Sender email configured: info@humaeli.com
 ✅ Server running on port 5001
 ```
 
@@ -93,7 +93,7 @@ You should see:
 1. Go to: https://app.brevo.com/senders
 2. Click "Add a sender"
 3. Choose one of your email addresses:
-   - `app.mediconeckt@gmail.com` (recommended)
+   - `info@humaeli.com` (recommended)
    - Or create: `noreply@domain.com`
 4. Verify the email by clicking link in confirmation email
 5. Update `.env` with this email as `EMAIL_FROM`
@@ -115,34 +115,34 @@ You should see:
 
 ### **Solution 1: Use Gmail Account (Fastest)**
 
-1. Use `app.mediconeckt@gmail.com` as sender
+1. Use `info@humaeli.com` as sender
 2. Update `.env`:
    ```
-   EMAIL_FROM=app.mediconeckt@gmail.com
-   EMAIL_USER=app.mediconeckt@gmail.com
-   EMAIL=app.mediconeckt@gmail.com
+   EMAIL_FROM=info@humaeli.com
+   EMAIL_USER=info@humaeli.com
+   EMAIL=info@humaeli.com
    ```
 3. Verify it's verified in Brevo dashboard
 4. Restart: `npm run dev`
 5. Test OTP again
 
-### **Solution 2: Verify info@mediconeckt.com**
+### **Solution 2: Verify info@humaeli.com**
 
-If you want to keep `info@mediconeckt.com`:
+If you want to keep `info@humaeli.com`:
 
 1. Go to Brevo dashboard
-2. Add `info@mediconeckt.com` as verified sender
+2. Add `info@humaeli.com` as verified sender
 3. Click verification link in email
 4. Leave `.env` as is:
    ```
-   EMAIL_FROM=info@mediconeckt.com
+   EMAIL_FROM=info@humaeli.com
    ```
 5. Restart: `npm run dev`
 6. Test OTP again
 
 ### **Solution 3: Use Fallback Temporarily**
 
-The backend will now use `app.mediconeckt@gmail.com` automatically if `EMAIL_FROM` is not set properly:
+The backend will now use `info@humaeli.com` automatically if `EMAIL_FROM` is not set properly:
 
 1. Just restart: `npm run dev`
 2. Try OTP
@@ -157,9 +157,9 @@ The backend will now use `app.mediconeckt@gmail.com` automatically if `EMAIL_FRO
 
 Open `src/.env` and check:
 ```bash
-EMAIL_FROM=app.mediconeckt@gmail.com      # ✓ Must be verified in Brevo
-EMAIL_USER=app.mediconeckt@gmail.com      # ✓ Should match
-EMAIL=app.mediconeckt@gmail.com           # ✓ Should match
+EMAIL_FROM=info@humaeli.com      # ✓ Must be verified in Brevo
+EMAIL_USER=info@humaeli.com      # ✓ Should match
+EMAIL=info@humaeli.com           # ✓ Should match
 BREVO_API_KEY=xkeysib-...                 # ✓ Must be valid API key
 ```
 
@@ -173,7 +173,7 @@ BREVO_API_KEY=xkeysib-...                 # ✓ Must be valid API key
 
 After restarting, you should see:
 ```
-✅ Sender email configured: app.mediconeckt@gmail.com
+✅ Sender email configured: info@humaeli.com
 ✅ Server running on port 5001
 ✅ MongoDB Connected Successfully
 ```

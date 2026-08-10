@@ -1,7 +1,15 @@
 // utils/emailService.js
 
-const FROM_NAME = "Mediconeckt Global Pvt Ltd";
-const FROM_EMAIL = process.env.EMAIL_FROM;
+const FROM_NAME = "Humaeli Global Pvt Ltd";
+const VERIFIED_FALLBACK_FROM_EMAIL =
+  process.env.VERIFIED_EMAIL_FROM || "info@humaeli.com";
+const configuredFromEmail =
+  process.env.EMAIL_FROM || process.env.HUMAELI_EMAIL_FROM;
+const FROM_EMAIL =
+  configuredFromEmail === "info@humaeli.com"
+    ? VERIFIED_FALLBACK_FROM_EMAIL
+    : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 
 async function sendBrevoEmail({ to, subject, html, text }) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -16,7 +24,7 @@ async function sendBrevoEmail({ to, subject, html, text }) {
       subject,
       htmlContent: html,
       textContent: text,
-      replyTo: { email: "support@mediconeckt.com", name: "Mediconeckt Support" },
+      replyTo: { email: SUPPORT_EMAIL, name: "Humaeli Support" },
     }),
   });
 
@@ -35,18 +43,18 @@ export const sendResetPasswordEmail = async (email, resetUrl) => {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Reset Your Password - Mediconeckt</title>
+  <title>Reset Your Password - Humaeli</title>
 </head>
 <body style="margin:0;padding:0;background:#f9f9f9;font-family:'Segoe UI',Arial,sans-serif;">
   <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:white;">
     <div style="background:#4CAF50;padding:15px;text-align:center;color:white;">
-      <h2 style="margin:0;">Mediconeckt Global Pvt Ltd</h2>
+      <h2 style="margin:0;">Humaeli Global Pvt Ltd</h2>
     </div>
     <div style="padding:20px;">
       <h3 style="color:#333;">Reset Your Password</h3>
       <p style="color:#555;line-height:1.6;">
         We received a request to reset the password for your
-        <a href="https://mediconeckt.com" style="color:#4CAF50;text-decoration:none;">Mediconeckt</a> account.
+        <a href="https://humaeli.com" style="color:#4CAF50;text-decoration:none;">Humaeli</a> account.
         Click the button below to set a new password.
       </p>
       <div style="text-align:center;margin:30px 0;">
@@ -63,19 +71,19 @@ export const sendResetPasswordEmail = async (email, resetUrl) => {
       <hr style="border:none;border-top:1px solid #e6e6e6;margin:20px 0;"/>
       <p style="font-size:12px;color:#666;line-height:1.6;">
         This is a transactional email sent for account security.<br/>
-        Questions? Contact us at <a href="mailto:support@mediconeckt.com" style="color:#4CAF50;text-decoration:none;">support@mediconeckt.com</a><br/>
-        &copy; ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India
+        Questions? Contact us at <a href="mailto:${SUPPORT_EMAIL}" style="color:#4CAF50;text-decoration:none;">${SUPPORT_EMAIL}</a><br/>
+        &copy; ${year} Humaeli Global Pvt Ltd | Bhopal, Madhya Pradesh, India
       </p>
     </div>
   </div>
 </body>
 </html>`;
 
-  const text = `Mediconeckt Global Pvt Ltd\n\nReset Your Password\n\nWe received a request to reset the password for your Mediconeckt account.\n\nClick the link below to reset your password:\n${resetUrl}\n\nThis link is valid for 10 minutes.\n\nIf you did not request a password reset, please ignore this email.\n\nQuestions? Contact us at support@mediconeckt.com\n\n© ${year} Mediconeckt Global Pvt Ltd | Bhopal, Madhya Pradesh, India`;
+  const text = `Humaeli Global Pvt Ltd\n\nReset Your Password\n\nWe received a request to reset the password for your Humaeli account.\n\nClick the link below to reset your password:\n${resetUrl}\n\nThis link is valid for 10 minutes.\n\nIf you did not request a password reset, please ignore this email.\n\nQuestions? Contact us at ${SUPPORT_EMAIL}\n\n© ${year} Humaeli Global Pvt Ltd | Bhopal, Madhya Pradesh, India`;
 
   const data = await sendBrevoEmail({
     to: email,
-    subject: "Reset your Mediconeckt password",
+    subject: "Reset your Humaeli password",
     html,
     text,
   });

@@ -19,9 +19,12 @@ const configuredPlayReviewEmails = String(
 const playReviewEmailSet = new Set(configuredPlayReviewEmails);
 const PLAY_REVIEW_FIXED_OTP = "123456";
 
-const FROM_NAME = "Mindcrawller  Global Pvt Ltd";
+const FROM_NAME = "Humaeli";
+const VERIFIED_FALLBACK_FROM_EMAIL =
+  process.env.VERIFIED_EMAIL_FROM || "info@humaeli.com";
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
+<<<<<<< HEAD
 const SENDER_EMAILS = [
   process.env.EMAIL_FROM,
   process.env.EMAIL_USER,
@@ -40,10 +43,30 @@ if (!FROM_EMAIL || FROM_EMAIL === "support@mindcrawller.com") {
   console.warn('⚠️ WARNING: Using fallback sender email. Please verify it in Brevo dashboard.');
   console.warn('   Current FROM_EMAIL:', FROM_EMAIL);
   console.warn('   Set EMAIL_FROM in .env to a verified Brevo sender.');
+=======
+const configuredFromEmail =
+  process.env.EMAIL_FROM ||
+  process.env.HUMAELI_EMAIL_FROM ||
+  process.env.EMAIL_USER ||
+  process.env.EMAIL;
+const FROM_EMAIL =
+  configuredFromEmail === "info@humaeli.com"
+    ? VERIFIED_FALLBACK_FROM_EMAIL
+    : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
+
+// Validate that FROM_EMAIL is set
+if (configuredFromEmail === "info@humaeli.com") {
+  console.warn(
+    "⚠️ EMAIL_FROM=info@humaeli.com is not verified in Brevo; using verified fallback sender.",
+  );
+  console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
+>>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
 } else {
   console.log('✅ Primary sender email configured:', FROM_EMAIL);
 }
 
+<<<<<<< HEAD
 const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
   sender: { name: FROM_NAME, email: senderEmail },
   to: [{ email: to }],
@@ -63,6 +86,15 @@ const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
   amp4email: false,
   trackingParams: "utm_source=mindcrawller&utm_medium=email",
 });
+=======
+async function sendBrevoEmail({ to, subject, html, text }) {
+  if (!process.env.BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY is not configured");
+  }
+
+  // Ensure textContent is never undefined (MIME_HTML_ONLY compliance)
+  const safeText = text || "Please enable HTML to view this email.";
+>>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
 
 async function sendBrevoRequest(payload) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -71,6 +103,7 @@ async function sendBrevoRequest(payload) {
       "api-key": BREVO_API_KEY,
       "content-type": "application/json",
     },
+<<<<<<< HEAD
     body: JSON.stringify(payload),
   });
 
@@ -84,6 +117,37 @@ async function sendBrevoRequest(payload) {
     const error = new Error(errorMessage);
     error.status = response.status;
     error.body = data;
+=======
+    body: JSON.stringify({
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: safeText,
+      replyTo: {
+        email: SUPPORT_EMAIL,
+        name: "Humaeli Support",
+      },
+      // ✅ SPAM FIX: Add List-Unsubscribe header (critical for Gmail/Outlook)
+      headers: {
+        "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
+        "X-Mailer": "Humaeli Mail Service",
+        "X-Priority": "3",
+      },
+      // ✅ SPAM FIX: Request AMP for Email (Gmail friendly)
+      amp4email: false,
+      // ✅ SPAM FIX: Enable proper tracking & authentication
+      trackingParams: "utm_source=humaeli&utm_medium=email",
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(data?.message || `Brevo API error ${response.status}`);
+    error.status = response.status;
+    error.details = data;
+>>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
     throw error;
   }
 
@@ -142,7 +206,7 @@ const buildEmailOTPHtml = (otp) => `
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Email Verification - mindcrawller</title>
+  <title>Email Verification - Humaeli</title>
   <style>
     body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
     .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
@@ -167,19 +231,19 @@ const buildEmailOTPHtml = (otp) => `
     </div>
     <div class="content">
       <h3>Verify Your Email Address</h3>
-      <p>Thank you for creating an account with Mindcrawller . To complete your registration and access all features of our healthcare platform, please verify your email address by entering the verification code below.</p>
+      <p>Thank you for creating an account with Humaeli. To complete your registration and access all features of our healthcare platform, please verify your email address by entering the verification code below.</p>
       <p>Your one-time verification code is:</p>
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
       <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes from when this email was sent. Do not share this code with anyone.</p>
-      <p>Once verified, you will gain full access to your Mindcrawller account including appointments, health records, and doctor consultations.</p>
-      <p><strong>Security Note:</strong> If you did not create a Mindcrawller account, you can safely ignore this email. No account will be activated without verification.</p>
+      <p>Once verified, you will gain full access to your Humaeli account including appointments, health records, and doctor consultations.</p>
+      <p><strong>Security Note:</strong> If you did not create a Humaeli account, you can safely ignore this email. No account will be activated without verification.</p>
       <hr class="divider" />
       <div class="footer">
-        <p>This is a transactional email from Mindcrawller sent to confirm your email address.<br/>
-        For support, contact us at <a href="mailto:support@mindcrawller.com">support@mindcrawller.com</a><br/>
-        &copy; ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+        <p>This is a transactional email from Humaeli sent to confirm your email address.<br/>
+        For support, contact us at <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a><br/>
+        &copy; ${new Date().getFullYear()} Humaeli Indore, Madhya Pradesh, India</p>
       </div>
     </div>
   </div>
@@ -194,7 +258,7 @@ const buildLoginOTPHtml = (otp) => `
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Login Verification - Mindcrawller</title>
+  <title>Login Verification - Humaeli</title>
   <style>
     body { margin: 0; padding: 0; background: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
     .container { max-width: 600px; margin: 20px auto; border: 1px solid #e6e6e6; border-radius: 10px; overflow: hidden; background: white; }
@@ -221,20 +285,20 @@ const buildLoginOTPHtml = (otp) => `
     </div>
     <div class="content">
       <h3>Confirm Your Login</h3>
-      <p>We received a request to sign in to your Mindcrawller account. To confirm this is you and keep your account secure, please enter the verification code below.</p>
+      <p>We received a request to sign in to your Humaeli account. To confirm this is you and keep your account secure, please enter the verification code below.</p>
       <p>Your one-time login verification code is:</p>
       <div class="otp-box">
         <div class="otp-code">${otp}</div>
       </div>
-      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes. Do not share this code with anyone, including Mindcrawller support staff.</p>
+      <p><strong>Code Expiration:</strong> This verification code is valid for 10 minutes. Do not share this code with anyone, including Humaeli support staff.</p>
       <div class="warning">
         <p><strong>⚠️ Security Alert:</strong> If you did not attempt to log in, your account credentials may be compromised. Change your password immediately and contact our support team.</p>
       </div>
       <hr class="divider" />
       <div class="footer">
-        <p>This is a transactional email from Mindcrawller sent for account security.<br/>
-        For support, contact us at <a href="mailto:support@mindcrawller.com">support@mindcrawller.com</a><br/>
-        &copy; ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+        <p>This is a transactional email from Humaeli sent for account security.<br/>
+        For support, contact us at <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a><br/>
+        &copy; ${new Date().getFullYear()} Humaeli Indore, Madhya Pradesh, India</p>
       </div>
     </div>
   </div>
@@ -259,17 +323,17 @@ class OTPService {
     try {
       const textContent =
         `Humaeli - Mental Wellness - Login Verification\n\n` +
-        `We received a request to sign in to your Mindcrawller account.\n` +
+        `We received a request to sign in to your Humaeli account.\n` +
         `To keep your account secure, please verify with the code below:\n\n` +
         `Verification Code: ${otp}\n` +
         `Expires in: 10 minutes\n\n` +
         `SECURITY: Do not share this code with anyone.\n` +
-        `If this wasn't you, change your password immediately at support@mindcrawller.com\n\n` +
-        `© ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
+        `If this wasn't you, change your password immediately at ${SUPPORT_EMAIL}\n\n` +
+        `© ${new Date().getFullYear()} Humaeli `;
 
       const data = await sendBrevoEmail({
         to: email,
-        subject: "[Mindcrawller ] Your login verification code",
+        subject: "[Humaeli] Your login verification code",
         html: buildLoginOTPHtml(otp),
         text: textContent,
       });
@@ -289,33 +353,33 @@ class OTPService {
     const html = `
       <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:#fff;font-family:Arial,sans-serif;">
         <div style="background:#667eea;padding:20px;text-align:center;color:#fff;">
-          <h2 style="margin:0;">Mediconeckt Global Pvt Ltd</h2>
+          <h2 style="margin:0;">Humaeli</h2>
           <p style="margin:6px 0 0;">Password reset verification</p>
         </div>
         <div style="padding:30px;">
           <h3 style="color:#333;margin-top:0;">Reset your password</h3>
-          <p style="color:#555;line-height:1.6;">Use the verification code below to reset your Mediconeckt password.</p>
+          <p style="color:#555;line-height:1.6;">Use the verification code below to reset your Humaeli password.</p>
           <div style="margin:28px 0;text-align:center;">
             <span style="display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:8px;padding:15px 28px;font-size:32px;font-weight:bold;letter-spacing:8px;">${otp}</span>
           </div>
           <p style="color:#555;line-height:1.6;">This code is valid for 10 minutes. Do not share it with anyone.</p>
           <p style="color:#777;font-size:13px;line-height:1.6;">If you did not request a password reset, you can safely ignore this email.</p>
           <hr style="border:none;border-top:1px solid #e6e6e6;margin:24px 0;" />
-          <p style="color:#777;font-size:12px;">&copy; ${year} Mediconeckt Global Pvt Ltd | Bhopal, India</p>
+          <p style="color:#777;font-size:12px;">&copy; ${year} Humaeli Global Pvt Ltd | Bhopal, India</p>
         </div>
       </div>
     `;
     const text =
-      `Mediconeckt password reset verification\n\n` +
+      `Humaeli password reset verification\n\n` +
       `Verification code: ${otp}\n` +
       `This code expires in 10 minutes.\n\n` +
       `Do not share this code. If you did not request a password reset, ignore this email.\n\n` +
-      `© ${year} Mediconeckt Global Pvt Ltd`;
+      `© ${year} Humaeli Global Pvt Ltd`;
 
     try {
       const data = await sendBrevoEmail({
         to: email,
-        subject: "[Mediconeckt] Password reset verification code",
+        subject: "[Humaeli] Password reset verification code",
         html,
         text,
       });
@@ -337,14 +401,14 @@ class OTPService {
     console.log(`📧 Sending email verification OTP to ${email}`);
 
     const textContent =
-      `Mindcrawller  Global Pvt Ltd - Email Verification\n\n` +
-      `Thank you for registering with Mindcrawller.\n` +
+      `Humaeli - Email Verification\n\n` +
+      `Thank you for registering with Humaeli.\n` +
       `Please verify your email to access all features.\n\n` +
       `Verification Code: ${otp}\n` +
       `Expires in: 10 minutes\n\n` +
       `Do not share this code. If you didn't sign up, ignore this email.\n\n` +
-      `Questions? Contact: support@mindcrawller.com\n\n` +
-      `© ${new Date().getFullYear()} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
+      `Questions? Contact: ${SUPPORT_EMAIL}\n\n` +
+      `© ${new Date().getFullYear()} Humaeli Global Pvt Ltd | Bhopal, India`;
 
     const maxRetries = 3;
     let lastError;
@@ -353,7 +417,7 @@ class OTPService {
       try {
         const data = await sendBrevoEmail({
           to: email,
-          subject: "[Mindcrawller ] Email verification code",
+          subject: "[Humaeli] Email verification code",
           html: buildEmailOTPHtml(otp),
           text: textContent,
         });
@@ -397,14 +461,14 @@ class OTPService {
   async sendForgotPasswordOTP(email, otp) {
     const year = new Date().getFullYear();
     const textContent =
-      `Mindcrawller  Global Pvt Ltd - Password Reset\n\n` +
-      `We received a request to reset your Mindcrawller account password.\n` +
+      `Humaeli - Password Reset\n\n` +
+      `We received a request to reset your Humaeli account password.\n` +
       `Use the code below to continue:\n\n` +
       `Password reset code: ${otp}\n` +
       `Expires in: 10 minutes\n\n` +
       `Do not share this code. If you did not request a password reset, ignore this email.\n\n` +
-      `Questions? Contact: support@mindcrawller.com\n\n` +
-      `Copyright ${year} Mindcrawller  Global Pvt Ltd | Bhopal, India`;
+      `Questions? Contact: ${SUPPORT_EMAIL}\n\n` +
+      `Copyright ${year} Humaeli Global Pvt Ltd | Bhopal, India`;
 
     const html = `
 <!DOCTYPE html>
@@ -412,12 +476,12 @@ class OTPService {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Password Reset - Mindcrawller</title>
+  <title>Password Reset - Humaeli</title>
 </head>
 <body style="margin:0;padding:0;background:#f9f9f9;font-family:Arial,sans-serif;">
   <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:white;">
     <div style="background:#2e7d32;padding:20px;text-align:center;color:white;">
-      <h2 style="margin:0;font-size:22px;">Mindcrawller  Global Pvt Ltd</h2>
+      <h2 style="margin:0;font-size:22px;">Humaeli Global Pvt Ltd</h2>
       <p style="margin:6px 0 0;font-size:14px;">Healthcare Connecting Platform</p>
     </div>
     <div style="padding:30px;">
@@ -429,7 +493,7 @@ class OTPService {
       <p style="color:#444;line-height:1.7;"><strong>Code Expiration:</strong> This code is valid for 10 minutes. Do not share it with anyone.</p>
       <p style="color:#444;line-height:1.7;">If you did not request a password reset, you can safely ignore this email.</p>
       <hr style="border:none;border-top:1px solid #e6e6e6;margin:24px 0;" />
-      <p style="font-size:12px;color:#666;line-height:1.7;">This is a transactional email from Mindcrawller sent for account security.<br/>For support, contact us at <a href="mailto:support@mindcrawller.com" style="color:#2e7d32;text-decoration:none;">support@mindcrawller.com</a><br/>Copyright ${year} Mindcrawller  Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
+      <p style="font-size:12px;color:#666;line-height:1.7;">This is a transactional email from Humaeli sent for account security.<br/>For support, contact us at <a href="mailto:${SUPPORT_EMAIL}" style="color:#2e7d32;text-decoration:none;">${SUPPORT_EMAIL}</a><br/>Copyright ${year} Humaeli Global Pvt Ltd | Bhopal, Madhya Pradesh, India</p>
     </div>
   </div>
 </body>
@@ -438,7 +502,7 @@ class OTPService {
     try {
       const data = await sendBrevoEmail({
         to: email,
-        subject: "[Mindcrawller ] Password reset code",
+        subject: "[Humaeli] Password reset code",
         html,
         text: textContent,
       });
