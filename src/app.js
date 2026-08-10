@@ -429,6 +429,9 @@ app.get("/api/health", (_req, res) => {
     environment: process.env.NODE_ENV || "development",
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
+    features: {
+      landingStats: true,
+    },
     db: {
       state: dbStatus,
       readyState: dbState,

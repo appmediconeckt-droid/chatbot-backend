@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
-import Rating from "../models/Rating.js";
+import Chat from "../models/Chat.js";
+import Message from "../models/Message.js";
 import OTP from "../models/otpModel.js";
 import LoginOTP from "../models/loginOtpModel.js";
 import bcrypt from "bcryptjs";
@@ -33,28 +34,13 @@ const phoneOTPStore = new Map();
 // Public aggregate counters used by the landing page. Only totals are exposed.
 export const getLandingStats = async (_req, res) => {
   try {
-    const [patientsHelped, medicalPartners, activeSupports, ratingSummary] =
+    const [patientsHelped, medicalPartners, activeSupports, completedPatients] =
       await Promise.all([
         User.countDocuments({ role: "user" }),
         User.countDocuments({ role: "counsellor" }),
         User.countDocuments({ role: "counsellor", isOnline: true }),
-        Rating.aggregate([
-          {
-            $group: {
-              _id: null,
-              total: { $sum: 1 },
-              satisfied: {
-                $sum: { $cond: [{ $gte: ["$stars", 4] }, 1, 0] },
-              },
-            },
-          },
-        ]),
+        Chat.countDocuments({ status: "closed", closedAt: { $ne: null } }),
       ]);
-
-    const ratings = ratingSummary[0] || { total: 0, satisfied: 0 };
-    const satisfactionRate = ratings.total
-      ? Math.round((ratings.satisfied / ratings.total) * 100)
-      : 0;
 
     return res.json({
       success: true,
@@ -62,7 +48,7 @@ export const getLandingStats = async (_req, res) => {
         patientsHelped,
         medicalPartners,
         activeSupports,
-        satisfactionRate,
+        completedPatients,
       },
     });
   } catch (error) {
@@ -2866,12 +2852,44 @@ export const getAllCounsellors = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    const counsellorIds = counsellors.map((counsellor) => counsellor._id);
+    const patientConversationCounts = await Message.aggregate([
+      {
+        $match: {
+          senderId: { $in: counsellorIds },
+          senderRole: "counsellor",
+        },
+      },
+      {
+        $group: {
+          _id: {
+            counsellorId: "$senderId",
+            chatId: "$chatId",
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$_id.counsellorId",
+          patientConversationCount: { $sum: 1 },
+        },
+      },
+    ]);
+    const patientConversationCountByCounsellor = new Map(
+      patientConversationCounts.map((item) => [
+        String(item._id),
+        item.patientConversationCount,
+      ]),
+    );
+
     const counsellorsWithLoginStatus = counsellors.map((counsellor) => {
       // A saved login session is not presence. Only a currently connected
       // authenticated socket makes a counselor online in the directory.
       const liveOnline = global.socketHandler?.isUserOnline(counsellor._id) === true;
       return {
         ...counsellor,
+        patientConversationCount:
+          patientConversationCountByCounsellor.get(String(counsellor._id)) || 0,
         isOnline: liveOnline,
         isLoggedIn: liveOnline,
         hasActiveSession: liveOnline,
