@@ -24,26 +24,6 @@ const VERIFIED_FALLBACK_FROM_EMAIL =
   process.env.VERIFIED_EMAIL_FROM || "info@humaeli.com";
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
-<<<<<<< HEAD
-const SENDER_EMAILS = [
-  process.env.EMAIL_FROM,
-  process.env.EMAIL_USER,
-  process.env.EMAIL,
-  "support@mindcrawller.com",
-].filter(Boolean);
-
-const FROM_EMAIL = SENDER_EMAILS[0];
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-
-if (!BREVO_API_KEY) {
-  console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
-}
-
-if (!FROM_EMAIL || FROM_EMAIL === "support@mindcrawller.com") {
-  console.warn('⚠️ WARNING: Using fallback sender email. Please verify it in Brevo dashboard.');
-  console.warn('   Current FROM_EMAIL:', FROM_EMAIL);
-  console.warn('   Set EMAIL_FROM in .env to a verified Brevo sender.');
-=======
 const configuredFromEmail =
   process.env.EMAIL_FROM ||
   process.env.HUMAELI_EMAIL_FROM ||
@@ -54,47 +34,21 @@ const FROM_EMAIL =
     ? VERIFIED_FALLBACK_FROM_EMAIL
     : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
 
 // Validate that FROM_EMAIL is set
+if (!BREVO_API_KEY) {
+  console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
+}
+
 if (configuredFromEmail === "info@humaeli.com") {
   console.warn(
     "⚠️ EMAIL_FROM=info@humaeli.com is not verified in Brevo; using verified fallback sender.",
   );
   console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
->>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
 } else {
   console.log('✅ Primary sender email configured:', FROM_EMAIL);
 }
-
-<<<<<<< HEAD
-const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
-  sender: { name: FROM_NAME, email: senderEmail },
-  to: [{ email: to }],
-  subject,
-  htmlContent: html,
-  textContent: text || "Please enable HTML to view this email.",
-  replyTo: {
-    email: process.env.EMAIL_REPLY_TO || "support@mindcrawller.com",
-    name: "Mindcrawller Support",
-  },
-  headers: {
-    "List-Unsubscribe":
-      `<mailto:${process.env.EMAIL_REPLY_TO || "support@mindcrawller.com"}?subject=unsubscribe>`,
-    "X-Mailer": "Mindcrawller Mail Service",
-    "X-Priority": "3",
-  },
-  amp4email: false,
-  trackingParams: "utm_source=mindcrawller&utm_medium=email",
-});
-=======
-async function sendBrevoEmail({ to, subject, html, text }) {
-  if (!process.env.BREVO_API_KEY) {
-    throw new Error("BREVO_API_KEY is not configured");
-  }
-
-  // Ensure textContent is never undefined (MIME_HTML_ONLY compliance)
-  const safeText = text || "Please enable HTML to view this email.";
->>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
 
 async function sendBrevoRequest(payload) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -103,51 +57,18 @@ async function sendBrevoRequest(payload) {
       "api-key": BREVO_API_KEY,
       "content-type": "application/json",
     },
-<<<<<<< HEAD
     body: JSON.stringify(payload),
   });
 
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
-    ? await response.json()
+    ? await response.json().catch(() => ({}))
     : { message: await response.text() };
 
   if (!response.ok) {
-    const errorMessage = data?.message || data?.error || `Brevo API error ${response.status}`;
-    const error = new Error(errorMessage);
+    const error = new Error(data?.message || data?.error || `Brevo API error ${response.status}`);
     error.status = response.status;
     error.body = data;
-=======
-    body: JSON.stringify({
-      sender: { name: FROM_NAME, email: FROM_EMAIL },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-      textContent: safeText,
-      replyTo: {
-        email: SUPPORT_EMAIL,
-        name: "Humaeli Support",
-      },
-      // ✅ SPAM FIX: Add List-Unsubscribe header (critical for Gmail/Outlook)
-      headers: {
-        "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
-        "X-Mailer": "Humaeli Mail Service",
-        "X-Priority": "3",
-      },
-      // ✅ SPAM FIX: Request AMP for Email (Gmail friendly)
-      amp4email: false,
-      // ✅ SPAM FIX: Enable proper tracking & authentication
-      trackingParams: "utm_source=humaeli&utm_medium=email",
-    }),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    const error = new Error(data?.message || `Brevo API error ${response.status}`);
-    error.status = response.status;
-    error.details = data;
->>>>>>> c0a5e42a210eb4e098c540d1d5af9148cdcbdad2
     throw error;
   }
 
@@ -156,47 +77,27 @@ async function sendBrevoRequest(payload) {
 
 async function sendBrevoEmail({ to, subject, html, text }) {
   if (!BREVO_API_KEY) {
-    throw new Error("Brevo API key is missing. Cannot send email.");
+    throw new Error("BREVO_API_KEY is not configured");
   }
 
-  let lastError;
-  for (const senderEmail of SENDER_EMAILS) {
-    try {
-      const payload = buildBrevoPayload({
-        senderEmail,
-        to,
-        subject,
-        html,
-        text,
-      });
-
-      const data = await sendBrevoRequest(payload);
-      if (senderEmail !== FROM_EMAIL) {
-        console.log(
-          `✅ Email sent using fallback sender ${senderEmail} because primary sender failed or was unavailable.`,
-        );
-      }
-      return data;
-    } catch (error) {
-      lastError = error;
-      const message = String(error.message || "").toLowerCase();
-      console.warn(
-        `Brevo send failed for sender ${senderEmail}: ${message}`,
-        error.body || error,
-      );
-
-      if (
-        senderEmail === SENDER_EMAILS[SENDER_EMAILS.length - 1] ||
-        !/sender|from.*email|sender.*id|unverified/i.test(message)
-      ) {
-        continue;
-      }
-    }
-  }
-
-  throw new Error(
-    `Failed to send email via Brevo. Last error: ${lastError?.message || "Unknown error"}`,
-  );
+  return sendBrevoRequest({
+    sender: { name: FROM_NAME, email: FROM_EMAIL },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html,
+    textContent: text || "Please enable HTML to view this email.",
+    replyTo: {
+      email: SUPPORT_EMAIL,
+      name: "Humaeli Support",
+    },
+    headers: {
+      "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
+      "X-Mailer": "Humaeli Mail Service",
+      "X-Priority": "3",
+    },
+    amp4email: false,
+    trackingParams: "utm_source=humaeli&utm_medium=email",
+  });
 }
 
 const buildEmailOTPHtml = (otp) => `
@@ -550,5 +451,4 @@ class OTPService {
     console.log(`OTP cleared for ${type}`);
   }
 }
-
 export default new OTPService();
