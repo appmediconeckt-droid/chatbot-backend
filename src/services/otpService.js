@@ -19,37 +19,77 @@ const configuredPlayReviewEmails = String(
 const playReviewEmailSet = new Set(configuredPlayReviewEmails);
 const PLAY_REVIEW_FIXED_OTP = "123456";
 
-const FROM_NAME = "Humaeli";
-const VERIFIED_FALLBACK_FROM_EMAIL =
-  process.env.VERIFIED_EMAIL_FROM || "info@humaeli.com";
-// ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
-// (same subdomain, same TLD). Mismatches will cause authentication failures.
-const configuredFromEmail =
-  process.env.EMAIL_FROM ||
-  process.env.HUMAELI_EMAIL_FROM ||
-  process.env.EMAIL_USER ||
-  process.env.EMAIL;
-const FROM_EMAIL =
-  configuredFromEmail === "info@humaeli.com"
-    ? VERIFIED_FALLBACK_FROM_EMAIL
-    : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
+const FROM_NAME = process.env.EMAIL_FROM_NAME || "Humaeli";
+const SUPPORT_EMAIL =
+  process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
+const DEFAULT_FROM_EMAIL = "support@humaeli.com";
+const ALLOW_UNVERIFIED_BREVO_SENDER =
+  process.env.ALLOW_UNVERIFIED_BREVO_SENDER === "true";
+const UNVERIFIED_BREVO_SENDERS = new Set(
+  String(process.env.UNVERIFIED_BREVO_SENDERS || "info@humaeli.com")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
 
-// Validate that FROM_EMAIL is set
+// IMPORTANT: every sender here must be verified in Brevo for production delivery.
+const SENDER_EMAILS = [
+  process.env.EMAIL_FROM,
+  process.env.HUMAELI_EMAIL_FROM,
+  process.env.VERIFIED_EMAIL_FROM,
+  process.env.EMAIL_USER,
+  process.env.EMAIL,
+  DEFAULT_FROM_EMAIL,
+]
+  .map((email) => String(email || "").trim())
+  .filter(Boolean)
+  .filter(
+    (email) =>
+      ALLOW_UNVERIFIED_BREVO_SENDER ||
+      !UNVERIFIED_BREVO_SENDERS.has(email.toLowerCase()),
+  )
+  .filter((email, index, emails) => emails.indexOf(email) === index);
+
+const FROM_EMAIL = SENDER_EMAILS[0];
+
 if (!BREVO_API_KEY) {
   console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
 }
 
-if (configuredFromEmail === "info@humaeli.com") {
+if (!ALLOW_UNVERIFIED_BREVO_SENDER && UNVERIFIED_BREVO_SENDERS.size > 0) {
   console.warn(
-    "⚠️ EMAIL_FROM=info@humaeli.com is not verified in Brevo; using verified fallback sender.",
+    `⚠️ Ignoring unverified Brevo sender(s): ${[...UNVERIFIED_BREVO_SENDERS].join(", ")}`,
   );
-  console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
-} else {
-  console.log('✅ Primary sender email configured:', FROM_EMAIL);
 }
+
+if (!FROM_EMAIL || FROM_EMAIL === DEFAULT_FROM_EMAIL) {
+  console.warn("⚠️ Using default Humaeli sender email. Verify it in Brevo.");
+  console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
+  console.warn("   Set EMAIL_FROM in .env to your verified Brevo sender.");
+} else {
+  console.log("✅ Primary sender email configured:", FROM_EMAIL);
+}
+
+const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
+  sender: { name: FROM_NAME, email: senderEmail },
+  to: [{ email: to }],
+  subject,
+  htmlContent: html || "",
+  textContent: text || DEFAULT_EMAIL_TEXT,
+  replyTo: {
+    email: SUPPORT_EMAIL,
+    name: "Humaeli Support",
+  },
+  headers: {
+    "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
+    "X-Mailer": "Humaeli Mail Service",
+    "X-Priority": "3",
+  },
+  amp4email: false,
+  trackingParams: "utm_source=humaeli&utm_medium=email",
+});
 
 async function sendBrevoRequest(payload) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -67,7 +107,8 @@ async function sendBrevoRequest(payload) {
     : { message: await response.text() };
 
   if (!response.ok) {
-    const error = new Error(data?.message || data?.error || `Brevo API error ${response.status}`);
+    const errorMessage = data?.message || data?.error || `Brevo API error ${response.status}`;
+    const error = new Error(errorMessage);
     error.status = response.status;
     error.body = data;
     throw error;
@@ -78,27 +119,47 @@ async function sendBrevoRequest(payload) {
 
 async function sendBrevoEmail({ to, subject, html, text }) {
   if (!BREVO_API_KEY) {
-    throw new Error("BREVO_API_KEY is not configured");
+    throw new Error("Brevo API key is missing. Cannot send email.");
   }
 
-  return sendBrevoRequest({
-    sender: { name: FROM_NAME, email: FROM_EMAIL },
-    to: [{ email: to }],
-    subject,
-    htmlContent: html,
-    textContent: text || DEFAULT_EMAIL_TEXT,
-    replyTo: {
-      email: SUPPORT_EMAIL,
-      name: "Humaeli Support",
-    },
-    headers: {
-      "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
-      "X-Mailer": "Humaeli Mail Service",
-      "X-Priority": "3",
-    },
-    amp4email: false,
-    trackingParams: "utm_source=humaeli&utm_medium=email",
-  });
+  let lastError;
+  for (const senderEmail of SENDER_EMAILS) {
+    try {
+      const payload = buildBrevoPayload({
+        senderEmail,
+        to,
+        subject,
+        html,
+        text,
+      });
+
+      const data = await sendBrevoRequest(payload);
+      if (senderEmail !== FROM_EMAIL) {
+        console.log(
+          `✅ Email sent using fallback sender ${senderEmail} because primary sender failed or was unavailable.`,
+        );
+      }
+      return data;
+    } catch (error) {
+      lastError = error;
+      const message = String(error.message || "").toLowerCase();
+      console.warn(
+        `Brevo send failed for sender ${senderEmail}: ${message}`,
+        error.body || error,
+      );
+
+      if (
+        senderEmail === SENDER_EMAILS[SENDER_EMAILS.length - 1] ||
+        !/sender|from.*email|sender.*id|unverified/i.test(message)
+      ) {
+        continue;
+      }
+    }
+  }
+
+  throw new Error(
+    `Failed to send email via Brevo. Last error: ${lastError?.message || "Unknown error"}`,
+  );
 }
 
 const buildEmailOTPHtml = (otp) => `
@@ -452,4 +513,5 @@ class OTPService {
     console.log(`OTP cleared for ${type}`);
   }
 }
+
 export default new OTPService();
