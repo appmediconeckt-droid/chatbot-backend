@@ -35,6 +35,7 @@ const FROM_EMAIL =
     : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
 
 // Validate that FROM_EMAIL is set
 if (!BREVO_API_KEY) {
@@ -85,7 +86,7 @@ async function sendBrevoEmail({ to, subject, html, text }) {
     to: [{ email: to }],
     subject,
     htmlContent: html,
-    textContent: text || "Please enable HTML to view this email.",
+    textContent: text || DEFAULT_EMAIL_TEXT,
     replyTo: {
       email: SUPPORT_EMAIL,
       name: "Humaeli Support",
