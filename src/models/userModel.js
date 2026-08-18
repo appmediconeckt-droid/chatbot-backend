@@ -302,6 +302,15 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    fcmToken: {
+  type: String,
+  default: null,
+},
+
+devicePlatform: {
+  type: String,
+  default: null,
+},
     instantPayoutCount: {
       type: Number,
       default: 0,

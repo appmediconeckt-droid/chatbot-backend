@@ -3,6 +3,7 @@ package-lock.json
 
 # Env files — never commit secrets
 .env
+serviceAccountKey.json
 .env.*
 !.env.example
 

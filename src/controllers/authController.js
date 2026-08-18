@@ -30,6 +30,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const verifiedUsersStore = new Map();
 const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
+const EMAIL_VERIFICATION_PURPOSE = "registration_email_verified";
 
 // Public aggregate counters used by the landing page. Only totals are exposed.
 export const getLandingStats = async (_req, res) => {
@@ -1028,31 +1029,38 @@ export const updateUserById = async (req, res) => {
 
 export const sendEmailOTP = async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) {
+    const normalizedEmail = String(req.body.email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
       return res
         .status(400)
         .json({ message: "Email is required", success: false });
     }
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail })
+      .select("role")
+      .lean();
     if (existingUser) {
+      const accountType =
+        existingUser.role === "counsellor" ? "Counselor" : "User";
       return res.status(409).json({
-        message: "User already exists with this email",
+        message: `${accountType} account already exists with this email`,
         success: false,
       });
     }
 
-    const otp = otpService.generateOTP(email);
+    const otp = otpService.generateOTP(normalizedEmail);
 
     try {
-      await otpService.sendEmailOTP(email, otp, "User");
-      emailOTPStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+      await otpService.sendEmailOTP(normalizedEmail, otp, "User");
+      emailOTPStore.set(normalizedEmail, {
+        otp,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
 
       return res.status(200).json({
         message: "Email OTP sent successfully",
         success: true,
-        email: email,
+        email: normalizedEmail,
       });
     } catch (sendError) {
       console.error("OTP sending error:", sendError);
@@ -1082,7 +1090,8 @@ export const verifyEmailOTP = async (req, res) => {
         .json({ message: "Email and OTP are required", success: false });
     }
 
-    const storedData = emailOTPStore.get(email);
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const storedData = emailOTPStore.get(normalizedEmail);
 
     if (!storedData) {
       return res.status(400).json({
@@ -1092,7 +1101,7 @@ export const verifyEmailOTP = async (req, res) => {
     }
 
     if (Date.now() > storedData.expiresAt) {
-      emailOTPStore.delete(email);
+      emailOTPStore.delete(normalizedEmail);
       return res.status(400).json({
         message: "OTP has expired. Please request a new OTP.",
         success: false,
@@ -1103,7 +1112,7 @@ export const verifyEmailOTP = async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
-    let userVerification = verifiedUsersStore.get(email);
+    let userVerification = verifiedUsersStore.get(normalizedEmail);
     if (!userVerification) {
       userVerification = {
         isEmailVerified: true,
@@ -1114,15 +1123,21 @@ export const verifyEmailOTP = async (req, res) => {
       userVerification.isEmailVerified = true;
     }
 
-    verifiedUsersStore.set(email, userVerification);
-    emailOTPStore.delete(email);
+    verifiedUsersStore.set(normalizedEmail, userVerification);
+    emailOTPStore.delete(normalizedEmail);
+
+    const emailVerificationToken = jwt.sign(
+      { email: normalizedEmail, purpose: EMAIL_VERIFICATION_PURPOSE },
+      process.env.ACCESS_SECRET,
+      { expiresIn: "1h" },
+    );
 
     return res.status(200).json({
-      message:
-        "Email verified successfully. Please verify your phone number next.",
+      message: "Email verified successfully. You can now complete registration.",
       success: true,
-      email: email,
-      nextStep: "phone_verification",
+      email: normalizedEmail,
+      emailVerificationToken,
+      nextStep: "complete_registration",
     });
   } catch (error) {
     console.error("Verify email OTP error:", error);
@@ -1470,6 +1485,7 @@ export const completeRegistration = async (req, res) => {
       fullName,
       anonymous,
       email,
+      phoneNumber,
       password,
       age,
       gender,
@@ -1487,11 +1503,21 @@ export const completeRegistration = async (req, res) => {
       emergencyContact,
       medicalInfo,
       insuranceInfo,
+      emailVerificationToken,
     } = req.body;
 
-    if (!fullName || !email || !password) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!fullName || !normalizedEmail || !phoneNumber || !password) {
       return res.status(400).json({
-        message: "Full name, email, and password are required",
+        message: "Full name, email, phone number, and password are required",
+        success: false,
+      });
+    }
+
+    const cleanedPhone = String(phoneNumber).replace(/\D/g, "");
+    if (cleanedPhone.length !== 10) {
+      return res.status(400).json({
+        message: "Phone number must be 10 digits",
         success: false,
       });
     }
@@ -1507,7 +1533,22 @@ export const completeRegistration = async (req, res) => {
     console.log(`🔍 Checking verification for email: ${email}`);
     // console.log(`All verified users:`, Array.from(verifiedUsersStore.keys()));
 
-    const userVerification = verifiedUsersStore.get(email);
+    const userVerification = verifiedUsersStore.get(normalizedEmail);
+    let hasVerifiedEmailToken = false;
+
+    if (emailVerificationToken) {
+      try {
+        const decoded = jwt.verify(
+          emailVerificationToken,
+          process.env.ACCESS_SECRET,
+        );
+        hasVerifiedEmailToken =
+          decoded?.purpose === EMAIL_VERIFICATION_PURPOSE &&
+          decoded?.email === normalizedEmail;
+      } catch (_error) {
+        hasVerifiedEmailToken = false;
+      }
+    }
 
     // DEBUG: Log verification status
     if (userVerification) {
@@ -1523,17 +1564,19 @@ export const completeRegistration = async (req, res) => {
     }
 
     // Check if verification exists and is complete
-    if (!userVerification) {
+    if (!hasVerifiedEmailToken && !userVerification) {
       return res.status(400).json({
-        message:
-          "Please verify your email and phone first. No verification session found.",
+        message: "Please verify your email first. No verification session found.",
         success: false,
       });
     }
 
     // Check if verification has expired
-    if (Date.now() > userVerification.expiresAt) {
-      verifiedUsersStore.delete(email);
+    if (
+      !hasVerifiedEmailToken &&
+      Date.now() > userVerification.expiresAt
+    ) {
+      verifiedUsersStore.delete(normalizedEmail);
       return res.status(400).json({
         message:
           "Verification session has expired. Please restart the registration process.",
@@ -1541,33 +1584,26 @@ export const completeRegistration = async (req, res) => {
       });
     }
 
-    // Check both verifications
-    if (
-      !userVerification.isEmailVerified ||
-      !userVerification.isPhoneVerified
-    ) {
-      const missing = [];
-      if (!userVerification.isEmailVerified) missing.push("email");
-      if (!userVerification.isPhoneVerified) missing.push("phone");
-
+    // Phone OTP is intentionally not required. The submitted phone number is
+    // validated here and protected by the database unique index.
+    if (!hasVerifiedEmailToken && !userVerification.isEmailVerified) {
       return res.status(400).json({
-        message: `Please verify your ${missing.join(" and ")} first`,
+        message: "Please verify your email first",
         success: false,
-        missingVerifications: missing,
+        missingVerifications: ["email"],
         status: {
           isEmailVerified: userVerification.isEmailVerified,
-          isPhoneVerified: userVerification.isPhoneVerified,
         },
       });
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({
-      $or: [{ email }, { phoneNumber: userVerification.phoneNumber }],
+      $or: [{ email: normalizedEmail }, { phoneNumber: cleanedPhone }],
     });
 
     if (existingUser) {
-      verifiedUsersStore.delete(email);
+      verifiedUsersStore.delete(normalizedEmail);
       return res.status(409).json({
         message: "User already exists with this email or phone number",
         success: false,
@@ -1585,14 +1621,15 @@ export const completeRegistration = async (req, res) => {
     const userData = {
       fullName,
       anonymous,
-      email,
+      email: normalizedEmail,
       password: hashedPassword,
-      phoneNumber: userVerification.phoneNumber,
+      phoneNumber: cleanedPhone,
       age: age || null,
       gender: gender || "male",
       role,
       profileCompleted: true,
       isEmailVerified: true,
+      isPhoneVerified: false,
       isActive: true,
       // The 2dsphere index requires a complete GeoJSON Point. Without this,
       // the schema default creates { type: "Point" } without coordinates and
@@ -1680,46 +1717,29 @@ export const completeRegistration = async (req, res) => {
     const newUser = await User.create(userData);
 
     // Clean up verification data
-    verifiedUsersStore.delete(email);
-    emailOTPStore.delete(email);
-    phoneOTPStore.delete(email);
-
-    // Generate tokens
-    const accessToken = generateAccessToken(newUser._id);
-    const refreshToken = generateRefreshToken(newUser._id);
-
-    // Create session
-    await Session.create({
-      userId: newUser._id,
-      refreshToken,
-      isActive: true,
-      createdAt: new Date(),
-    });
-    await markUserOnline(newUser);
-
-    // Set cookies
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    verifiedUsersStore.delete(normalizedEmail);
+    emailOTPStore.delete(normalizedEmail);
+    phoneOTPStore.delete(normalizedEmail);
 
     return res.status(201).json({
-      message: "Registration completed successfully!",
+      message: "Registration completed successfully. Please log in.",
       success: true,
       user: newUser.toJSON(),
-      accessToken,
-      refreshToken,
       role: newUser.role,
+      requiresLogin: true,
     });
   } catch (error) {
     console.error("Complete registration error:", error);
+
+    if (error?.code === 11000) {
+      const duplicateField = error?.keyPattern?.phoneNumber
+        ? "phone number"
+        : "email";
+      return res.status(409).json({
+        message: `User already exists with this ${duplicateField}`,
+        success: false,
+      });
+    }
 
     // Rollback: Delete uploaded photo from Cloudinary if registration fails
     if (req.file && profilePhotoData && profilePhotoData.publicId) {

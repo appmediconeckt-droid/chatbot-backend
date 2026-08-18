@@ -1,7 +1,60 @@
 import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
+import User from "../models/userModel.js";
 
 const visibleNotificationTypes = ["appointment", "payment"];
+
+export const saveFCMToken = async (req, res) => {
+  try {
+    const userId = req.body?.userId || req.user?._id || req.user?.userId;
+    const { fcmToken, platform } = req.body || {};
+
+    if (!userId || !fcmToken) {
+      return res.status(400).json({
+        success: false,
+        message: "userId and fcmToken are required",
+      });
+    }
+
+    const normalizedToken = typeof fcmToken === "string" ? fcmToken.trim() : "";
+    if (!normalizedToken) {
+      return res.status(400).json({
+        success: false,
+        message: "fcmToken is required",
+      });
+    }
+
+    const updateData = { fcmToken: normalizedToken };
+    if (platform !== undefined) {
+      updateData.devicePlatform = platform || null;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "FCM token saved successfully",
+    });
+  } catch (error) {
+    console.error("FCM token save error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save FCM token",
+    });
+  }
+};
 
 export const getNotifications = async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
