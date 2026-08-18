@@ -10,3 +10,7 @@ serviceAccountKey.json
 # Logs
 *.log
 npm-debug.log*
+
+
+src/config/serviceAccountKey.json
+serviceAccountKey.json
