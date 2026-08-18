@@ -9,20 +9,47 @@
 // }
 
 // export default getMessaging();
-import admin from "firebase-admin";
+
+
+import {
+  initializeApp,
+  cert,
+  getApps,
+} from "firebase-admin/app";
+
+import { getMessaging } from "firebase-admin/messaging";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   throw new Error("FIREBASE_SERVICE_ACCOUNT is missing");
 }
 
-const serviceAccount = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT
-);
+let serviceAccount;
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+try {
+  serviceAccount = JSON.parse(
+    process.env.FIREBASE_SERVICE_ACCOUNT
+  );
+} catch (error) {
+  console.error("❌ Invalid FIREBASE_SERVICE_ACCOUNT JSON");
+  throw error;
 }
 
+const firebaseApp =
+  getApps().length > 0
+    ? getApps()[0]
+    : initializeApp({
+        credential: cert(serviceAccount),
+      });
+
+const messaging = getMessaging(firebaseApp);
+
+// Compatibility with existing code:
+// admin.messaging().send(...)
+const admin = {
+  messaging: () => messaging,
+};
+
+console.log("✅ Firebase Admin initialized");
+
+export { firebaseApp, messaging };
 export default admin;
