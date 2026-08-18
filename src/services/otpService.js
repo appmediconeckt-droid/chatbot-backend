@@ -43,7 +43,7 @@ if (!BREVO_API_KEY) {
 
 if (configuredFromEmail === "info@humaeli.com") {
   console.warn(
-    "⚠️ EMAIL_FROM=info@humaeli.com is not verified in Brevo; using verified fallback sender.",
+    `⚠️ Ignoring unverified Brevo sender(s): ${[...UNVERIFIED_BREVO_SENDERS].join(", ")}`,
   );
   console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
 } else {
@@ -54,8 +54,8 @@ const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
   sender: { name: FROM_NAME, email: senderEmail },
   to: [{ email: to }],
   subject,
-  htmlContent: html,
-  textContent: text || "Please enable HTML to view this email.",
+  htmlContent: html || "",
+  textContent: text || DEFAULT_EMAIL_TEXT,
   replyTo: {
     email: SUPPORT_EMAIL,
     name: "Humaeli Support",
@@ -81,7 +81,7 @@ async function sendBrevoRequest(payload) {
 
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
-    ? await response.json()
+    ? await response.json().catch(() => ({}))
     : { message: await response.text() };
 
   if (!response.ok) {
