@@ -64,6 +64,13 @@ if (!process.env.MONGO_URI) {
 }
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
+const TUNNEL_URL = String(process.env.TUNNEL_URL || "").trim();
+const CLIENT_URL = String(process.env.CLIENT_URL || "").trim();
+
+function extractTunnelPort(url) {
+  const match = url.match(/-(\d+)\.inc\d+\.devtunnels\.ms$/i);
+  return match ? Number(match[1]) : null;
+}
 
 function handleServerError(error) {
   if (error.syscall !== 'listen') {
@@ -109,6 +116,18 @@ connectWithRetry()
     server.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`📡 API URL: http://localhost:${PORT}`);
+      if (CLIENT_URL) {
+        console.log(`🖥️ Frontend origin: ${CLIENT_URL}`);
+      }
+      if (TUNNEL_URL) {
+        console.log(`🌐 Tunnel URL: ${TUNNEL_URL}`);
+        const tunnelPort = extractTunnelPort(TUNNEL_URL);
+        if (tunnelPort && tunnelPort !== PORT) {
+          console.warn(
+            `⚠️ Tunnel URL port (${tunnelPort}) does not match backend PORT (${PORT}). Update the devtunnel or PORT before using the tunnel.`,
+          );
+        }
+      }
     });
 
     server.on('error', handleServerError);

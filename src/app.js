@@ -335,9 +335,22 @@ const DB_STATE_LABEL = {
   3: "disconnecting",
 };
 
+const splitEnvOrigins = (...values) =>
+  values
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 // ---------------------------
 // 1. CORS configuration
 // ---------------------------
+const configuredOrigins = splitEnvOrigins(
+  process.env.CLIENT_URL,
+  process.env.TUNNEL_URL,
+  process.env.FRONTEND_URL,
+  process.env.CORS_ORIGINS,
+);
+
 const allowedOrigins = [
   "http://localhost:4173",
   "http://localhost:3000",
@@ -346,6 +359,7 @@ const allowedOrigins = [
   "https://your-frontend-domain.com",
   "https://www.humaeli.com",
   "https://humaeli.com",
+  ...configuredOrigins,
 ];
 
 const normalizeOrigin = (origin) => origin?.replace(/\/$/, "");

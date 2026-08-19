@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 import twilio from "twilio";
 
 export const PLAY_REVIEW_TEST_EMAILS = Object.freeze([
@@ -20,8 +21,7 @@ const playReviewEmailSet = new Set(configuredPlayReviewEmails);
 const PLAY_REVIEW_FIXED_OTP = "123456";
 
 const FROM_NAME = "Humaeli";
-const VERIFIED_FALLBACK_FROM_EMAIL =
-  process.env.VERIFIED_EMAIL_FROM || "info@humaeli.com";
+
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
 const configuredFromEmail =
@@ -29,13 +29,57 @@ const configuredFromEmail =
   process.env.HUMAELI_EMAIL_FROM ||
   process.env.EMAIL_USER ||
   process.env.EMAIL;
-const FROM_EMAIL =
-  configuredFromEmail === "info@humaeli.com"
-    ? VERIFIED_FALLBACK_FROM_EMAIL
-    : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
-const SENDER_EMAILS = [...new Set([FROM_EMAIL, VERIFIED_FALLBACK_FROM_EMAIL])];
+
+
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
+const DEFAULT_FROM_EMAIL = "support@humaeli.com";
+const ALLOW_UNVERIFIED_BREVO_SENDER =
+  process.env.ALLOW_UNVERIFIED_BREVO_SENDER === "true";
+const UNVERIFIED_BREVO_SENDERS = new Set(
+  String(process.env.UNVERIFIED_BREVO_SENDERS || "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
+const GMAIL_SMTP_USER = String(
+  process.env.EMAIL_USER || process.env.EMAIL || "",
+).trim();
+const GMAIL_SMTP_PASS = String(
+  process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "",
+).trim();
+const GMAIL_SMTP_FROM_EMAIL = String(
+  process.env.GMAIL_FROM_EMAIL || GMAIL_SMTP_USER || "",
+).trim();
+const GMAIL_FALLBACK_ENABLED = Boolean(GMAIL_SMTP_USER && GMAIL_SMTP_PASS);
+const PREFERRED_OTP_EMAIL_PROVIDER = String(
+  process.env.OTP_EMAIL_PROVIDER ||
+    process.env.EMAIL_PROVIDER ||
+    (GMAIL_FALLBACK_ENABLED ? "gmail" : "brevo"),
+)
+  .trim()
+  .toLowerCase();
+
+// IMPORTANT: every sender here must be verified in Brevo for production delivery.
+const SENDER_EMAILS = [
+  process.env.EMAIL_FROM,
+  process.env.HUMAELI_EMAIL_FROM,
+  process.env.VERIFIED_EMAIL_FROM,
+  process.env.EMAIL_USER,
+  process.env.EMAIL,
+  DEFAULT_FROM_EMAIL,
+]
+  .map((email) => String(email || "").trim())
+  .filter(Boolean)
+  .filter(
+    (email) =>
+      ALLOW_UNVERIFIED_BREVO_SENDER ||
+      !UNVERIFIED_BREVO_SENDERS.has(email.toLowerCase()),
+  )
+  .filter((email, index, emails) => emails.indexOf(email) === index);
+
+const FROM_EMAIL = SENDER_EMAILS[0];
 
 if (!BREVO_API_KEY) {
   console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
@@ -138,6 +182,75 @@ async function sendBrevoEmail({ to, subject, html, text }) {
   throw new Error(
     `Failed to send email via Brevo. Last error: ${lastError?.message || "Unknown error"}`,
   );
+}
+
+function shouldFallbackToGmail(error) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  if (!status || status >= 500) return true;
+
+  const message = String(error?.message || "").toLowerCase();
+  return /sender|from.*email|unverified|api key|unauthori|forbidden|auth|quota|rate limit|timeout|network|fetch failed|econn|enotfound/.test(
+    message,
+  );
+}
+
+async function sendGmailEmail({ to, subject, html, text }) {
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: GMAIL_SMTP_USER,
+      pass: GMAIL_SMTP_PASS,
+    },
+  });
+
+  return transporter.sendMail({
+    from: GMAIL_SMTP_FROM_EMAIL,
+    to,
+    subject,
+    html,
+    text,
+  });
+}
+
+async function sendTransactionalEmail({ to, subject, html, text }) {
+  const providers =
+    PREFERRED_OTP_EMAIL_PROVIDER === "brevo"
+      ? ["brevo", "gmail"]
+      : ["gmail", "brevo"];
+
+  let lastError;
+
+  for (const provider of providers) {
+    try {
+      if (provider === "gmail") {
+        if (!GMAIL_FALLBACK_ENABLED) continue;
+        const data = await sendGmailEmail({ to, subject, html, text });
+        return { ...data, provider: "gmail" };
+      }
+
+      const data = await sendBrevoEmail({ to, subject, html, text });
+      return { ...data, provider: "brevo" };
+    } catch (error) {
+      lastError = error;
+
+      if (provider === "gmail") {
+        console.warn(
+          `Gmail SMTP delivery failed for ${to}. Falling back to Brevo if available: ${error.message}`,
+        );
+        continue;
+      }
+
+      if (!GMAIL_FALLBACK_ENABLED || !shouldFallbackToGmail(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `Brevo delivery failed for ${to}. Falling back to Gmail SMTP: ${error.message}`,
+      );
+    }
+  }
+
+  throw lastError || new Error("No email provider is configured for OTP delivery.");
 }
 
 const buildEmailOTPHtml = (otp) => `
@@ -272,7 +385,7 @@ class OTPService {
         `If this wasn't you, change your password immediately at ${SUPPORT_EMAIL}\n\n` +
         `© ${new Date().getFullYear()} Humaeli `;
 
-      const data = await sendBrevoEmail({
+      const data = await sendTransactionalEmail({
         to: email,
         subject: "[Humaeli] Your login verification code",
         html: buildLoginOTPHtml(otp),
@@ -280,7 +393,7 @@ class OTPService {
       });
 
       console.log(
-        `✅ Login OTP sent to ${email} | MessageID: ${data?.messageId}`,
+        `✅ Login OTP sent to ${email} via ${data?.provider || "brevo"} | MessageID: ${data?.messageId}`,
       );
       return data;
     } catch (error) {
@@ -318,7 +431,7 @@ class OTPService {
       `© ${year} Humaeli Global Pvt Ltd`;
 
     try {
-      const data = await sendBrevoEmail({
+      const data = await sendTransactionalEmail({
         to: email,
         subject: "[Humaeli] Password reset verification code",
         html,
@@ -326,7 +439,7 @@ class OTPService {
       });
 
       console.log(
-        `✅ Password reset OTP sent to ${email} | MessageID: ${data?.messageId}`,
+        `✅ Password reset OTP sent to ${email} via ${data?.provider || "brevo"} | MessageID: ${data?.messageId}`,
       );
       return data;
     } catch (error) {
@@ -356,7 +469,7 @@ class OTPService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
       try {
-        const data = await sendBrevoEmail({
+        const data = await sendTransactionalEmail({
           to: email,
           subject: "[Humaeli] Email verification code",
           html: buildEmailOTPHtml(otp),
@@ -364,7 +477,7 @@ class OTPService {
         });
 
         console.log(
-          `✅ Email OTP sent successfully to ${email} | MessageID: ${data?.messageId}`,
+          `✅ Email OTP sent successfully to ${email} via ${data?.provider || "brevo"} | MessageID: ${data?.messageId}`,
         );
         return data;
       } catch (error) {
@@ -441,7 +554,7 @@ class OTPService {
 </html>`;
 
     try {
-      const data = await sendBrevoEmail({
+      const data = await sendTransactionalEmail({
         to: email,
         subject: "[Humaeli] Password reset code",
         html,
@@ -449,7 +562,7 @@ class OTPService {
       });
 
       console.log(
-        `Forgot password OTP sent to ${email} | MessageID: ${data?.messageId}`,
+        `Forgot password OTP sent to ${email} via ${data?.provider || "brevo"} | MessageID: ${data?.messageId}`,
       );
       return data;
     } catch (error) {
