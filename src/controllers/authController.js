@@ -709,11 +709,9 @@ export const updateUserById = async (req, res) => {
 
     // 3. Handle basic user fields.
     //
-    // SECURITY: email and phoneNumber changes from the dashboard MUST be
-    // gated by the profile-change OTP flow. We check each one against the
-    // user's current value — if it actually changed, the request must have
-    // a matching verified entry produced by /profile-change/verify-otp.
-    // Other fields update freely.
+    // Email changes from the dashboard must be gated by the profile-change
+    // OTP flow. Phone changes are validated below and protected by the
+    // database unique index, matching the registration flow.
     const basicFields = [
       "fullName",
       "anonymous",
@@ -731,7 +729,7 @@ export const updateUserById = async (req, res) => {
     for (const field of basicFields) {
       if (req.body[field] === undefined || req.body[field] === "") continue;
 
-      // Gate email / phoneNumber changes through the OTP flow.
+      // Gate email changes through the OTP flow.
       if (field === "email") {
         const incoming = String(req.body.email).trim().toLowerCase();
         const current = String(currentUser.email || "").toLowerCase();
@@ -761,16 +759,20 @@ export const updateUserById = async (req, res) => {
         const incoming = String(req.body.phoneNumber).replace(/\D/g, "");
         const current = String(currentUser.phoneNumber || "");
         if (incoming !== current) {
-          const check = consumeVerifiedProfileChange(userId, "phone", incoming);
-          if (!check.ok) {
-            return res.status(403).json({
+          const phoneOwner = await User.findOne({
+            phoneNumber: incoming,
+            _id: { $ne: userId },
+          })
+            .select("_id")
+            .lean();
+          if (phoneOwner) {
+            return res.status(409).json({
               success: false,
-              message: check.message,
+              message: "This phone number already exists. Please use another phone number.",
               field: "phoneNumber",
             });
           }
           updates.phoneNumber = incoming;
-          updates.isPhoneVerified = true;
         }
         continue;
       }
@@ -991,6 +993,17 @@ export const updateUserById = async (req, res) => {
     });
   } catch (error) {
     console.error("Update user error:", error);
+
+    // A concurrent update can still win between the duplicate check above
+    // and MongoDB's write. Convert that unique-index error into the same
+    // user-facing validation response instead of exposing raw E11000 data.
+    if (error?.code === 11000 && error?.keyPattern?.phoneNumber) {
+      return res.status(409).json({
+        success: false,
+        message: "This phone number already exists. Please use another phone number.",
+        field: "phoneNumber",
+      });
+    }
 
     // Rollback: Delete any uploaded files if error occurred
     if (req.files && req.files["profilePhoto"]) {
