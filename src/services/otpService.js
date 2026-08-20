@@ -60,14 +60,6 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "tru
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
 const SMTP_FROM_EMAIL = String(process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.HUMAELI_EMAIL_FROM || DEFAULT_FROM_EMAIL).trim();
-const PREFERRED_OTP_EMAIL_PROVIDER = String(
-  process.env.OTP_EMAIL_PROVIDER ||
-    process.env.EMAIL_PROVIDER ||
-    (BREVO_API_KEY ? "brevo" : (GMAIL_FALLBACK_ENABLED ? "gmail" : "brevo")),
-)
-  .trim()
-  .toLowerCase();
-
 // IMPORTANT: every sender here must be verified in Brevo for production delivery.
 const SENDER_EMAILS = [
   process.env.EMAIL_FROM,
@@ -207,16 +199,6 @@ async function sendBrevoEmail({ to, subject, html, text }) {
   );
 }
 
-function shouldFallbackToGmail(error) {
-  const status = Number(error?.status || error?.response?.status || 0);
-  if (!status || status >= 500) return true;
-
-  const message = String(error?.message || "").toLowerCase();
-  return /sender|from.*email|unverified|api key|unauthori|forbidden|auth|quota|rate limit|timeout|network|fetch failed|econn|enotfound/.test(
-    message,
-  );
-}
-
 async function sendGmailEmail({ to, subject, html, text }) {
   const transporterOptions =
     SMTP_HOST && SMTP_USER && SMTP_PASS
@@ -264,10 +246,9 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
-  const providers =
-    PREFERRED_OTP_EMAIL_PROVIDER === "brevo"
-      ? ["brevo", "gmail"]
-      : ["gmail", "brevo"];
+  const providers = BREVO_API_KEY
+    ? ["brevo"]
+    : ["gmail"];
 
   let lastError;
 
@@ -279,25 +260,13 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
         return { ...data, provider: "gmail" };
       }
 
+      if (!BREVO_API_KEY) continue;
       const data = await sendBrevoEmail({ to, subject, html, text });
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
 
-      if (provider === "gmail") {
-        console.warn(
-          `Gmail SMTP delivery failed for ${to}. Falling back to Brevo if available: ${error.message}`,
-        );
-        continue;
-      }
-
-      if (!GMAIL_FALLBACK_ENABLED || !shouldFallbackToGmail(error)) {
-        throw error;
-      }
-
-      console.warn(
-        `Brevo delivery failed for ${to}. Falling back to Gmail SMTP: ${error.message}`,
-      );
+      throw error;
     }
   }
 
