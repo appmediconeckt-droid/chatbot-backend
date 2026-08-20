@@ -103,13 +103,6 @@ const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
     email: SUPPORT_EMAIL,
     name: "Humaeli Support",
   },
-  headers: {
-    "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
-    "X-Mailer": "Humaeli Mail Service",
-    "X-Priority": "3",
-  },
-  amp4email: false,
-  trackingParams: "utm_source=humaeli&utm_medium=email",
 });
 
 async function sendBrevoRequest(payload) {
