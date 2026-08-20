@@ -199,6 +199,7 @@ async function sendGmailEmail({ to, subject, html, text }) {
           host: SMTP_HOST,
           port: SMTP_PORT,
           secure: SMTP_SECURE,
+          family: 4,
           auth: {
             user: SMTP_USER,
             pass: SMTP_PASS,
@@ -213,6 +214,7 @@ async function sendGmailEmail({ to, subject, html, text }) {
             user: GMAIL_SMTP_USER,
             pass: GMAIL_SMTP_PASS,
           },
+          family: 4,
           connectionTimeout: OTP_EMAIL_TIMEOUT_MS,
           greetingTimeout: OTP_EMAIL_TIMEOUT_MS,
           socketTimeout: OTP_EMAIL_TIMEOUT_MS,
@@ -230,7 +232,7 @@ async function sendGmailEmail({ to, subject, html, text }) {
   }
 
   return transporter.sendMail({
-    from: SMTP_FROM_EMAIL,
+    from: `"${FROM_NAME}" <${SMTP_FROM_EMAIL}>`,
     to,
     subject,
     html,
@@ -239,9 +241,11 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
-  const providers = BREVO_API_KEY
-    ? ["brevo"]
-    : ["gmail"];
+  const providers = GMAIL_FALLBACK_ENABLED
+    ? ["gmail"]
+    : BREVO_API_KEY
+      ? ["brevo"]
+      : [];
 
   let lastError;
 
@@ -258,7 +262,12 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
-
+      if (provider === "gmail" && BREVO_API_KEY) {
+        console.warn(
+          `Gmail SMTP delivery failed for ${to}. Falling back to Brevo: ${error.message}`,
+        );
+        continue;
+      }
       throw error;
     }
   }

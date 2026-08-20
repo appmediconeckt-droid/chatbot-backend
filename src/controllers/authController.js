@@ -1078,7 +1078,7 @@ export const sendEmailOTP = async (req, res) => {
     } catch (sendError) {
       console.error("OTP sending error:", sendError);
       return res.status(500).json({
-        message: "Failed to send OTP. Please try again.",
+        message: sendError?.message || "Failed to send OTP. Please try again.",
         success: false,
       });
     }
