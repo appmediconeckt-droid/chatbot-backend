@@ -35,6 +35,7 @@ const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
 const DEFAULT_FROM_EMAIL = "support@humaeli.com";
+const OTP_EMAIL_TIMEOUT_MS = Number(process.env.OTP_EMAIL_TIMEOUT_MS || 15000);
 const ALLOW_UNVERIFIED_BREVO_SENDER =
   process.env.ALLOW_UNVERIFIED_BREVO_SENDER === "true";
 const UNVERIFIED_BREVO_SENDERS = new Set(
@@ -114,29 +115,45 @@ const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
 });
 
 async function sendBrevoRequest(payload) {
-  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: {
-      "api-key": BREVO_API_KEY,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OTP_EMAIL_TIMEOUT_MS);
 
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json().catch(() => ({}))
-    : { message: await response.text() };
+  try {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const errorMessage = data?.message || data?.error || `Brevo API error ${response.status}`;
-    const error = new Error(errorMessage);
-    error.status = response.status;
-    error.body = data;
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json().catch(() => ({}))
+      : { message: await response.text() };
+
+    if (!response.ok) {
+      const errorMessage = data?.message || data?.error || `Brevo API error ${response.status}`;
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.body = data;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error(`Brevo request timed out after ${OTP_EMAIL_TIMEOUT_MS}ms`);
+      timeoutError.code = "OTP_EMAIL_TIMEOUT";
+      throw timeoutError;
+    }
+
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return data;
 }
 
 async function sendBrevoEmail({ to, subject, html, text }) {
@@ -201,6 +218,9 @@ async function sendGmailEmail({ to, subject, html, text }) {
       user: GMAIL_SMTP_USER,
       pass: GMAIL_SMTP_PASS,
     },
+    connectionTimeout: OTP_EMAIL_TIMEOUT_MS,
+    greetingTimeout: OTP_EMAIL_TIMEOUT_MS,
+    socketTimeout: OTP_EMAIL_TIMEOUT_MS,
   });
 
   return transporter.sendMail({
