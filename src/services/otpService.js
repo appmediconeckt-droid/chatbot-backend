@@ -241,11 +241,10 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
-  const providers = GMAIL_FALLBACK_ENABLED
-    ? ["gmail"]
-    : BREVO_API_KEY
-      ? ["brevo"]
-      : [];
+  const isProduction = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+  const providers = isProduction
+    ? (BREVO_API_KEY ? ["brevo"] : (GMAIL_FALLBACK_ENABLED ? ["gmail"] : []))
+    : (GMAIL_FALLBACK_ENABLED ? ["gmail"] : (BREVO_API_KEY ? ["brevo"] : []));
 
   let lastError;
 
@@ -262,7 +261,7 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
-      if (provider === "gmail" && BREVO_API_KEY) {
+      if (provider === "gmail" && BREVO_API_KEY && !isProduction) {
         console.warn(
           `Gmail SMTP delivery failed for ${to}. Falling back to Brevo: ${error.message}`,
         );
