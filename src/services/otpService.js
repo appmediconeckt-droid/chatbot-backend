@@ -60,6 +60,11 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "tru
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
 const SMTP_FROM_EMAIL = String(process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.HUMAELI_EMAIL_FROM || DEFAULT_FROM_EMAIL).trim();
+const DISPLAY_FROM_EMAIL = String(
+  process.env.HUMAELI_DISPLAY_FROM_EMAIL ||
+    process.env.HUMAELI_DISPLAY_EMAIL ||
+    SMTP_FROM_EMAIL,
+).trim();
 // IMPORTANT: every sender here must be verified in Brevo for production delivery.
 const SENDER_EMAILS = [
   process.env.EMAIL_FROM,
@@ -232,7 +237,10 @@ async function sendGmailEmail({ to, subject, html, text }) {
   }
 
   return transporter.sendMail({
-    from: `"${FROM_NAME}" <${SMTP_FROM_EMAIL}>`,
+    from: {
+      name: FROM_NAME,
+      address: DISPLAY_FROM_EMAIL,
+    },
     to,
     subject,
     html,
