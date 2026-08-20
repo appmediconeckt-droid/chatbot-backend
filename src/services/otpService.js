@@ -54,10 +54,16 @@ const GMAIL_SMTP_FROM_EMAIL = String(
   process.env.GMAIL_FROM_EMAIL || GMAIL_SMTP_USER || "",
 ).trim();
 const GMAIL_FALLBACK_ENABLED = Boolean(GMAIL_SMTP_USER && GMAIL_SMTP_PASS);
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || SMTP_PORT === 465;
+const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
+const SMTP_FROM_EMAIL = String(process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.HUMAELI_EMAIL_FROM || DEFAULT_FROM_EMAIL).trim();
 const PREFERRED_OTP_EMAIL_PROVIDER = String(
   process.env.OTP_EMAIL_PROVIDER ||
     process.env.EMAIL_PROVIDER ||
-    (GMAIL_FALLBACK_ENABLED ? "gmail" : "brevo"),
+    (BREVO_API_KEY ? "brevo" : (GMAIL_FALLBACK_ENABLED ? "gmail" : "brevo")),
 )
   .trim()
   .toLowerCase();
@@ -212,19 +218,44 @@ function shouldFallbackToGmail(error) {
 }
 
 async function sendGmailEmail({ to, subject, html, text }) {
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: GMAIL_SMTP_USER,
-      pass: GMAIL_SMTP_PASS,
-    },
-    connectionTimeout: OTP_EMAIL_TIMEOUT_MS,
-    greetingTimeout: OTP_EMAIL_TIMEOUT_MS,
-    socketTimeout: OTP_EMAIL_TIMEOUT_MS,
-  });
+  const transporterOptions =
+    SMTP_HOST && SMTP_USER && SMTP_PASS
+      ? {
+          host: SMTP_HOST,
+          port: SMTP_PORT,
+          secure: SMTP_SECURE,
+          auth: {
+            user: SMTP_USER,
+            pass: SMTP_PASS,
+          },
+          connectionTimeout: OTP_EMAIL_TIMEOUT_MS,
+          greetingTimeout: OTP_EMAIL_TIMEOUT_MS,
+          socketTimeout: OTP_EMAIL_TIMEOUT_MS,
+        }
+      : {
+          service: "gmail",
+          auth: {
+            user: GMAIL_SMTP_USER,
+            pass: GMAIL_SMTP_PASS,
+          },
+          connectionTimeout: OTP_EMAIL_TIMEOUT_MS,
+          greetingTimeout: OTP_EMAIL_TIMEOUT_MS,
+          socketTimeout: OTP_EMAIL_TIMEOUT_MS,
+        };
+
+  const transporter = nodemailer.createTransport(transporterOptions);
+
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      await transporter.verify();
+      console.log("SMTP ready");
+    } catch (error) {
+      console.error("SMTP connection failed:", error.message);
+    }
+  }
 
   return transporter.sendMail({
-    from: GMAIL_SMTP_FROM_EMAIL,
+    from: SMTP_FROM_EMAIL,
     to,
     subject,
     html,
