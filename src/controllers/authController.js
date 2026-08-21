@@ -895,9 +895,12 @@ export const updateUserById = async (req, res) => {
     }
 
     // 8. Validate phone number
-    if (updates.phoneNumber && updates.phoneNumber.length !== 10) {
+    if (
+      updates.phoneNumber &&
+      (updates.phoneNumber.length < 7 || updates.phoneNumber.length > 15)
+    ) {
       return res.status(400).json({
-        message: "Phone number must be 10 digits",
+        message: "Enter a valid international phone number",
         success: false,
       });
     }
@@ -3573,7 +3576,7 @@ export const resendPhoneOTP = async (req, res) => {
     }
 
     const otp = otpService.generateOTP();
-    const formattedPhone = `+91${userVerification.phoneNumber}`;
+    const formattedPhone = userVerification.formattedPhone || `+${userVerification.phoneNumber}`;
 
     await twilioClient.messages.create({
       body: `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
@@ -3738,10 +3741,10 @@ export const sendProfileChangeOTP = async (req, res) => {
 
     // field === "phone"
     const cleaned = newValue.replace(/\D/g, "");
-    if (cleaned.length !== 10) {
+    if (cleaned.length < 7 || cleaned.length > 15) {
       return res
         .status(400)
-        .json({ success: false, message: "Phone number must be 10 digits" });
+        .json({ success: false, message: "Enter a valid international phone number" });
     }
     if (cleaned === String(currentUser.phoneNumber || "")) {
       return res.status(400).json({
@@ -3761,7 +3764,7 @@ export const sendProfileChangeOTP = async (req, res) => {
     }
 
     const otp = otpService.generateOTP();
-    const formattedPhone = `+91${cleaned}`;
+    const formattedPhone = `+${cleaned}`;
     profileChangeOTPStore.set(profileChangeKey(userId, "phone"), {
       otp,
       newValue: cleaned,
