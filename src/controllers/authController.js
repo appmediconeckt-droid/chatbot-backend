@@ -81,6 +81,104 @@ const normalizeRole = (role = "") => {
   }
   return normalized;
 };
+const getAgeFromDateOfBirth = (value) => {
+  if (!value) return { date: null, age: null, valid: true };
+
+  const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return { date: null, age: null, valid: false };
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return { date: null, age: null, valid: false };
+  }
+
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  ));
+  if (date > todayUtc) return { date: null, age: null, valid: false };
+
+  let age = todayUtc.getUTCFullYear() - year;
+  const birthdayThisYear = new Date(Date.UTC(todayUtc.getUTCFullYear(), month - 1, day));
+  if (todayUtc < birthdayThisYear) age -= 1;
+
+  return { date, age, valid: age >= 0 };
+};
+const isGeneratedUserAvatarUrl = (value = "") => {
+  const url = String(value || "").trim();
+  if (!url) return false;
+  return (
+    url.startsWith("data:image/") ||
+    /^https:\/\/api\.dicebear\.com\//i.test(url)
+  );
+};
+const DEFAULT_PHONE_COUNTRY_CODE = "91";
+const LOCAL_PHONE_NUMBER_LENGTH = 10;
+const normalizePhoneNumber = (value = "", fallbackCountryCode = DEFAULT_PHONE_COUNTRY_CODE) => {
+  const raw = String(value || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  const fallbackDigits = String(fallbackCountryCode || DEFAULT_PHONE_COUNTRY_CODE).replace(/\D/g, "") || DEFAULT_PHONE_COUNTRY_CODE;
+  const countryCode = `+${fallbackDigits}`;
+
+  if (!digits) {
+    return {
+      digits: "",
+      formatted: "",
+      smsFormatted: "",
+      countryCode,
+      isValid: false,
+      duplicateValues: [],
+    };
+  }
+
+  let localDigits = digits;
+  if (localDigits.length > LOCAL_PHONE_NUMBER_LENGTH) {
+    const prefixes = Array.from(
+      new Set([fallbackDigits, DEFAULT_PHONE_COUNTRY_CODE].filter(Boolean)),
+    );
+    const matchingPrefix = prefixes.find(
+      (prefix) =>
+        localDigits.startsWith(prefix) &&
+        localDigits.length - prefix.length === LOCAL_PHONE_NUMBER_LENGTH,
+    );
+    if (matchingPrefix) {
+      localDigits = localDigits.slice(matchingPrefix.length);
+    }
+  }
+
+  const formatted = localDigits;
+  const smsFormatted = `+${fallbackDigits}${localDigits}`;
+  const duplicateValues = Array.from(
+    new Set([
+      formatted,
+      smsFormatted,
+      `${fallbackDigits}${localDigits}`,
+      `+${DEFAULT_PHONE_COUNTRY_CODE}${localDigits}`,
+      `${DEFAULT_PHONE_COUNTRY_CODE}${localDigits}`,
+      digits,
+    ].filter(Boolean)),
+  );
+
+  return {
+    digits: localDigits,
+    formatted,
+    smsFormatted,
+    countryCode,
+    isValid: localDigits.length === LOCAL_PHONE_NUMBER_LENGTH,
+    duplicateValues,
+  };
+};
 const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
 
 const saveLoginOTP = async ({ userId, email, otp }) => {
@@ -247,17 +345,32 @@ export const updateUserById = async (req, res) => {
         success: false,
       });
     }
+    const isPatientUser = normalizeRole(currentUser.role) === "user";
 
     // Prepare updates object
     const updates = {};
 
-    // 1. Handle Profile Photo Upload
+    // 1. Handle profile image. Patient users are avatar-only: direct photo
+    // uploads and Google profile pictures must never become their profile image.
     if (
       req.files &&
       req.files["profilePhoto"] &&
       req.files["profilePhoto"][0]
     ) {
       const profileFile = req.files["profilePhoto"][0];
+      if (isPatientUser) {
+        if (profileFile?.filename) {
+          try {
+            await cloudinary.uploader.destroy(profileFile.filename);
+          } catch (err) {
+            console.error("Error deleting rejected user profile photo:", err);
+          }
+        }
+        return res.status(400).json({
+          message: "Users can update only a generated avatar, not a profile photo.",
+          success: false,
+        });
+      }
       // console.log(
       //   "Processing profile photo:",
       //   profileFile.originalname,
@@ -287,7 +400,17 @@ export const updateUserById = async (req, res) => {
         format: profileFile.format || null,
         bytes: profileFile.bytes || null,
       };
-    } else if (req.body.avatarUrl && typeof req.body.avatarUrl === "string" && req.body.avatarUrl.startsWith("http")) {
+    } else if (
+      req.body.avatarUrl &&
+      typeof req.body.avatarUrl === "string" &&
+      (req.body.avatarUrl.startsWith("http") || req.body.avatarUrl.startsWith("data:image/"))
+    ) {
+      if (isPatientUser && !isGeneratedUserAvatarUrl(req.body.avatarUrl)) {
+        return res.status(400).json({
+          message: "Users can update only a generated avatar.",
+          success: false,
+        });
+      }
       // Avatar URL from generator (DiceBear etc.) — store directly, no file upload
       if (
         process.env.CLOUDINARY_CLOUD_NAME &&
@@ -302,7 +425,7 @@ export const updateUserById = async (req, res) => {
           console.error("Error deleting old photo on avatar switch:", err);
         }
       }
-      updates.profilePhoto = { url: req.body.avatarUrl, publicId: null };
+      updates.profilePhoto = { url: String(req.body.avatarUrl).trim(), publicId: null };
     } else if (req.body.removeProfilePhoto === "true") {
       if (
         process.env.CLOUDINARY_CLOUD_NAME &&
@@ -756,11 +879,21 @@ export const updateUserById = async (req, res) => {
       }
 
       if (field === "phoneNumber") {
-        const incoming = String(req.body.phoneNumber).replace(/\D/g, "");
-        const current = String(currentUser.phoneNumber || "");
-        if (incoming !== current) {
+        const incomingPhone = normalizePhoneNumber(
+          req.body.phoneNumber,
+          req.body.phoneCountryCode,
+        );
+        if (!incomingPhone.isValid) {
+          return res.status(400).json({
+            success: false,
+            message: "Enter a valid phone number",
+            field: "phoneNumber",
+          });
+        }
+        const currentPhone = normalizePhoneNumber(currentUser.phoneNumber || "");
+        if (incomingPhone.formatted !== currentPhone.formatted) {
           const phoneOwner = await User.findOne({
-            phoneNumber: incoming,
+            phoneNumber: { $in: incomingPhone.duplicateValues },
             _id: { $ne: userId },
           })
             .select("_id")
@@ -772,8 +905,31 @@ export const updateUserById = async (req, res) => {
               field: "phoneNumber",
             });
           }
-          updates.phoneNumber = incoming;
+          updates.phoneNumber = incomingPhone.formatted;
         }
+        updates.phoneCountryCode = incomingPhone.countryCode;
+        continue;
+      }
+
+      if (field === "age") {
+        if (req.body.dateOfBirth || currentUser.dateOfBirth) {
+          continue;
+        }
+        updates.age = req.body.age;
+        continue;
+      }
+
+      if (field === "dateOfBirth") {
+        const dob = getAgeFromDateOfBirth(req.body.dateOfBirth);
+        if (!dob.valid || dob.age === null) {
+          return res.status(400).json({
+            success: false,
+            message: "Select a valid date of birth.",
+            field: "dateOfBirth",
+          });
+        }
+        updates.dateOfBirth = dob.date;
+        updates.age = dob.age;
         continue;
       }
 
@@ -895,9 +1051,9 @@ export const updateUserById = async (req, res) => {
     }
 
     // 8. Validate phone number
-    if (updates.phoneNumber && updates.phoneNumber.length !== 10) {
+    if (updates.phoneNumber && !normalizePhoneNumber(updates.phoneNumber).isValid) {
       return res.status(400).json({
-        message: "Phone number must be 10 digits",
+        message: "Enter a valid phone number",
         success: false,
       });
     }
@@ -937,6 +1093,7 @@ export const updateUserById = async (req, res) => {
       });
     }
 
+    const updatedAgeFromDateOfBirth = getAgeFromDateOfBirth(updatedUser.dateOfBirth);
     // 10. Format response with all fields matching frontend structure
     const formattedUser = {
       _id: updatedUser._id,
@@ -944,7 +1101,8 @@ export const updateUserById = async (req, res) => {
       anonymous: updatedUser.anonymous,
       email: updatedUser.email,
       phoneNumber: updatedUser.phoneNumber,
-      age: updatedUser.age,
+      phoneCountryCode: updatedUser.phoneCountryCode,
+      age: updatedAgeFromDateOfBirth.age ?? updatedUser.age,
       gender: updatedUser.gender,
       role: updatedUser.role,
       profilePhoto: updatedUser.profilePhoto,
@@ -1165,7 +1323,7 @@ export const verifyEmailOTP = async (req, res) => {
 // ================= STEP 3: SEND PHONE OTP =================
 export const sendPhoneOTP = async (req, res) => {
   try {
-    const { phoneNumber, email } = req.body;
+    const { phoneNumber, email, phoneCountryCode } = req.body;
 
     if (!phoneNumber) {
       return res
@@ -1196,33 +1354,37 @@ export const sendPhoneOTP = async (req, res) => {
       });
     }
 
-    const cleanedPhone = phoneNumber.replace(/\D/g, "");
+    const normalizedPhone = normalizePhoneNumber(phoneNumber, phoneCountryCode);
 
-    if (cleanedPhone.length !== 10) {
+    if (!normalizedPhone.isValid) {
       return res
         .status(400)
-        .json({ message: "Phone number must be 10 digits", success: false });
+        .json({ message: "Enter a valid phone number", success: false });
     }
 
-    const existingUser = await User.findOne({ phoneNumber: cleanedPhone });
+    const existingUser = await User.findOne({
+      phoneNumber: { $in: normalizedPhone.duplicateValues },
+    });
     if (existingUser) {
       return res
         .status(409)
         .json({ message: "Phone number already registered", success: false });
     }
 
-    const formattedPhone = `+91${cleanedPhone}`;
+    const formattedPhone = normalizedPhone.formatted;
+    const smsPhone = normalizedPhone.smsFormatted;
     const otp = otpService.generateOTP();
 
-    console.log(`📱 Sending Phone OTP to ${formattedPhone}: ${otp}`);
+    console.log(`📱 Sending Phone OTP to ${smsPhone}: ${otp}`);
 
-    userVerification.phoneNumber = cleanedPhone;
+    userVerification.phoneNumber = formattedPhone;
     userVerification.formattedPhone = formattedPhone;
+    userVerification.phoneCountryCode = normalizedPhone.countryCode;
     verifiedUsersStore.set(userEmail, userVerification);
 
     phoneOTPStore.set(userEmail, {
       otp,
-      phoneNumber: cleanedPhone,
+      phoneNumber: formattedPhone,
       formattedPhone,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
@@ -1241,7 +1403,8 @@ export const sendPhoneOTP = async (req, res) => {
       return res.status(200).json({
         message: "Phone OTP generated in development mode",
         success: true,
-        phoneNumber: cleanedPhone,
+        phoneNumber: formattedPhone,
+        phoneCountryCode: normalizedPhone.countryCode,
         email: userEmail,
         devOtp: otp,
       });
@@ -1270,13 +1433,14 @@ export const sendPhoneOTP = async (req, res) => {
       await twilioClient.messages.create({
         body: `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
         from: twilioPhoneNumber,
-        to: formattedPhone,
+        to: smsPhone,
       });
 
       return res.status(200).json({
         message: "Phone OTP sent successfully",
         success: true,
-        phoneNumber: cleanedPhone,
+        phoneNumber: formattedPhone,
+        phoneCountryCode: normalizedPhone.countryCode,
         email: userEmail,
       });
     } catch (sendError) {
@@ -1396,7 +1560,7 @@ export const sendPhoneOTP = async (req, res) => {
 // ================= STEP 4: VERIFY PHONE OTP =================
 export const verifyPhoneOTP = async (req, res) => {
   try {
-    const { phoneNumber, otp, email } = req.body;
+    const { phoneNumber, otp, email, phoneCountryCode } = req.body;
 
     if (!phoneNumber || !otp) {
       return res
@@ -1404,7 +1568,13 @@ export const verifyPhoneOTP = async (req, res) => {
         .json({ message: "Phone number and OTP are required", success: false });
     }
 
-    const cleanedPhone = phoneNumber.replace(/\D/g, "");
+    const normalizedPhone = normalizePhoneNumber(phoneNumber, phoneCountryCode);
+    if (!normalizedPhone.isValid) {
+      return res
+        .status(400)
+        .json({ message: "Enter a valid phone number", success: false });
+    }
+    const cleanedPhone = normalizedPhone.formatted;
     let foundEmail = email;
     let storedData = null;
 
@@ -1448,6 +1618,7 @@ export const verifyPhoneOTP = async (req, res) => {
       userVerification.isPhoneVerified = true;
       userVerification.phoneNumber = cleanedPhone;
       userVerification.formattedPhone = storedData.formattedPhone;
+      userVerification.phoneCountryCode = normalizedPhone.countryCode;
       verifiedUsersStore.set(foundEmail, userVerification);
 
       // DEBUG: Log the verification status
@@ -1464,6 +1635,7 @@ export const verifyPhoneOTP = async (req, res) => {
         isPhoneVerified: true,
         phoneNumber: cleanedPhone,
         formattedPhone: storedData.formattedPhone,
+        phoneCountryCode: normalizedPhone.countryCode,
         expiresAt: Date.now() + 60 * 60 * 1000,
       });
       console.log(
@@ -1499,6 +1671,7 @@ export const completeRegistration = async (req, res) => {
       anonymous,
       email,
       phoneNumber,
+      phoneCountryCode,
       password,
       age,
       gender,
@@ -1527,10 +1700,10 @@ export const completeRegistration = async (req, res) => {
       });
     }
 
-    const cleanedPhone = String(phoneNumber).replace(/\D/g, "");
-    if (cleanedPhone.length !== 10) {
+    const cleanedPhone = normalizePhoneNumber(phoneNumber, phoneCountryCode);
+    if (!cleanedPhone.isValid) {
       return res.status(400).json({
-        message: "Phone number must be 10 digits",
+        message: "Enter a valid phone number",
         success: false,
       });
     }
@@ -1612,7 +1785,10 @@ export const completeRegistration = async (req, res) => {
 
     // Check if user already exists
     const existingUser = await User.findOne({
-      $or: [{ email: normalizedEmail }, { phoneNumber: cleanedPhone }],
+      $or: [
+        { email: normalizedEmail },
+        { phoneNumber: { $in: cleanedPhone.duplicateValues } },
+      ],
     });
 
     if (existingUser) {
@@ -1629,6 +1805,15 @@ export const completeRegistration = async (req, res) => {
     const role = hasCounsellorFields ? "counsellor" : "user";
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const dob = getAgeFromDateOfBirth(dateOfBirth);
+    if (!dob.valid) {
+      return res.status(400).json({
+        message: "Select a valid date of birth.",
+        success: false,
+        field: "dateOfBirth",
+      });
+    }
+    const derivedAge = dob.age ?? (age !== undefined && age !== "" ? Number(age) : null);
 
     // Base user data (common for both roles)
     const userData = {
@@ -1636,8 +1821,9 @@ export const completeRegistration = async (req, res) => {
       anonymous,
       email: normalizedEmail,
       password: hashedPassword,
-      phoneNumber: cleanedPhone,
-      age: age || null,
+      phoneNumber: cleanedPhone.formatted,
+      phoneCountryCode: cleanedPhone.countryCode,
+      age: Number.isFinite(derivedAge) ? derivedAge : null,
       gender: gender || "male",
       role,
       profileCompleted: true,
@@ -1652,7 +1838,7 @@ export const completeRegistration = async (req, res) => {
         history: [],
       },
       // NEW: Add patient profile fields (will be null/empty for counsellors initially)
-      dateOfBirth: dateOfBirth || null,
+      dateOfBirth: dob.date,
       bloodGroup: bloodGroup || null,
       address: address || {
         line1: "",
@@ -2035,8 +2221,9 @@ export const googleAuth = async (req, res) => {
       // Auto-merge: existing local account (no googleId yet), link Google.
       if (!user.googleId) {
         user.googleId = googleId;
-        // Don't overwrite authProvider for existing local users — they can use both
-        if (!user.profilePhoto?.url && picture) {
+        // Don't overwrite authProvider for existing local users — they can use both.
+        // Patient users stay avatar-only, so Google pictures are never copied.
+        if (user.role !== "user" && !user.profilePhoto?.url && picture) {
           user.profilePhoto = { url: picture, publicId: null };
         }
         await user.save();
@@ -2098,7 +2285,7 @@ export const googleAuth = async (req, res) => {
         },
       };
 
-      if (picture) {
+      if (requestedRole !== "user" && picture) {
         newUserData.profilePhoto = { url: picture, publicId: null };
       }
 
@@ -3006,6 +3193,7 @@ export const getMyProfile = async (req, res) => {
       });
     }
 
+    const ageFromDateOfBirth = getAgeFromDateOfBirth(user.dateOfBirth);
     // Format the response with all fields including new patient profile fields
     const formattedProfile = {
       // Basic Info
@@ -3013,7 +3201,8 @@ export const getMyProfile = async (req, res) => {
       fullName: user.fullName,
       email: user.email,
       phoneNumber: user.phoneNumber,
-      age: user.age,
+      phoneCountryCode: user.phoneCountryCode,
+      age: ageFromDateOfBirth.age ?? user.age,
       gender: user.gender,
       role: user.role,
       profilePhoto: user.profilePhoto,
@@ -3291,6 +3480,48 @@ export const setPassword = async (req, res) => {
   }
 };
 
+// ================= VERIFY PASSWORD OTP (no login/session side effects) =================
+export const verifyPasswordOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedOtp = String(otp || "").trim();
+
+    if (!normalizedEmail || !normalizedOtp) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and OTP are required",
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const otpDoc = await OTP.findOne({ userId: user._id, otp: normalizedOtp });
+    if (!otpDoc) {
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+
+    if (otpDoc.expiresAt < Date.now()) {
+      await OTP.deleteMany({ userId: user._id });
+      return res.status(400).json({ success: false, message: "OTP expired" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP verified successfully",
+    });
+  } catch (error) {
+    console.error("verifyPasswordOtp error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error verifying OTP",
+    });
+  }
+};
+
 // ================= CHANGE PASSWORD (authenticated) =================
 export const changePassword = async (req, res) => {
   try {
@@ -3346,7 +3577,7 @@ export const setPasswordByOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
 
-    const normalizedEmail = String(email).toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
     const verification = verifiedUsersStore.get(normalizedEmail);
     let otpDoc = null;
 
@@ -3573,17 +3804,22 @@ export const resendPhoneOTP = async (req, res) => {
     }
 
     const otp = otpService.generateOTP();
-    const formattedPhone = `+91${userVerification.phoneNumber}`;
+    const normalizedPhone = normalizePhoneNumber(
+      userVerification.phoneNumber,
+      userVerification.phoneCountryCode,
+    );
+    const formattedPhone = normalizedPhone.formatted;
+    const smsPhone = normalizedPhone.smsFormatted;
 
     await twilioClient.messages.create({
       body: `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
       from: TWILIO_PHONE_NUMBER,
-      to: formattedPhone,
+      to: smsPhone,
     });
 
     phoneOTPStore.set(email, {
       otp,
-      phoneNumber: userVerification.phoneNumber,
+      phoneNumber: formattedPhone,
       formattedPhone,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
@@ -3667,7 +3903,7 @@ export const sendProfileChangeOTP = async (req, res) => {
         .json({ success: false, message: "Authentication required" });
     }
 
-    const { field, newValue } = req.body || {};
+    const { field, newValue, phoneCountryCode } = req.body || {};
     if (!["email", "phone"].includes(field)) {
       return res
         .status(400)
@@ -3737,20 +3973,21 @@ export const sendProfileChangeOTP = async (req, res) => {
     }
 
     // field === "phone"
-    const cleaned = newValue.replace(/\D/g, "");
-    if (cleaned.length !== 10) {
+    const cleaned = normalizePhoneNumber(newValue, phoneCountryCode);
+    if (!cleaned.isValid) {
       return res
         .status(400)
-        .json({ success: false, message: "Phone number must be 10 digits" });
+        .json({ success: false, message: "Enter a valid phone number" });
     }
-    if (cleaned === String(currentUser.phoneNumber || "")) {
+    const currentPhone = normalizePhoneNumber(currentUser.phoneNumber || "");
+    if (cleaned.formatted === currentPhone.formatted) {
       return res.status(400).json({
         success: false,
         message: "New phone is the same as the current one",
       });
     }
     const taken = await User.findOne({
-      phoneNumber: cleaned,
+      phoneNumber: { $in: cleaned.duplicateValues },
       _id: { $ne: userId },
     });
     if (taken) {
@@ -3761,15 +3998,16 @@ export const sendProfileChangeOTP = async (req, res) => {
     }
 
     const otp = otpService.generateOTP();
-    const formattedPhone = `+91${cleaned}`;
+    const formattedPhone = cleaned.formatted;
+    const smsPhone = cleaned.smsFormatted;
     profileChangeOTPStore.set(profileChangeKey(userId, "phone"), {
       otp,
-      newValue: cleaned,
+      newValue: formattedPhone,
       expiresAt: Date.now() + PROFILE_CHANGE_OTP_TTL_MS,
     });
 
     try {
-      const result = await sendProfileChangeOtpViaSMS(formattedPhone, otp);
+      const result = await sendProfileChangeOtpViaSMS(smsPhone, otp);
       const devOtp =
         result.devOtp && process.env.NODE_ENV !== "production"
           ? { devOtp: result.devOtp }
@@ -3802,7 +4040,7 @@ export const verifyProfileChangeOTP = async (req, res) => {
         .json({ success: false, message: "Authentication required" });
     }
 
-    const { field, newValue, otp } = req.body || {};
+    const { field, newValue, otp, phoneCountryCode } = req.body || {};
     if (!["email", "phone"].includes(field)) {
       return res
         .status(400)
@@ -3832,7 +4070,7 @@ export const verifyProfileChangeOTP = async (req, res) => {
     const normalisedNew =
       field === "email"
         ? String(newValue).trim().toLowerCase()
-        : String(newValue).replace(/\D/g, "");
+        : normalizePhoneNumber(newValue, phoneCountryCode).formatted;
 
     if (stored.newValue !== normalisedNew) {
       return res.status(400).json({
@@ -3885,7 +4123,7 @@ export const consumeVerifiedProfileChange = (userId, field, attemptedValue) => {
   const attempt =
     field === "email"
       ? String(attemptedValue).trim().toLowerCase()
-      : String(attemptedValue).replace(/\D/g, "");
+      : normalizePhoneNumber(attemptedValue).formatted;
   if (verified.newValue !== attempt) {
     return {
       ok: false,

@@ -16,6 +16,7 @@ import {
   forgotPassword,
   setPassword,
   changePassword,
+  verifyPasswordOtp,
   setPasswordByOtp,
   resetPassword,
   refreshAccessTokenHandler,
@@ -71,7 +72,8 @@ authRoutes.post("/session-heartbeat", authMiddleware, sessionHeartbeat);
 // Password management for both users and counsellors
 authRoutes.post("/setPassword", authMiddleware, setPassword);
 authRoutes.post("/changePassword", authMiddleware, changePassword);
-// Unauthenticated endpoint: set password after email OTP verification
+// Password OTP endpoints do not create login sessions during settings flows.
+authRoutes.post("/verify-password-otp", verifyPasswordOtp);
 authRoutes.post("/set-password-by-otp", setPasswordByOtp);
 authRoutes.post("/refresh-token", refreshAccessTokenHandler);
 authRoutes.post("/logout-all", authMiddleware, logoutAllDevices);

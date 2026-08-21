@@ -23,6 +23,11 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: function() { return !this.googleId; }
     },
+    phoneCountryCode: {
+        type: String,
+        trim: true,
+        default: "+91"
+    },
     password: {
         type: String,
         required: function() { return !this.googleId; }
@@ -378,11 +383,37 @@ userSchema.index(
     }
 );
 
+const calculateAgeFromDateOfBirth = (value) => {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const today = new Date();
+    let age = today.getUTCFullYear() - date.getUTCFullYear();
+    const birthdayThisYear = new Date(Date.UTC(
+        today.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate()
+    ));
+    const todayUtc = new Date(Date.UTC(
+        today.getUTCFullYear(),
+        today.getUTCMonth(),
+        today.getUTCDate()
+    ));
+
+    if (todayUtc < birthdayThisYear) age -= 1;
+    return age >= 0 ? age : null;
+};
+
 // ✅ NO PRE-SAVE HOOK - We'll generate uniqueCode in the controller
 
 // Remove sensitive data when converting to JSON
 userSchema.methods.toJSON = function() {
     const user = this.toObject();
+    const ageFromDateOfBirth = calculateAgeFromDateOfBirth(user.dateOfBirth);
+    if (ageFromDateOfBirth !== null) {
+        user.age = ageFromDateOfBirth;
+    }
     user.hasPassword = Boolean(user.password);
     delete user.password;
     delete user.profilePhotoPublicId;
