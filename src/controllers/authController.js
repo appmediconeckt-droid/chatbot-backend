@@ -1198,10 +1198,10 @@ export const sendPhoneOTP = async (req, res) => {
 
     const cleanedPhone = phoneNumber.replace(/\D/g, "");
 
-    if (cleanedPhone.length !== 10) {
+    if (cleanedPhone.length < 7 || cleanedPhone.length > 15) {
       return res
         .status(400)
-        .json({ message: "Phone number must be 10 digits", success: false });
+        .json({ message: "Enter a valid international phone number", success: false });
     }
 
     const existingUser = await User.findOne({ phoneNumber: cleanedPhone });
@@ -1211,7 +1211,7 @@ export const sendPhoneOTP = async (req, res) => {
         .json({ message: "Phone number already registered", success: false });
     }
 
-    const formattedPhone = `+91${cleanedPhone}`;
+    const formattedPhone = `+${cleanedPhone}`;
     const otp = otpService.generateOTP();
 
     console.log(`📱 Sending Phone OTP to ${formattedPhone}: ${otp}`);
@@ -1528,9 +1528,9 @@ export const completeRegistration = async (req, res) => {
     }
 
     const cleanedPhone = String(phoneNumber).replace(/\D/g, "");
-    if (cleanedPhone.length !== 10) {
+    if (cleanedPhone.length < 7 || cleanedPhone.length > 15) {
       return res.status(400).json({
-        message: "Phone number must be 10 digits",
+        message: "Enter a valid international phone number",
         success: false,
       });
     }

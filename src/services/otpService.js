@@ -24,13 +24,6 @@ const FROM_NAME = "Humaeli";
 
 // ⚠️ IMPORTANT: FROM_EMAIL must exactly match the authenticated domain in Brevo dashboard
 // (same subdomain, same TLD). Mismatches will cause authentication failures.
-const configuredFromEmail =
-  process.env.EMAIL_FROM ||
-  process.env.HUMAELI_EMAIL_FROM ||
-  process.env.EMAIL_USER ||
-  process.env.EMAIL;
-
-
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
@@ -50,56 +43,33 @@ const GMAIL_SMTP_USER = String(
 const GMAIL_SMTP_PASS = String(
   process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "",
 ).trim();
-const GMAIL_SMTP_FROM_EMAIL = String(
-  process.env.GMAIL_FROM_EMAIL || GMAIL_SMTP_USER || "",
-).trim();
-const GMAIL_FALLBACK_ENABLED = Boolean(GMAIL_SMTP_USER && GMAIL_SMTP_PASS);
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || SMTP_PORT === 465;
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
-const SMTP_FROM_EMAIL = String(process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.HUMAELI_EMAIL_FROM || DEFAULT_FROM_EMAIL).trim();
-const DISPLAY_FROM_EMAIL = String(
-  process.env.HUMAELI_DISPLAY_FROM_EMAIL ||
-    process.env.HUMAELI_DISPLAY_EMAIL ||
+const SMTP_FROM_EMAIL = String(
+  process.env.EMAIL_FROM ||
+    process.env.HUMAELI_EMAIL_FROM ||
+    process.env.EMAIL_USER ||
+    process.env.EMAIL ||
+    DEFAULT_FROM_EMAIL,
+).trim();
+const BREVO_FROM_EMAIL = String(
+  process.env.BREVO_FROM_EMAIL ||
+    process.env.HUMAELI_BREVO_FROM_EMAIL ||
     SMTP_FROM_EMAIL,
 ).trim();
-// IMPORTANT: every sender here must be verified in Brevo for production delivery.
-const SENDER_EMAILS = [
-  process.env.EMAIL_FROM,
-  process.env.HUMAELI_EMAIL_FROM,
-  process.env.VERIFIED_EMAIL_FROM,
-  process.env.EMAIL_USER,
-  process.env.EMAIL,
-  DEFAULT_FROM_EMAIL,
-]
-  .map((email) => String(email || "").trim())
-  .filter(Boolean)
-  .filter(
-    (email) =>
-      ALLOW_UNVERIFIED_BREVO_SENDER ||
-      !UNVERIFIED_BREVO_SENDERS.has(email.toLowerCase()),
-  )
-  .filter((email, index, emails) => emails.indexOf(email) === index);
-
-const FROM_EMAIL = SENDER_EMAILS[0];
+const isProduction = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 
 if (!BREVO_API_KEY) {
   console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
 }
 
-if (configuredFromEmail === "info@humaeli.com") {
-  console.warn(
-    `⚠️ Ignoring unverified Brevo sender(s): ${[...UNVERIFIED_BREVO_SENDERS].join(", ")}`,
-  );
-  console.warn("   Active FROM_EMAIL:", FROM_EMAIL);
-} else {
-  console.log("✅ Primary sender email configured:", FROM_EMAIL);
-}
+console.log("✅ Primary sender email configured:", isProduction ? BREVO_FROM_EMAIL : SMTP_FROM_EMAIL);
 
-const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
-  sender: { name: FROM_NAME, email: senderEmail },
+const buildBrevoPayload = ({ to, subject, html, text }) => ({
+  sender: { name: FROM_NAME, email: BREVO_FROM_EMAIL },
   to: [{ email: to }],
   subject,
   htmlContent: html || "",
@@ -157,44 +127,14 @@ async function sendBrevoEmail({ to, subject, html, text }) {
     throw new Error("Brevo API key is missing. Cannot send email.");
   }
 
-  let lastError;
-  for (const senderEmail of SENDER_EMAILS) {
-    try {
-      const payload = buildBrevoPayload({
-        senderEmail,
-        to,
-        subject,
-        html,
-        text,
-      });
+  const payload = buildBrevoPayload({
+    to,
+    subject,
+    html,
+    text,
+  });
 
-      const data = await sendBrevoRequest(payload);
-      if (senderEmail !== FROM_EMAIL) {
-        console.log(
-          `✅ Email sent using fallback sender ${senderEmail} because primary sender failed or was unavailable.`,
-        );
-      }
-      return data;
-    } catch (error) {
-      lastError = error;
-      const message = String(error.message || "").toLowerCase();
-      console.warn(
-        `Brevo send failed for sender ${senderEmail}: ${message}`,
-        error.body || error,
-      );
-
-      if (
-        senderEmail === SENDER_EMAILS[SENDER_EMAILS.length - 1] ||
-        !/sender|from.*email|sender.*id|unverified/i.test(message)
-      ) {
-        continue;
-      }
-    }
-  }
-
-  throw new Error(
-    `Failed to send email via Brevo. Last error: ${lastError?.message || "Unknown error"}`,
-  );
+  return sendBrevoRequest(payload);
 }
 
 async function sendGmailEmail({ to, subject, html, text }) {
@@ -249,17 +189,15 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
-  const isProduction = String(process.env.NODE_ENV || "").toLowerCase() === "production";
   const providers = isProduction
-    ? (BREVO_API_KEY ? ["brevo"] : (GMAIL_FALLBACK_ENABLED ? ["gmail"] : []))
-    : (GMAIL_FALLBACK_ENABLED ? ["gmail"] : (BREVO_API_KEY ? ["brevo"] : []));
+    ? (BREVO_API_KEY ? ["brevo"] : [])
+    : (SMTP_HOST || SMTP_USER || SMTP_PASS ? ["gmail"] : (BREVO_API_KEY ? ["brevo"] : []));
 
   let lastError;
 
   for (const provider of providers) {
     try {
       if (provider === "gmail") {
-        if (!GMAIL_FALLBACK_ENABLED) continue;
         const data = await sendGmailEmail({ to, subject, html, text });
         return { ...data, provider: "gmail" };
       }
