@@ -1,0 +1,71 @@
+import { expect } from "chai";
+import sinon from "sinon";
+import {
+  sendEmailOTP,
+  verifyEmailOTP,
+} from "../src/controllers/authController.js";
+import User from "../src/models/userModel.js";
+import otpService from "../src/services/otpService.js";
+
+describe("Registration email OTP controller", function () {
+  let sandbox;
+
+  beforeEach(function () {
+    sandbox = sinon.createSandbox();
+    process.env.ACCESS_SECRET = process.env.ACCESS_SECRET || "test-access-secret";
+  });
+
+  afterEach(function () {
+    sandbox.restore();
+  });
+
+  const createRes = () => ({
+    status: sinon.stub().returnsThis(),
+    json: sinon.spy(),
+  });
+
+  const sendOtpFor = async (email, otp = "123456") => {
+    sandbox.stub(User, "findOne").returns({
+      select: sinon.stub().returns({
+        lean: sinon.stub().resolves(null),
+      }),
+    });
+    sandbox.stub(otpService, "generateOTP").returns(otp);
+    sandbox.stub(otpService, "sendEmailOTP").resolves({ messageId: "test" });
+
+    const req = { body: { email } };
+    const res = createRes();
+
+    await sendEmailOTP(req, res);
+
+    expect(res.status.calledWith(200)).to.equal(true);
+  };
+
+  it("rejects an incorrect registration email OTP", async function () {
+    const email = `wrong-${Date.now()}@example.com`;
+    await sendOtpFor(email, "123456");
+
+    const req = { body: { email, otp: "654321" } };
+    const res = createRes();
+
+    await verifyEmailOTP(req, res);
+
+    expect(res.status.calledWith(400)).to.equal(true);
+    expect(res.json.calledWithMatch({ success: false, message: "Invalid OTP" })).to.equal(true);
+  });
+
+  it("verifies only the issued registration email OTP", async function () {
+    const email = `right-${Date.now()}@example.com`;
+    await sendOtpFor(email, "234567");
+
+    const req = { body: { email: ` ${email.toUpperCase()} `, otp: " 234567 " } };
+    const res = createRes();
+
+    await verifyEmailOTP(req, res);
+
+    expect(res.status.calledWith(200)).to.equal(true);
+    expect(res.json.calledWithMatch({ success: true, email })).to.equal(true);
+    const payload = res.json.firstCall.args[0];
+    expect(payload.emailVerificationToken).to.be.a("string").and.not.empty;
+  });
+});

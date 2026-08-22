@@ -74,6 +74,7 @@ const PROFILE_CHANGE_OTP_TTL_MS = 10 * 60 * 1000; // 10 min to enter the OTP
 const PROFILE_CHANGE_VERIFIED_TTL_MS = 15 * 60 * 1000; // 15 min to hit Save
 
 const normalizeEmail = (email = "") => String(email).trim().toLowerCase();
+const normalizeOtp = (otp = "") => String(otp).trim();
 const normalizeRole = (role = "") => {
   const normalized = String(role).trim().toLowerCase();
   if (["counselor", "counsellor", "counsellour"].includes(normalized)) {
@@ -1254,14 +1255,19 @@ export const sendEmailOTP = async (req, res) => {
 export const verifyEmailOTP = async (req, res) => {
   try {
     const { email, otp } = req.body;
+    const normalizedOtp = normalizeOtp(otp);
 
-    if (!email || !otp) {
+    if (!email || !normalizedOtp) {
       return res
         .status(400)
         .json({ message: "Email and OTP are required", success: false });
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
+    if (!/^\d{6}$/.test(normalizedOtp)) {
+      return res.status(400).json({ message: "Invalid OTP", success: false });
+    }
+
     const storedData = emailOTPStore.get(normalizedEmail);
 
     if (!storedData) {
@@ -1279,7 +1285,7 @@ export const verifyEmailOTP = async (req, res) => {
       });
     }
 
-    if (storedData.otp !== otp) {
+    if (String(storedData.otp) !== normalizedOtp) {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
