@@ -63,10 +63,20 @@ export const book = async (req, res) => {
         .json({ message: "counselorId and date are required" });
     }
 
+    const appointmentDate = new Date(date);
+    if (Number.isNaN(appointmentDate.getTime())) {
+      return res.status(400).json({ message: "Invalid appointment date" });
+    }
+    if (appointmentDate.getTime() <= Date.now()) {
+      return res.status(400).json({
+        message: "Appointment date and time must be in the future",
+      });
+    }
+
     const appointment = await Appointment.create({
       patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
       counselor: counselorId,
-      date,
+      date: appointmentDate,
       notes,
     });
 
@@ -170,6 +180,15 @@ export const updateStatus = async (req, res) => {
       appointment.counselor.toString() !== userId.toString()
     ) {
       return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (
+      String(status).toLowerCase() === "confirmed" &&
+      new Date(appointment.date).getTime() <= Date.now()
+    ) {
+      return res.status(400).json({
+        message: "A past appointment cannot be confirmed or booked",
+      });
     }
 
     appointment.status = status;
