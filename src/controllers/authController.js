@@ -1046,9 +1046,7 @@ export const updateUserById = async (req, res) => {
       const mergedLoc = updates.location ?? currentUser.location;
       const specOk = Array.isArray(mergedSpec) ? mergedSpec.length > 0 : !!mergedSpec;
       const hasAllRequired = specOk && !!mergedExp && !!mergedQual && !!mergedLoc;
-      if (hasAllRequired) {
-        updates.profileCompleted = true;
-      }
+      updates.profileCompleted = hasAllRequired;
     }
 
     // 8. Validate phone number
@@ -2013,14 +2011,16 @@ export const loginUser = async (req, res) => {
     }
 
     if (normalizeRole(user.role) !== role) {
-      return res.status(401).json({
+      return res.status(403).json({
         message:
           normalizeRole(user.role) === "counsellor"
             ? "This account is registered as a counsellor. Please use counsellor login."
             : "This account is registered as a user. Please use user login.",
         success: false,
         roleMismatch: true,
+        code: "ROLE_MISMATCH",
         actualRole: user.role,
+        requestedRole: role,
       });
     }
 
@@ -3066,7 +3066,18 @@ export const getAllCounsellors = async (req, res) => {
   try {
     const { specialization, location, consultationMode, minExperience } =
       req.query;
-    let filter = { role: "counsellor", isActive: true, profileCompleted: true };
+    let filter = {
+      role: "counsellor",
+      isActive: true,
+      profileCompleted: true,
+      "specialization.0": { $exists: true },
+      experience: { $gt: 0 },
+      location: { $nin: ["", null] },
+      $or: [
+        { qualification: { $nin: ["", null] } },
+        { education: { $nin: ["", null] } },
+      ],
+    };
 
     if (specialization) filter.specialization = { $in: [specialization] };
     if (location) filter.location = { $regex: location, $options: "i" };
@@ -3159,6 +3170,14 @@ export const getCounsellorById = async (req, res) => {
       _id: counsellorId,
       role: "counsellor",
       isActive: true,
+      profileCompleted: true,
+      "specialization.0": { $exists: true },
+      experience: { $gt: 0 },
+      location: { $nin: ["", null] },
+      $or: [
+        { qualification: { $nin: ["", null] } },
+        { education: { $nin: ["", null] } },
+      ],
     });
 
     if (!counsellor) {
@@ -3265,6 +3284,11 @@ export const getMyProfile = async (req, res) => {
       formattedProfile.consultationMode = user.consultationMode;
       formattedProfile.languages = user.languages;
       formattedProfile.aboutMe = user.aboutMe;
+      formattedProfile.education = user.education;
+      formattedProfile.certifications = user.certifications || [];
+      formattedProfile.rating = user.rating || 0;
+      formattedProfile.totalSessions = user.totalSessions || 0;
+      formattedProfile.activeClients = user.activeClients || 0;
     }
 
     return res.status(200).json({

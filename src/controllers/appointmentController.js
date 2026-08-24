@@ -1,5 +1,6 @@
 // mindCrawller/src/controllers/appointmentController.js
 import Appointment from "../models/appointmentModel.js";
+import User from "../models/userModel.js";
 import { createNotificationSafely } from "../services/notificationService.js";
 
 // Delete appointments that never became a completed/confirmed session once
@@ -61,6 +62,19 @@ export const book = async (req, res) => {
       return res
         .status(400)
         .json({ message: "counselorId and date are required" });
+    }
+
+    const counselor = await User.findOne({
+      _id: counselorId,
+      role: "counsellor",
+      isActive: true,
+      profileCompleted: true,
+    }).select("_id");
+
+    if (!counselor) {
+      return res.status(404).json({
+        message: "Counselor not found or profile is not complete yet",
+      });
     }
 
     const appointment = await Appointment.create({
