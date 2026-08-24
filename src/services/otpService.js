@@ -33,6 +33,8 @@ const FROM_EMAIL =
   configuredFromEmail === "info@humaeli.com"
     ? VERIFIED_FALLBACK_FROM_EMAIL
     : configuredFromEmail || VERIFIED_FALLBACK_FROM_EMAIL;
+const UNVERIFIED_BREVO_SENDERS =
+  configuredFromEmail === "info@humaeli.com" ? [configuredFromEmail] : [];
 const SENDER_EMAILS = [...new Set([FROM_EMAIL, VERIFIED_FALLBACK_FROM_EMAIL])];
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;

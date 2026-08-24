@@ -4,6 +4,7 @@ import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import OTP from "../models/otpModel.js";
 import LoginOTP from "../models/loginOtpModel.js";
+import RegistrationOTP from "../models/registrationOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
@@ -31,6 +32,8 @@ const verifiedUsersStore = new Map();
 const emailOTPStore = new Map();
 const phoneOTPStore = new Map();
 const EMAIL_VERIFICATION_PURPOSE = "registration_email_verified";
+const REGISTRATION_EMAIL_OTP_PURPOSE = "registration_email";
+const REGISTRATION_OTP_TTL_MS = 10 * 60 * 1000;
 
 // Public aggregate counters used by the landing page. Only totals are exposed.
 export const getLandingStats = async (_req, res) => {
@@ -1219,12 +1222,19 @@ export const sendEmailOTP = async (req, res) => {
     }
 
     const otp = otpService.generateOTP(normalizedEmail);
+    const expiresAt = new Date(Date.now() + REGISTRATION_OTP_TTL_MS);
 
     try {
       await otpService.sendEmailOTP(normalizedEmail, otp, "User");
       emailOTPStore.set(normalizedEmail, {
         otp,
-        expiresAt: Date.now() + 10 * 60 * 1000,
+        expiresAt: expiresAt.getTime(),
+      });
+      await RegistrationOTP.create({
+        email: normalizedEmail,
+        otp: String(otp),
+        purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+        expiresAt,
       });
 
       return res.status(200).json({
@@ -1266,24 +1276,52 @@ export const verifyEmailOTP = async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
-    const storedData = emailOTPStore.get(normalizedEmail);
+    const now = Date.now();
+    const nowDate = new Date(now);
+    let storedData = emailOTPStore.get(normalizedEmail);
 
-    if (!storedData) {
+    if (storedData && now > storedData.expiresAt) {
+      emailOTPStore.delete(normalizedEmail);
+      storedData = null;
+    }
+
+    await RegistrationOTP.deleteMany({
+      email: normalizedEmail,
+      purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+      expiresAt: { $lte: nowDate },
+    });
+
+    const memoryOtpMatches =
+      storedData && String(storedData.otp) === normalizedOtp;
+    const matchingRegistrationOtp = memoryOtpMatches
+      ? null
+      : await RegistrationOTP.findOne({
+          email: normalizedEmail,
+          otp: normalizedOtp,
+          purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+          expiresAt: { $gt: nowDate },
+        })
+          .sort({ createdAt: -1 })
+          .lean();
+    const hasPendingRegistrationOtp =
+      Boolean(storedData) ||
+      Boolean(matchingRegistrationOtp) ||
+      Boolean(
+        await RegistrationOTP.exists({
+          email: normalizedEmail,
+          purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+          expiresAt: { $gt: nowDate },
+        }),
+      );
+
+    if (!hasPendingRegistrationOtp) {
       return res.status(400).json({
         message: "No OTP found. Please request a new OTP.",
         success: false,
       });
     }
 
-    if (Date.now() > storedData.expiresAt) {
-      emailOTPStore.delete(normalizedEmail);
-      return res.status(400).json({
-        message: "OTP has expired. Please request a new OTP.",
-        success: false,
-      });
-    }
-
-    if (String(storedData.otp) !== normalizedOtp) {
+    if (!memoryOtpMatches && !matchingRegistrationOtp) {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
 
@@ -1300,6 +1338,10 @@ export const verifyEmailOTP = async (req, res) => {
 
     verifiedUsersStore.set(normalizedEmail, userVerification);
     emailOTPStore.delete(normalizedEmail);
+    await RegistrationOTP.deleteMany({
+      email: normalizedEmail,
+      purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+    });
 
     const emailVerificationToken = jwt.sign(
       { email: normalizedEmail, purpose: EMAIL_VERIFICATION_PURPOSE },
@@ -1923,6 +1965,10 @@ export const completeRegistration = async (req, res) => {
     verifiedUsersStore.delete(normalizedEmail);
     emailOTPStore.delete(normalizedEmail);
     phoneOTPStore.delete(normalizedEmail);
+    await RegistrationOTP.deleteMany({
+      email: normalizedEmail,
+      purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+    });
 
     return res.status(201).json({
       message: "Registration completed successfully. Please log in.",
@@ -3791,7 +3837,7 @@ export const checkRegistrationStatus = async (req, res) => {
 
 export const resendEmailOTP = async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = normalizeEmail(req.body?.email);
     if (!email)
       return res
         .status(400)
@@ -3804,9 +3850,16 @@ export const resendEmailOTP = async (req, res) => {
         .json({ message: "No pending verification", success: false });
 
     const otp = otpService.generateOTP(email);
+    const expiresAt = new Date(Date.now() + REGISTRATION_OTP_TTL_MS);
     await otpService.sendEmailOTP(email, otp, "User");
 
-    emailOTPStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+    emailOTPStore.set(email, { otp, expiresAt: expiresAt.getTime() });
+    await RegistrationOTP.create({
+      email,
+      otp: String(otp),
+      purpose: REGISTRATION_EMAIL_OTP_PURPOSE,
+      expiresAt,
+    });
 
     return res
       .status(200)
