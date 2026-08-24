@@ -8,6 +8,9 @@ import RegistrationOTP from "../models/registrationOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
+import Appointment from "../models/appointmentModel.js";
+import Call from "../models/Call.js";
+import Notification from "../models/Notification.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
@@ -3795,8 +3798,18 @@ export const deleteUser = async (req, res) => {
       return res
         .status(404)
         .json({ message: "User not found", success: false });
-    if (user.profilePhoto) deleteLocalFile(user.profilePhoto);
-    await Session.deleteMany({ userId: id });
+    // Product requirement: account deletion removes only these three related
+    // data sets. Chats, messages, transactions, ratings and session records
+    // are intentionally left untouched.
+    await Promise.all([
+      Appointment.deleteMany({ $or: [{ patient: id }, { counselor: id }] }),
+      Call.deleteMany({
+        $or: [{ callerId: id }, { receiverId: id }, { endedBy: id }],
+      }),
+      Notification.deleteMany({
+        $or: [{ recipientId: id }, { actorId: id }],
+      }),
+    ]);
     await User.findByIdAndDelete(id);
     return res
       .status(200)
