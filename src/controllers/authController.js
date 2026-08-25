@@ -23,6 +23,7 @@ import { cleanupAccountData } from "../services/accountCleanupService.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
+import { getStrongPasswordError } from "../utils/passwordPolicy.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -1828,6 +1829,7 @@ export const completeRegistration = async (req, res) => {
       phoneNumber,
       phoneCountryCode,
       password,
+      confirmPassword,
       age,
       gender,
       qualification,
@@ -1863,9 +1865,17 @@ export const completeRegistration = async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
+    const passwordError = getStrongPasswordError(password);
+    if (passwordError) {
       return res.status(400).json({
-        message: "Password must be at least 6 characters",
+        message: passwordError,
+        success: false,
+      });
+    }
+
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return res.status(400).json({
+        message: "Passwords do not match",
         success: false,
       });
     }
@@ -3581,10 +3591,11 @@ export const resetPassword = async (req, res) => {
         .json({ success: false, message: "Passwords do not match" });
     }
 
-    if (password.length < 6) {
+    const passwordError = getStrongPasswordError(password);
+    if (passwordError) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 6 characters",
+        message: passwordError,
       });
     }
 
@@ -3641,8 +3652,9 @@ export const setPassword = async (req, res) => {
     if (!user) {
       return res.status(401).json({ success: false, message: "Authentication required" });
     }
-    if (!password || typeof password !== "string" || password.length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    const passwordError = getStrongPasswordError(password);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const freshUser = await User.findById(user._id);
@@ -3715,8 +3727,9 @@ export const changePassword = async (req, res) => {
     if (!user) {
       return res.status(401).json({ success: false, message: "Authentication required" });
     }
-    if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
-      return res.status(400).json({ success: false, message: "New password must be at least 6 characters" });
+    const passwordError = getStrongPasswordError(newPassword, "New password");
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const freshUser = await User.findById(user._id).select('+password');
@@ -3757,8 +3770,9 @@ export const setPasswordByOtp = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ success: false, message: "Email and password are required" });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    const passwordError = getStrongPasswordError(password);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const normalizedEmail = normalizeEmail(email);
