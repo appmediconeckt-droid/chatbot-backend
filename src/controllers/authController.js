@@ -8,9 +8,6 @@ import RegistrationOTP from "../models/registrationOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
-import Appointment from "../models/appointmentModel.js";
-import Call from "../models/Call.js";
-import Notification from "../models/Notification.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
@@ -22,6 +19,7 @@ import {
   uploadToCloudinary,
   deleteFromCloudinary,
 } from "../utils/uploadHelper.js";
+import { cleanupAccountData } from "../services/accountCleanupService.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
@@ -3905,22 +3903,15 @@ export const deleteUser = async (req, res) => {
       return res
         .status(404)
         .json({ message: "User not found", success: false });
-    // Product requirement: account deletion removes only these three related
-    // data sets. Chats, messages, transactions, ratings and session records
-    // are intentionally left untouched.
-    await Promise.all([
-      Appointment.deleteMany({ $or: [{ patient: id }, { counselor: id }] }),
-      Call.deleteMany({
-        $or: [{ callerId: id }, { receiverId: id }, { endedBy: id }],
-      }),
-      Notification.deleteMany({
-        $or: [{ recipientId: id }, { actorId: id }],
-      }),
-    ]);
+    const cleanup = await cleanupAccountData({ userId: id, email: user.email });
     await User.findByIdAndDelete(id);
     return res
       .status(200)
-      .json({ message: "User deleted successfully", success: true });
+      .json({
+        message: "User deleted successfully",
+        success: true,
+        cleanup,
+      });
   } catch (error) {
     return res
       .status(500)
