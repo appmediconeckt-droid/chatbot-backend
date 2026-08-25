@@ -87,7 +87,6 @@ const visibleCounselorFilter = {
   profileCompleted: true,
   "specialization.0": { $exists: true },
   experience: { $gt: 0 },
-  location: { $nin: ["", null] },
   $and: [
     {
       $or: [

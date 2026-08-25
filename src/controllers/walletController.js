@@ -57,6 +57,15 @@ const withdrawalStatusMessage = (status) => ({
     refunded: 'Amount returned to wallet'
 }[status] || status);
 
+const clampInteger = (value, fallback, min, max) => {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+};
+
+const escapeRegex = (value = '') =>
+    String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Create Razorpay Order
 export const createOrder = async (req, res) => {
     try {
@@ -279,8 +288,16 @@ export const getWalletData = async (req, res) => {
         const userId = req.user._id;
         const user = await User.findById(userId);
         const transactionFilter = { userId };
+        const hasPaginationParams = req.query.page != null || req.query.limit != null;
+        const defaultLimit = req.query.from || req.query.to ? 1000 : 50;
+        const page = clampInteger(req.query.page, 1, 1, 100000);
+        const limit = clampInteger(req.query.limit, defaultLimit, 1, hasPaginationParams ? 100 : defaultLimit);
+        const skip = (page - 1) * limit;
         const from = req.query.from ? new Date(`${req.query.from}T00:00:00.000+05:30`) : null;
         const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999+05:30`) : null;
+        const type = String(req.query.type || '').trim().toLowerCase();
+        const status = String(req.query.status || '').trim().toLowerCase();
+        const search = String(req.query.search || '').trim();
 
         if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
             return res.status(400).json({ message: 'Invalid date range' });
@@ -293,14 +310,35 @@ export const getWalletData = async (req, res) => {
             if (from) transactionFilter.createdAt.$gte = from;
             if (to) transactionFilter.createdAt.$lte = to;
         }
+        if (['credit', 'debit', 'refund'].includes(type)) {
+            transactionFilter.type = type;
+        }
+        if (['pending', 'completed', 'failed', 'hold', 'refunded'].includes(status)) {
+            transactionFilter.status = status;
+        }
+        if (search) {
+            const regex = new RegExp(escapeRegex(search), 'i');
+            const matchingCounselors = await User.find({ fullName: regex }).select('_id').lean();
+            const counselorIds = matchingCounselors.map((counselor) => counselor._id);
+            transactionFilter.$or = [
+                { description: regex },
+                { razorpayPaymentId: regex },
+                { razorpayOrderId: regex },
+                ...(counselorIds.length ? [{ counselorId: { $in: counselorIds } }] : [])
+            ];
+        }
 
         // A selected statement range returns the complete range (up to a safe
         // export limit); the regular wallet view keeps a smaller recent list.
-        const transactions = await Transaction.find(transactionFilter)
-            .populate('counselorId', 'fullName profilePhoto specialization')
-            .sort({ createdAt: -1 })
-            .limit(from || to ? 1000 : 50)
-            .lean();
+        const [transactions, totalTransactions] = await Promise.all([
+            Transaction.find(transactionFilter)
+                .populate('counselorId', 'fullName profilePhoto specialization')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Transaction.countDocuments(transactionFilter)
+        ]);
 
         // Calculate Monthly Spending
         const startOfMonth = new Date();
@@ -332,6 +370,14 @@ export const getWalletData = async (req, res) => {
         res.status(200).json({
             balance: user.walletBalance || 0,
             transactions,
+            pagination: {
+                page,
+                limit,
+                total: totalTransactions,
+                totalPages: Math.max(1, Math.ceil(totalTransactions / limit)),
+                hasNextPage: skip + transactions.length < totalTransactions,
+                hasPreviousPage: page > 1
+            },
             spendingSummary: {
                 total: totalSpent,
                 period: {
