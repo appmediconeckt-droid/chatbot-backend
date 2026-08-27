@@ -25,16 +25,24 @@ const FROM_NAME = "Humaeli";
 // ⚠️ IMPORTANT: Brevo sender email must exactly match an authenticated sender/domain.
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
 const DEFAULT_FROM_EMAIL = "support@humaeli.com";
 const VERIFIED_FALLBACK_FROM_EMAIL = String(
   process.env.VERIFIED_EMAIL_FROM || DEFAULT_FROM_EMAIL,
 ).trim();
+const RESEND_FROM_EMAIL = String(
+  process.env.RESEND_FROM_EMAIL ||
+    process.env.HUMAELI_RESEND_FROM_EMAIL ||
+    process.env.EMAIL_FROM ||
+    process.env.HUMAELI_EMAIL_FROM ||
+    VERIFIED_FALLBACK_FROM_EMAIL,
+).trim();
 const OTP_EMAIL_TIMEOUT_MS = Number(process.env.OTP_EMAIL_TIMEOUT_MS || 15000);
 const ALLOW_UNVERIFIED_BREVO_SENDER =
   process.env.ALLOW_UNVERIFIED_BREVO_SENDER === "true";
 const UNVERIFIED_BREVO_SENDERS = new Set(
-  String(process.env.UNVERIFIED_BREVO_SENDERS || "info@humaeli.com")
+  String(process.env.UNVERIFIED_BREVO_SENDERS ?? "info@humaeli.com")
     .split(",")
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
@@ -43,13 +51,24 @@ const GMAIL_SMTP_USER = String(
   process.env.EMAIL_USER || process.env.EMAIL || "",
 ).trim();
 const GMAIL_SMTP_PASS = String(
-  process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "",
+  process.env.EMAIL_PASSWORD ||
+    process.env.EMAIL_PASS ||
+    process.env.GMAIL_APP_PASSWORD ||
+    "",
 ).trim();
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const EMAIL_HOST = String(process.env.EMAIL_HOST || "").trim();
+const ACTIVE_SMTP_HOST = SMTP_HOST || EMAIL_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || SMTP_PORT === 465;
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
-const SMTP_PASS = String(process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
+const SMTP_PASS = String(
+  process.env.SMTP_PASS ||
+    process.env.EMAIL_PASS ||
+    process.env.EMAIL_PASSWORD ||
+    process.env.GMAIL_APP_PASSWORD ||
+    "",
+).trim();
 const SMTP_FROM_EMAIL = String(
   process.env.EMAIL_FROM ||
     process.env.HUMAELI_EMAIL_FROM ||
@@ -62,7 +81,15 @@ const BREVO_FROM_EMAIL = String(
     process.env.HUMAELI_BREVO_FROM_EMAIL ||
     SMTP_FROM_EMAIL,
 ).trim();
-const isProduction = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+const OTP_EMAIL_PROVIDER = String(
+  process.env.OTP_EMAIL_PROVIDER || process.env.EMAIL_PROVIDER || "auto",
+)
+  .trim()
+  .toLowerCase();
+const OTP_EMAIL_PROVIDER_ORDER = String(process.env.OTP_EMAIL_PROVIDER_ORDER || "")
+  .split(",")
+  .map((provider) => provider.trim().toLowerCase())
+  .filter(Boolean);
 const activeBrevoFromEmail =
   !ALLOW_UNVERIFIED_BREVO_SENDER &&
   UNVERIFIED_BREVO_SENDERS.has(BREVO_FROM_EMAIL.toLowerCase())
@@ -81,7 +108,21 @@ if (activeBrevoFromEmail !== BREVO_FROM_EMAIL) {
   console.warn("   Active Brevo sender:", activeBrevoFromEmail);
 }
 
-console.log("✅ Primary sender email configured:", isProduction ? activeBrevoFromEmail : SMTP_FROM_EMAIL);
+const hasSmtpConfig = Boolean(
+  (ACTIVE_SMTP_HOST && SMTP_USER && SMTP_PASS) ||
+    (GMAIL_SMTP_USER && GMAIL_SMTP_PASS),
+);
+const hasBrevoConfig = Boolean(BREVO_API_KEY);
+const hasResendConfig = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+
+console.log(
+  "✅ Primary sender email configured:",
+  OTP_EMAIL_PROVIDER === "resend"
+    ? RESEND_FROM_EMAIL
+    : OTP_EMAIL_PROVIDER === "brevo" || (!hasSmtpConfig && !hasResendConfig && hasBrevoConfig)
+    ? activeBrevoFromEmail
+    : SMTP_FROM_EMAIL,
+);
 
 const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
   sender: { name: FROM_NAME, email: senderEmail },
@@ -94,12 +135,11 @@ const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
     name: "Humaeli Support",
   },
   headers: {
-    "List-Unsubscribe": `<mailto:${SUPPORT_EMAIL}?subject=unsubscribe>`,
     "X-Mailer": "Humaeli Mail Service",
     "X-Priority": "3",
+    "X-Auto-Response-Suppress": "All",
   },
   amp4email: false,
-  trackingParams: "utm_source=humaeli&utm_medium=email",
 });
 
 async function sendBrevoRequest(payload) {
@@ -187,11 +227,48 @@ async function sendBrevoEmail({ to, subject, html, text }) {
   );
 }
 
+async function sendResendEmail({ to, subject, html, text }) {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+    throw new Error("Resend is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL.");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${RESEND_API_KEY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: `${FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [to],
+      subject,
+      html,
+      text: text || DEFAULT_EMAIL_TEXT,
+      reply_to: SUPPORT_EMAIL,
+      headers: {
+        "X-Mailer": "Humaeli Mail Service",
+        "X-Auto-Response-Suppress": "All",
+      },
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const errorMessage = data?.message || data?.error || `Resend API error ${response.status}`;
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    error.body = data;
+    throw error;
+  }
+
+  return { ...data, messageId: data?.id };
+}
+
 async function sendGmailEmail({ to, subject, html, text }) {
   const transporterOptions =
-    SMTP_HOST && SMTP_USER && SMTP_PASS
+    ACTIVE_SMTP_HOST && SMTP_USER && SMTP_PASS
       ? {
-          host: SMTP_HOST,
+          host: ACTIVE_SMTP_HOST,
           port: SMTP_PORT,
           secure: SMTP_SECURE,
           family: 4,
@@ -238,10 +315,44 @@ async function sendGmailEmail({ to, subject, html, text }) {
   });
 }
 
+function getConfiguredProviders() {
+  if (["brevo", "sendinblue"].includes(OTP_EMAIL_PROVIDER)) {
+    return hasBrevoConfig ? ["brevo"] : [];
+  }
+
+  if (OTP_EMAIL_PROVIDER === "resend") {
+    return hasResendConfig ? ["resend"] : [];
+  }
+
+  if (["gmail", "smtp"].includes(OTP_EMAIL_PROVIDER)) {
+    return hasSmtpConfig ? ["gmail"] : [];
+  }
+
+  if (OTP_EMAIL_PROVIDER_ORDER.length > 0) {
+    const providerSet = new Set(
+      OTP_EMAIL_PROVIDER_ORDER.map((provider) => {
+        if (provider === "smtp") return "gmail";
+        if (provider === "sendinblue") return "brevo";
+        return provider;
+      }),
+    );
+    return [...providerSet].filter((provider) => {
+      if (provider === "gmail") return hasSmtpConfig;
+      if (provider === "resend") return hasResendConfig;
+      if (provider === "brevo") return hasBrevoConfig;
+      return false;
+    });
+  }
+
+  const providers = [];
+  if (hasSmtpConfig) providers.push("gmail");
+  if (hasResendConfig) providers.push("resend");
+  if (hasBrevoConfig) providers.push("brevo");
+  return providers;
+}
+
 async function sendTransactionalEmail({ to, subject, html, text }) {
-  const providers = isProduction
-    ? (BREVO_API_KEY ? ["brevo"] : [])
-    : (SMTP_HOST || SMTP_USER || SMTP_PASS ? ["gmail"] : (BREVO_API_KEY ? ["brevo"] : []));
+  const providers = getConfiguredProviders();
 
   let lastError;
 
@@ -252,14 +363,19 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
         return { ...data, provider: "gmail" };
       }
 
+      if (provider === "resend") {
+        const data = await sendResendEmail({ to, subject, html, text });
+        return { ...data, provider: "resend" };
+      }
+
       if (!BREVO_API_KEY) continue;
       const data = await sendBrevoEmail({ to, subject, html, text });
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
-      if (provider === "gmail" && BREVO_API_KEY && !isProduction) {
+      if (provider !== providers[providers.length - 1]) {
         console.warn(
-          `Gmail SMTP delivery failed for ${to}. Falling back to Brevo: ${error.message}`,
+          `${provider.toUpperCase()} delivery failed for ${to}. Trying next provider: ${error.message}`,
         );
         continue;
       }

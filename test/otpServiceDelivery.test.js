@@ -4,16 +4,24 @@ import nodemailer from "nodemailer";
 
 const ENV_KEYS = [
   "BREVO_API_KEY",
+  "RESEND_API_KEY",
+  "RESEND_FROM_EMAIL",
   "EMAIL_FROM",
+  "EMAIL_PROVIDER",
   "HUMAELI_EMAIL_FROM",
   "VERIFIED_EMAIL_FROM",
   "EMAIL_USER",
   "EMAIL",
+  "EMAIL_HOST",
+  "EMAIL_PORT",
+  "EMAIL_PASS",
   "EMAIL_PASSWORD",
   "GMAIL_APP_PASSWORD",
   "GMAIL_FROM_EMAIL",
   "UNVERIFIED_BREVO_SENDERS",
   "ALLOW_UNVERIFIED_BREVO_SENDER",
+  "OTP_EMAIL_PROVIDER",
+  "OTP_EMAIL_PROVIDER_ORDER",
 ];
 
 const originalEnv = Object.fromEntries(
@@ -91,6 +99,64 @@ describe("OTP mail delivery", () => {
     expect(createTransportStub.calledOnce).to.equal(true);
     expect(sendMailStub.calledOnce).to.equal(true);
     expect(fetchStub.called).to.equal(false);
+  });
+
+  it("supports EMAIL_HOST and EMAIL_PASS aliases from the existing env file", async () => {
+    delete process.env.BREVO_API_KEY;
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_PASS;
+    process.env.EMAIL_HOST = "smtp.example.com";
+    process.env.EMAIL_PORT = "587";
+    process.env.EMAIL_FROM = "info@humaeli.com";
+    process.env.EMAIL_USER = "info@humaeli.com";
+    process.env.EMAIL_PASS = "app-password";
+    delete process.env.OTP_EMAIL_PROVIDER;
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "smtp-msg-env-alias" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP("developer@mindcrawller.com", "654321");
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(createTransportStub.firstCall.args[0]).to.include({
+      host: "smtp.example.com",
+      port: 587,
+      secure: false,
+    });
+    expect(sendMailStub.calledOnce).to.equal(true);
+  });
+
+  it("can force Resend as the OTP provider for stronger domain delivery", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    process.env.RESEND_FROM_EMAIL = "otp@humaeli.com";
+    process.env.OTP_EMAIL_PROVIDER = "resend";
+    delete process.env.BREVO_API_KEY;
+    delete process.env.EMAIL_USER;
+    delete process.env.EMAIL_PASSWORD;
+    delete process.env.EMAIL_PASS;
+
+    const fetchStub = sinon.stub().resolves({
+      ok: true,
+      headers: { get: () => "application/json" },
+      json: async () => ({ id: "resend-msg-1" }),
+    });
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP("developer@mindcrawller.com", "112233");
+
+    expect(result.provider).to.equal("resend");
+    expect(result.messageId).to.equal("resend-msg-1");
+    expect(fetchStub.calledOnce).to.equal(true);
+
+    const requestBody = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(fetchStub.firstCall.args[0]).to.equal("https://api.resend.com/emails");
+    expect(requestBody.from).to.equal("Humaeli <otp@humaeli.com>");
+    expect(requestBody.to).to.deep.equal(["developer@mindcrawller.com"]);
   });
 
   it("falls back to Brevo when Gmail SMTP fails", async () => {

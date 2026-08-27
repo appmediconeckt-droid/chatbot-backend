@@ -3917,7 +3917,21 @@ export const deleteUser = async (req, res) => {
       return res
         .status(404)
         .json({ message: "User not found", success: false });
+
+    const profilePhotoPublicId = user.profilePhoto?.publicId;
     const cleanup = await cleanupAccountData({ userId: id, email: user.email });
+
+    if (profilePhotoPublicId) {
+      try {
+        await deleteFromCloudinary(profilePhotoPublicId);
+      } catch (photoError) {
+        console.error(
+          "Account deletion profile photo cleanup failed:",
+          photoError?.message || photoError,
+        );
+      }
+    }
+
     await User.findByIdAndDelete(id);
     return res
       .status(200)
@@ -3927,6 +3941,7 @@ export const deleteUser = async (req, res) => {
         cleanup,
       });
   } catch (error) {
+    console.error("deleteUser error:", error);
     return res
       .status(500)
       .json({ message: "Error deleting user", success: false });
