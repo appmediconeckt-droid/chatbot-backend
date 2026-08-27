@@ -1,6 +1,10 @@
 import Notification from "../models/Notification.js";
 
-const enabledNotificationTypes = new Set(["appointment", "payment"]);
+const enabledNotificationTypes = new Set([
+  "appointment",
+  "payment",
+  "message",
+]);
 
 export const createNotification = async ({
   recipientId,

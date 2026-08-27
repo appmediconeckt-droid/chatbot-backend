@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
 import User from "../models/userModel.js";
 
-const visibleNotificationTypes = ["appointment", "payment"];
+const visibleNotificationTypes = ["appointment", "payment", "message"];
 
 export const saveFCMToken = async (req, res) => {
   try {

@@ -179,6 +179,14 @@ export const submitRatingV2 = async (req, res) => {
       counselorId,
     });
     if (existing || status.hasRated) {
+      // Self-heal stale status rows so future eligibility checks cannot reopen
+      // the modal for this counselor.
+      if (existing && !status.hasRated) {
+        await RatingStatus.findOneAndUpdate(
+          { userId: req.user._id, counselorId },
+          { $set: { hasRated: true, remindLaterUntil: null } }
+        );
+      }
       return res
         .status(409)
         .json({ error: "You have already rated this counselor" });

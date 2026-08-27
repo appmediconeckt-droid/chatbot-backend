@@ -81,6 +81,55 @@ const normalizeRole = (role = "") => {
   }
   return normalized;
 };
+
+const hasProfileText = (value) =>
+  typeof value === "string" && value.trim().length > 0;
+
+const hasProfileSelection = (value) =>
+  Array.isArray(value)
+    ? value.some(hasProfileText)
+    : hasProfileText(value);
+
+const isCounsellorProfileComplete = (counsellor = {}) => {
+  const photo = counsellor.profilePhoto;
+  const photoUrl =
+    typeof photo === "string"
+      ? photo
+      : photo?.url || photo?.secureUrl || photo?.secure_url || "";
+  const location = counsellor.location;
+  const hasLocation =
+    hasProfileText(typeof location === "string" ? location : "") ||
+    [location?.city, location?.state, counsellor.city, counsellor.state].some(
+      hasProfileText,
+    );
+  const address = counsellor.address || {};
+  const hasAddress = [
+    address.line1,
+    address.line2,
+    address.street,
+    address.city,
+    address.state,
+    address.pincode,
+  ].some(hasProfileText);
+
+  return [
+    hasProfileText(photoUrl) && !photoUrl.includes("via.placeholder.com"),
+    hasProfileText(counsellor.fullName),
+    hasProfileText(counsellor.email),
+    hasProfileText(counsellor.phoneNumber || counsellor.phone),
+    Boolean(counsellor.dateOfBirth) || Number(counsellor.age) > 0,
+    hasProfileText(counsellor.gender),
+    hasLocation,
+    hasAddress,
+    hasProfileText(counsellor.education || counsellor.qualification),
+    Number(counsellor.experience) > 0,
+    hasProfileText(counsellor.aboutMe),
+    hasProfileSelection(counsellor.specialization),
+    hasProfileSelection(counsellor.languages),
+    hasProfileSelection(counsellor.consultationMode),
+    Array.isArray(counsellor.certifications) && counsellor.certifications.length > 0,
+  ].every(Boolean);
+};
 const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
 
 const saveLoginOTP = async ({ userId, email, otp }) => {
@@ -881,17 +930,14 @@ export const updateUserById = async (req, res) => {
       });
     }
 
-    // 8a. Auto-set profileCompleted for counsellors when required fields are present
+    // 8a. Keep the stored permission flag aligned with the same fields used
+    // by the counselor dashboard's 100% completion meter.
     if (currentUser.role === "counsellor") {
-      const mergedSpec = updates.specialization ?? currentUser.specialization;
-      const mergedExp = updates.experience ?? currentUser.experience;
-      const mergedQual = updates.qualification ?? currentUser.qualification ?? updates.education ?? currentUser.education;
-      const mergedLoc = updates.location ?? currentUser.location;
-      const specOk = Array.isArray(mergedSpec) ? mergedSpec.length > 0 : !!mergedSpec;
-      const hasAllRequired = specOk && !!mergedExp && !!mergedQual && !!mergedLoc;
-      if (hasAllRequired) {
-        updates.profileCompleted = true;
-      }
+      const mergedCounsellor = {
+        ...currentUser.toObject(),
+        ...updates,
+      };
+      updates.profileCompleted = isCounsellorProfileComplete(mergedCounsellor);
     }
 
     // 8. Validate phone number
@@ -2174,6 +2220,10 @@ export const googleAuth = async (req, res) => {
       user: user.toJSON(),
       role: user.role,
       profileCompleted: user.profileCompleted,
+      authProvider: user.authProvider,
+      hasPassword: Boolean(user.password),
+      rating: user.rating || 0,
+      ratingCount: user.ratingCount || 0,
       isNewUser: !user.profileCompleted,
     });
   } catch (error) {
@@ -2876,17 +2926,37 @@ export const getAllCounsellors = async (req, res) => {
   try {
     const { specialization, location, consultationMode, minExperience } =
       req.query;
-    let filter = { role: "counsellor", isActive: true, profileCompleted: true };
+    let filter = { role: "counsellor", isActive: true };
 
     if (specialization) filter.specialization = { $in: [specialization] };
     if (location) filter.location = { $regex: location, $options: "i" };
     if (consultationMode) filter.consultationMode = { $in: [consultationMode] };
     if (minExperience) filter.experience = { $gte: Number(minExperience) };
 
-    const counsellors = await User.find(filter)
+    const activeCounsellors = await User.find(filter)
       .select("-password")
       .sort({ createdAt: -1 })
       .lean();
+
+    // Recalculate at read time so older profiles whose flag became stale are
+    // immediately visible once all required profile fields are complete.
+    const completionUpdates = [];
+    const counsellors = activeCounsellors.filter((counsellor) => {
+      const isComplete = isCounsellorProfileComplete(counsellor);
+      if (counsellor.profileCompleted !== isComplete) {
+        completionUpdates.push({
+          updateOne: {
+            filter: { _id: counsellor._id },
+            update: { $set: { profileCompleted: isComplete } },
+          },
+        });
+      }
+      return isComplete;
+    });
+
+    if (completionUpdates.length > 0) {
+      await User.bulkWrite(completionUpdates);
+    }
 
     const counsellorIds = counsellors.map((counsellor) => counsellor._id);
     const patientConversationCounts = await Message.aggregate([
@@ -2921,7 +2991,12 @@ export const getAllCounsellors = async (req, res) => {
     const counsellorsWithLoginStatus = counsellors.map((counsellor) => {
       // A saved login session is not presence. Only a currently connected
       // authenticated socket makes a counselor online in the directory.
-      const liveOnline = global.socketHandler?.isUserOnline(counsellor._id) === true;
+      // In production the directory request and Socket.IO connection can land
+      // on different instances. Use the live in-memory map when available and
+      // the socket-maintained database flag as a cross-instance fallback.
+      const liveOnline =
+        global.socketHandler?.isUserOnline(counsellor._id) === true ||
+        counsellor.isOnline === true;
       return {
         ...counsellor,
         patientConversationCount:
@@ -2998,9 +3073,7 @@ export const getCounsellorById = async (req, res) => {
 export const getMyProfile = async (req, res) => {
   try {
     const userId = req.userId || req.user?._id;
-    const user = await User.findById(userId).select(
-      "-password -emailOTP -phoneOTP",
-    );
+    const user = await User.findById(userId).select("-emailOTP -phoneOTP");
 
     if (!user) {
       return res.status(404).json({
@@ -3067,12 +3140,14 @@ export const getMyProfile = async (req, res) => {
     // Add counsellor-specific fields if user is counsellor
     if (user.role === "counsellor") {
       formattedProfile.qualification = user.qualification;
+      formattedProfile.education = user.education;
       formattedProfile.specialization = user.specialization;
       formattedProfile.experience = user.experience;
       formattedProfile.location = user.location;
       formattedProfile.consultationMode = user.consultationMode;
       formattedProfile.languages = user.languages;
       formattedProfile.aboutMe = user.aboutMe;
+      formattedProfile.certifications = user.certifications;
     }
 
     return res.status(200).json({
@@ -3334,6 +3409,43 @@ export const changePassword = async (req, res) => {
   } catch (error) {
     console.error("changePassword error:", error);
     return res.status(500).json({ success: false, message: "Error changing password" });
+  }
+};
+
+// Validate the password-management OTP as its own UI step. The OTP is kept
+// until setPasswordByOtp consumes it, so the password cannot be changed with a
+// code that was only accepted by the browser.
+export const verifyPasswordOtp = async (req, res) => {
+  try {
+    const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+    const otp = String(req.body?.otp || "").trim();
+    const authenticatedUserId = req.userId || req.user?._id;
+
+    if (!normalizedEmail || !otp) {
+      return res.status(400).json({ success: false, message: "Email and OTP are required" });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail }).select("_id");
+    if (!user) {
+      return res.status(404).json({ success: false, message: "No user found with this email" });
+    }
+    if (String(user._id) !== String(authenticatedUserId)) {
+      return res.status(403).json({ success: false, message: "You can only verify your own account" });
+    }
+
+    const otpDoc = await OTP.findOne({ userId: user._id, otp });
+    if (!otpDoc) {
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+    if (otpDoc.expiresAt < Date.now()) {
+      await OTP.deleteMany({ userId: user._id });
+      return res.status(400).json({ success: false, message: "OTP expired" });
+    }
+
+    return res.status(200).json({ success: true, message: "OTP verified successfully" });
+  } catch (error) {
+    console.error("verifyPasswordOtp error:", error);
+    return res.status(500).json({ success: false, message: "OTP verification failed" });
   }
 };
 

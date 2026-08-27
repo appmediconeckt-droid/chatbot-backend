@@ -1784,7 +1784,7 @@ getCallHistory: async (req, res) => {
       ? await User.find({
           _id: { $in: participantIds },
         })
-          .select("_id fullName full_name name role anonymous avatar profilePhoto")
+          .select("_id fullName full_name name role anonymous avatar profilePhoto isOnline lastSeen")
           .lean()
           .maxTimeMS(8000)
       : [];
@@ -1858,6 +1858,8 @@ getCallHistory: async (req, res) => {
         withId: otherParticipantId,
         withType: otherParticipantType,
         withProfilePhoto: getAvatar(otherUser, fallbackOtherAvatar),
+        withIsOnline: Boolean(otherUser?.isOnline),
+        withLastSeen: otherUser?.lastSeen || null,
 
         type: call.callType,
         duration: call.duration,

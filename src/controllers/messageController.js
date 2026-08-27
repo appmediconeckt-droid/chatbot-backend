@@ -540,6 +540,21 @@ export const acceptChat = async (req, res) => {
         "fullName specialization profilePhoto rating isActive",
       );
 
+    await createNotificationSafely({
+      recipientId: chat.userId,
+      actorId: req.user._id,
+      type: "message",
+      title: "Chat request accepted",
+      message: `${populatedChat.counselorId?.fullName || "Your counselor"} accepted your chat request.`,
+      data: {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        accepted: true,
+        counselorId: chat.counselorId,
+      },
+      actionUrl: `/chat/${chat._id}`,
+    });
+
     // Get messages
     const messages = await Message.find({
       chatId: chat._id,
