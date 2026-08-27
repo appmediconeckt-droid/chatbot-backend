@@ -10,8 +10,16 @@ const ENV_KEYS = [
   "EMAIL_PROVIDER",
   "HUMAELI_EMAIL_FROM",
   "VERIFIED_EMAIL_FROM",
+  "BREVO_FROM_EMAIL",
+  "HUMAELI_BREVO_FROM_EMAIL",
   "EMAIL_USER",
   "EMAIL",
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_USER",
+  "SMTP_PASS",
+  "SMTP_SECURE",
+  "SMTP_ALLOW_CUSTOM_FROM",
   "EMAIL_HOST",
   "EMAIL_PORT",
   "EMAIL_PASS",
@@ -22,6 +30,10 @@ const ENV_KEYS = [
   "ALLOW_UNVERIFIED_BREVO_SENDER",
   "OTP_EMAIL_PROVIDER",
   "OTP_EMAIL_PROVIDER_ORDER",
+  "RAILWAY_ENVIRONMENT",
+  "RAILWAY_PROJECT_ID",
+  "RAILWAY_SERVICE_ID",
+  "NODE_ENV",
 ];
 
 const originalEnv = Object.fromEntries(
@@ -99,6 +111,63 @@ describe("OTP mail delivery", () => {
     expect(createTransportStub.calledOnce).to.equal(true);
     expect(sendMailStub.calledOnce).to.equal(true);
     expect(fetchStub.called).to.equal(false);
+  });
+
+  it("prefers Brevo over Gmail SMTP on Railway/live runtime", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.RAILWAY_ENVIRONMENT = "production";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "app-password";
+    process.env.UNVERIFIED_BREVO_SENDERS = "";
+    delete process.env.OTP_EMAIL_PROVIDER;
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-live" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub().resolves({
+      ok: true,
+      headers: { get: () => "application/json" },
+      json: async () => ({ messageId: "brevo-live-msg" }),
+    });
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP(
+      "developer@mindcrawller.com",
+      "445566",
+    );
+
+    expect(result.provider).to.equal("brevo");
+    expect(fetchStub.calledOnce).to.equal(true);
+    expect(createTransportStub.called).to.equal(false);
+    expect(sendMailStub.called).to.equal(false);
+  });
+
+  it("uses the authenticated Gmail account as from address unless a custom alias is explicitly allowed", async () => {
+    delete process.env.BREVO_API_KEY;
+    delete process.env.OTP_EMAIL_PROVIDER;
+    process.env.EMAIL_HOST = "smtp.gmail.com";
+    process.env.EMAIL_PORT = "587";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASS = "app-password";
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-from" });
+    sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+
+    const { default: otpService } = await importFreshOtpService();
+    await otpService.sendEmailOTP("developer@mindcrawller.com", "654321");
+
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(sendMailStub.firstCall.args[0].from).to.deep.equal({
+      name: "Humaeli",
+      address: "app.mediconeckt@gmail.com",
+    });
   });
 
   it("supports EMAIL_HOST and EMAIL_PASS aliases from the existing env file", async () => {

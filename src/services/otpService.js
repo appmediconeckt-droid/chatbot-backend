@@ -98,6 +98,24 @@ const activeBrevoFromEmail =
 const SENDER_EMAILS = [
   ...new Set([activeBrevoFromEmail, VERIFIED_FALLBACK_FROM_EMAIL].filter(Boolean)),
 ];
+const IS_RAILWAY_RUNTIME = Boolean(
+  process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID,
+);
+const IS_PRODUCTION_RUNTIME =
+  process.env.NODE_ENV === "production" || IS_RAILWAY_RUNTIME;
+const isGmailSmtpHost =
+  !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
+const SMTP_AUTH_USER = SMTP_USER || GMAIL_SMTP_USER;
+const ALLOW_CUSTOM_SMTP_FROM = process.env.SMTP_ALLOW_CUSTOM_FROM === "true";
+const SMTP_MAIL_FROM_EMAIL =
+  isGmailSmtpHost &&
+  SMTP_AUTH_USER &&
+  SMTP_FROM_EMAIL.toLowerCase() !== SMTP_AUTH_USER.toLowerCase() &&
+  !ALLOW_CUSTOM_SMTP_FROM
+    ? SMTP_AUTH_USER
+    : SMTP_FROM_EMAIL;
 
 if (!BREVO_API_KEY) {
   console.error("❌ Brevo API key is not configured. Set BREVO_API_KEY in .env.");
@@ -114,15 +132,24 @@ const hasSmtpConfig = Boolean(
 );
 const hasBrevoConfig = Boolean(BREVO_API_KEY);
 const hasResendConfig = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
-
-console.log(
-  "✅ Primary sender email configured:",
-  OTP_EMAIL_PROVIDER === "resend"
+const primaryProvider = getConfiguredProviders()[0];
+const primarySenderEmail =
+  primaryProvider === "resend"
     ? RESEND_FROM_EMAIL
-    : OTP_EMAIL_PROVIDER === "brevo" || (!hasSmtpConfig && !hasResendConfig && hasBrevoConfig)
+    : primaryProvider === "brevo"
     ? activeBrevoFromEmail
-    : SMTP_FROM_EMAIL,
-);
+    : primaryProvider === "gmail"
+    ? SMTP_MAIL_FROM_EMAIL
+    : "none";
+
+console.log("✅ Primary sender email configured:", primarySenderEmail);
+
+if (SMTP_MAIL_FROM_EMAIL !== SMTP_FROM_EMAIL) {
+  console.warn(
+    `⚠️ Gmail SMTP sender changed from ${SMTP_FROM_EMAIL} to authenticated user ${SMTP_MAIL_FROM_EMAIL}.`,
+  );
+  console.warn("   Set SMTP_ALLOW_CUSTOM_FROM=true only if the Gmail alias is verified.");
+}
 
 const buildBrevoPayload = ({ senderEmail, to, subject, html, text }) => ({
   sender: { name: FROM_NAME, email: senderEmail },
@@ -306,8 +333,9 @@ async function sendGmailEmail({ to, subject, html, text }) {
   return transporter.sendMail({
     from: {
       name: FROM_NAME,
-      address: SMTP_FROM_EMAIL,
+      address: SMTP_MAIL_FROM_EMAIL,
     },
+    replyTo: SUPPORT_EMAIL,
     to,
     subject,
     html,
@@ -345,6 +373,13 @@ function getConfiguredProviders() {
   }
 
   const providers = [];
+  if (IS_PRODUCTION_RUNTIME) {
+    if (hasResendConfig) providers.push("resend");
+    if (hasBrevoConfig) providers.push("brevo");
+    if (hasSmtpConfig) providers.push("gmail");
+    return providers;
+  }
+
   if (hasSmtpConfig) providers.push("gmail");
   if (hasResendConfig) providers.push("resend");
   if (hasBrevoConfig) providers.push("brevo");
