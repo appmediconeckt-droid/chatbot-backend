@@ -983,7 +983,8 @@ async function generateTTSAudio(text) {
   const truncated = String(text).trim().slice(0, 4096);
   const mp3Response = await getOpenAIClient().audio.speech.create({
     model: "tts-1",
-    voice: "shimmer",
+    // Humaelio uses a consistent deep male voice.
+    voice: "onyx",
     input: truncated,
     response_format: "mp3",
   });
