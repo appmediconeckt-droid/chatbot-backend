@@ -1725,6 +1725,16 @@ getCallHistory: async (req, res) => {
     const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
+    if (!mongoose.Types.ObjectId.isValid(userId) || !(await User.exists({ _id: userId }))) {
+      return res.json({
+        success: true,
+        history: [],
+        total: 0,
+        page: parsedPage,
+        totalPages: 0,
+      });
+    }
+
     const query = {
       $and: [
         {
@@ -1828,7 +1838,7 @@ getCallHistory: async (req, res) => {
       );
     };
 
-    const formattedCalls = calls.map((call) => {
+    const formattedCalls = calls.flatMap((call) => {
       const callerId = call.callerId?.toString();
       const receiverId = call.receiverId?.toString();
 
@@ -1836,6 +1846,8 @@ getCallHistory: async (req, res) => {
 
       const otherParticipantId = isInitiator ? receiverId : callerId;
       const otherUser = userMap[otherParticipantId];
+
+      if (!otherUser) return [];
 
       const fallbackOtherName = isInitiator
         ? call.receiverName
@@ -1849,7 +1861,7 @@ getCallHistory: async (req, res) => {
         ? call.receiverType
         : call.initiatorType;
 
-      return {
+      return [{
         id: call.callId,
 
         // Frontend me ye naam show karo
@@ -1876,15 +1888,20 @@ getCallHistory: async (req, res) => {
 
         callerAnonymousName: userMap[callerId]?.anonymous || null,
         receiverAnonymousName: userMap[receiverId]?.anonymous || null,
-      };
+      }];
     });
+
+    const visibleTotal = Math.max(
+      formattedCalls.length,
+      total - (calls.length - formattedCalls.length),
+    );
 
     return res.json({
       success: true,
       history: formattedCalls,
-      total,
+      total: visibleTotal,
       page: parsedPage,
-      totalPages: Math.ceil(total / parsedLimit),
+      totalPages: Math.ceil(visibleTotal / parsedLimit),
     });
   } catch (error) {
     console.error("Error fetching history:", error);

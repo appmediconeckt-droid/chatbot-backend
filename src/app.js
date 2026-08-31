@@ -259,6 +259,7 @@ import { Server } from "socket.io";
 import authRoutes from "./routes/authRoutes.js";
 import videoRoutes from "./routes/videoRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
+import prescriptionRoutes from "./routes/prescriptionRoutes.js";
 import callRoutes from "./routes/callRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
@@ -458,6 +459,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.get("/api/chat/payment-config", getPaymentConfig);
 app.use("/api/chat", messageRoutes);
+app.use("/api/prescriptions", prescriptionRoutes);
 app.get("/api/ai-chat/history", authMiddleware, getMyChatHistory);
 app.use("/api/ai-chat", chatRoutes); // <--- We mounted our AI chat here!
 app.use("/api/progress", progressRoutes); // <--- Mood tracking & progress endpoints

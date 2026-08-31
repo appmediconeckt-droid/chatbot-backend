@@ -1,5 +1,6 @@
 // mindCrawller/src/controllers/appointmentController.js
 import Appointment from "../models/appointmentModel.js";
+import User from "../models/userModel.js";
 import { createNotificationSafely } from "../services/notificationService.js";
 
 // Delete appointments that never became a completed/confirmed session once
@@ -63,10 +64,33 @@ export const book = async (req, res) => {
         .json({ message: "counselorId and date are required" });
     }
 
+    const appointmentDate = new Date(date);
+    if (Number.isNaN(appointmentDate.getTime())) {
+      return res.status(400).json({ message: "Invalid appointment date" });
+    }
+    if (appointmentDate.getTime() <= Date.now()) {
+      return res.status(400).json({
+        message: "Appointment date and time must be in the future",
+      });
+    }
+
+    const counselor = await User.findOne({
+      _id: counselorId,
+      role: "counsellor",
+      isActive: true,
+      profileCompleted: true,
+    }).select("_id");
+
+    if (!counselor) {
+      return res.status(404).json({
+        message: "Counselor not found or profile is not complete yet",
+      });
+    }
+
     const appointment = await Appointment.create({
       patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
       counselor: counselorId,
-      date,
+      date: appointmentDate,
       notes,
     });
 
@@ -170,6 +194,15 @@ export const updateStatus = async (req, res) => {
       appointment.counselor.toString() !== userId.toString()
     ) {
       return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (
+      String(status).toLowerCase() === "confirmed" &&
+      new Date(appointment.date).getTime() <= Date.now()
+    ) {
+      return res.status(400).json({
+        message: "A past appointment cannot be confirmed or booked",
+      });
     }
 
     appointment.status = status;

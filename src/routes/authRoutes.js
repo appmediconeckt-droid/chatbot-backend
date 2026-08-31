@@ -72,8 +72,8 @@ authRoutes.post("/session-heartbeat", authMiddleware, sessionHeartbeat);
 // Password management for both users and counsellors
 authRoutes.post("/setPassword", authMiddleware, setPassword);
 authRoutes.post("/changePassword", authMiddleware, changePassword);
-authRoutes.post("/verify-password-otp", authMiddleware, verifyPasswordOtp);
-// Unauthenticated endpoint: set password after email OTP verification
+// Password OTP endpoints do not create login sessions during settings flows.
+authRoutes.post("/verify-password-otp", verifyPasswordOtp);
 authRoutes.post("/set-password-by-otp", setPasswordByOtp);
 authRoutes.post("/refresh-token", refreshAccessTokenHandler);
 authRoutes.post("/logout-all", authMiddleware, logoutAllDevices);
@@ -146,8 +146,8 @@ authRoutes.post(
   "/resetPassword/:token",
   [
     body("password")
-      .isLength({ min: 6 })
-      .withMessage("Password must be at least 6 characters"),
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/)
+      .withMessage("Password must be at least 8 characters and include uppercase, lowercase, number, and special character."),
     body("confirmPassword").custom((value, { req }) => {
       if (value !== req.body.password) {
         throw new Error("Passwords do not match");

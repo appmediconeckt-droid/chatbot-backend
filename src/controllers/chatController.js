@@ -20,6 +20,25 @@ const getOpenAIClient = () => {
 };
 const MAX_HISTORY_TURNS = 10;
 const GUEST_CHAT_LIMIT_MS = 5 * 60 * 1000;
+const AI_OPENING_EVENT = "__humaelio_ai_opening__";
+const AI_OPENING_RESPONSE = "Hello, I'm Humaelio AI. How are you feeling today?";
+
+const isAiOpeningEvent = (body = {}) => {
+  return (
+    body.kind === "opening" ||
+    body.type === "opening" ||
+    String(body.message || "").trim() === AI_OPENING_EVENT
+  );
+};
+
+const chatTurnsToHistory = (chats = []) => {
+  return [...chats].reverse().flatMap((c) => {
+    const turns = [];
+    if (c.userMessage) turns.push({ role: "user", content: c.userMessage });
+    if (c.aiResponse) turns.push({ role: "assistant", content: c.aiResponse });
+    return turns;
+  });
+};
 
 const getLanguageName = (code) => {
   try {
@@ -32,8 +51,9 @@ const getLanguageName = (code) => {
 export const chatWithAI = async (req, res) => {
   try {
     const { message, history: clientHistory } = req.body;
+    const isOpeningEvent = isAiOpeningEvent(req.body);
 
-    if (typeof message !== "string" || message.trim().length === 0) {
+    if (!isOpeningEvent && (typeof message !== "string" || message.trim().length === 0)) {
       return res.status(400).json({
         success: false,
         message: "`message` is required and must be a non-empty string",
@@ -63,24 +83,14 @@ export const chatWithAI = async (req, res) => {
         .limit(MAX_HISTORY_TURNS)
         .lean();
 
-      history = priorChats
-        .reverse()
-        .flatMap((c) => [
-          { role: "user", content: c.userMessage },
-          { role: "assistant", content: c.aiResponse },
-        ]);
+      history = chatTurnsToHistory(priorChats);
     } else if (sessionId) {
       const priorChats = await Chat.find({ sessionId })
         .sort({ createdAt: -1 })
         .limit(MAX_HISTORY_TURNS)
         .lean();
 
-      history = priorChats
-        .reverse()
-        .flatMap((c) => [
-          { role: "user", content: c.userMessage },
-          { role: "assistant", content: c.aiResponse },
-        ]);
+      history = chatTurnsToHistory(priorChats);
     } else {
       sessionId = uuidv4();
       if (Array.isArray(clientHistory)) history = clientHistory;
@@ -116,6 +126,34 @@ export const chatWithAI = async (req, res) => {
       lastTurn: history.slice(-2),
       newMessage: message,
     });
+
+    const clientLang = req.body.language; // e.g. "hi-IN", "ta-IN", "en-IN"
+    const clientLangCode = clientLang ? clientLang.split("-")[0] : null;
+    const detectedLanguage = clientLangCode
+      ? { code: clientLangCode, name: getLanguageName(clientLangCode) }
+      : detectLanguage(message || AI_OPENING_RESPONSE);
+
+    if (isOpeningEvent) {
+      const chatData = {
+        sessionId,
+        userMessage: "",
+        aiResponse: AI_OPENING_RESPONSE,
+        language: detectedLanguage.code,
+      };
+      if (userId) chatData.userId = userId;
+      const chat = await Chat.create(chatData);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          aiResponse: AI_OPENING_RESPONSE,
+          chatId: chat._id,
+          sessionId,
+          detectedLanguage: detectedLanguage.name,
+          opening: true,
+        },
+      });
+    }
 
     // Onboarding flags & known user profile data.
     // Privacy: never expose the user's real fullName to the AI.
@@ -200,13 +238,6 @@ export const chatWithAI = async (req, res) => {
           gpsCity: knownProfile.gpsCity,
         })
       : null;
-
-    // Use client-selected language if provided, otherwise detect from message text
-    const clientLang = req.body.language; // e.g. "hi-IN", "ta-IN", "en-IN"
-    const clientLangCode = clientLang ? clientLang.split('-')[0] : null;
-    const detectedLanguage = clientLangCode
-      ? { code: clientLangCode, name: getLanguageName(clientLangCode) }
-      : detectLanguage(message);
 
     // Analyze mood
     const moodAnalysis = analyzeMood(message);

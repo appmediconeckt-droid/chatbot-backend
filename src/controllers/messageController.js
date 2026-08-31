@@ -81,6 +81,22 @@ const restoreChatForBothParticipants = (chat) => {
   return wasRestored;
 };
 
+const visibleCounselorFilter = {
+  role: "counsellor",
+  isActive: true,
+  profileCompleted: true,
+  "specialization.0": { $exists: true },
+  experience: { $gt: 0 },
+  $and: [
+    {
+      $or: [
+        { qualification: { $nin: ["", null] } },
+        { education: { $nin: ["", null] } },
+      ],
+    },
+  ],
+};
+
 const assertSufficientChatBalance = async (userId, sessionType) => {
   if (!isPaidSessionsEnabled()) return;
 
@@ -116,8 +132,7 @@ export const startChat = async (req, res) => {
     // Check if counselor exists
     const counselor = await User.findOne({
       _id: counselorId,
-      role: "counsellor",
-      isActive: true,
+      ...visibleCounselorFilter,
     });
 
     if (!counselor) {
@@ -1428,8 +1443,7 @@ export const getCounselors = async (req, res) => {
 
     const counselors = await User.find(
       {
-        role: "counsellor",
-        isActive: true,
+        ...visibleCounselorFilter,
       },
       {
         password: 0,
@@ -1439,7 +1453,7 @@ export const getCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen",
+        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen profileCompleted",
       )
       .sort({ rating: -1, fullName: 1 });
 
@@ -1456,8 +1470,7 @@ export const getCounselorDetails = async (req, res) => {
     const counselor = await User.findOne(
       {
         _id: req.params.counselorId,
-        role: "counsellor",
-        isActive: true,
+        ...visibleCounselorFilter,
       },
       {
         password: 0,
@@ -1517,8 +1530,7 @@ export const searchCounselors = async (req, res) => {
 
     const counselors = await User.find(
       {
-        role: "counsellor",
-        isActive: true,
+        ...visibleCounselorFilter,
         $or: [
           { fullName: searchRegex },
           { specialization: { $in: [searchRegex] } },
@@ -1534,7 +1546,7 @@ export const searchCounselors = async (req, res) => {
       },
     )
       .select(
-        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen",
+        "fullName specialization experience qualification aboutMe profilePhoto rating ratingCount totalSessions languages consultationMode location isOnline lastSeen profileCompleted",
       )
       .sort({ rating: -1, fullName: 1 });
 

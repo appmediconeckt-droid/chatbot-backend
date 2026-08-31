@@ -13,7 +13,18 @@ const appointmentSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    date: { type: Date, required: true },
+    date: {
+      type: Date,
+      required: true,
+      validate: {
+        // Protect every creation path, not only the HTTP controller. Existing
+        // appointments can still be updated after their scheduled time.
+        validator(value) {
+          return !this.isNew || value.getTime() > Date.now();
+        },
+        message: "Appointment date and time must be in the future",
+      },
+    },
     // optional extra fields
     notes: { type: String },
     status: {

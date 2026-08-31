@@ -297,6 +297,45 @@ export const uploadChatAttachment = (req, res, next) => {
   });
 };
 
+const prescriptionPdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.fieldname !== "attachment") return cb(new Error("Unexpected prescription file field"));
+    if (String(file.mimetype).toLowerCase() !== "application/pdf") {
+      return cb(new Error("Only PDF prescriptions are allowed"));
+    }
+    return cb(null, true);
+  },
+});
+
+export const uploadPrescriptionPdf = (req, res, next) => {
+  prescriptionPdfUpload.single("attachment")(req, res, (error) => {
+    if (error) return res.status(400).json({ success: false, error: error.message });
+    return next();
+  });
+};
+
+const prescriptionPhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (file.fieldname !== "photo") return cb(new Error("Unexpected photo field"));
+    if (!allowed.has(String(file.mimetype).toLowerCase())) {
+      return cb(new Error("Only JPG, PNG, or WebP photos are allowed"));
+    }
+    return cb(null, true);
+  },
+});
+
+export const uploadPrescriptionPhoto = (req, res, next) => {
+  prescriptionPhotoUpload.single("photo")(req, res, (error) => {
+    if (error) return res.status(400).json({ success: false, error: error.message });
+    return next();
+  });
+};
+
 // Handle user upload - accept all fields
 
 // Export individual middlewares for backward compatibility
