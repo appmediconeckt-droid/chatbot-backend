@@ -23,7 +23,7 @@ const PLAY_REVIEW_FIXED_OTP = "123456";
 const FROM_NAME = "Humaeli";
 
 // ⚠️ IMPORTANT: Brevo sender email must exactly match an authenticated sender/domain.
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
+export const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
@@ -98,13 +98,6 @@ const activeBrevoFromEmail =
 const SENDER_EMAILS = [
   ...new Set([activeBrevoFromEmail, VERIFIED_FALLBACK_FROM_EMAIL].filter(Boolean)),
 ];
-const IS_RAILWAY_RUNTIME = Boolean(
-  process.env.RAILWAY_ENVIRONMENT ||
-    process.env.RAILWAY_PROJECT_ID ||
-    process.env.RAILWAY_SERVICE_ID,
-);
-const IS_PRODUCTION_RUNTIME =
-  process.env.NODE_ENV === "production" || IS_RAILWAY_RUNTIME;
 const isGmailSmtpHost =
   !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
 const SMTP_AUTH_USER = SMTP_USER || GMAIL_SMTP_USER;
@@ -321,7 +314,7 @@ async function sendGmailEmail({ to, subject, html, text }) {
 
   const transporter = nodemailer.createTransport(transporterOptions);
 
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && typeof transporter.verify === "function") {
     try {
       await transporter.verify();
       console.log("SMTP ready");
@@ -372,21 +365,19 @@ function getConfiguredProviders() {
     });
   }
 
+  // Keep auto mode consistent across local and live. The local app usually uses
+  // Gmail/SMTP successfully; choosing Brevo first only in production can make
+  // live OTP responses look successful while the recipient never sees the mail.
+  // Use OTP_EMAIL_PROVIDER or OTP_EMAIL_PROVIDER_ORDER to force a different
+  // live order after the sender/domain is fully verified.
   const providers = [];
-  if (IS_PRODUCTION_RUNTIME) {
-    if (hasResendConfig) providers.push("resend");
-    if (hasBrevoConfig) providers.push("brevo");
-    if (hasSmtpConfig) providers.push("gmail");
-    return providers;
-  }
-
   if (hasSmtpConfig) providers.push("gmail");
   if (hasResendConfig) providers.push("resend");
   if (hasBrevoConfig) providers.push("brevo");
   return providers;
 }
 
-async function sendTransactionalEmail({ to, subject, html, text }) {
+export async function sendTransactionalEmail({ to, subject, html, text }) {
   const providers = getConfiguredProviders();
 
   let lastError;

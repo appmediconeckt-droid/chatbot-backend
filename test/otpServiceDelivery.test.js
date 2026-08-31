@@ -113,7 +113,7 @@ describe("OTP mail delivery", () => {
     expect(fetchStub.called).to.equal(false);
   });
 
-  it("prefers Brevo over Gmail SMTP on Railway/live runtime", async () => {
+  it("keeps Gmail SMTP as the primary OTP sender on Railway/live runtime when configured", async () => {
     process.env.NODE_ENV = "production";
     process.env.RAILWAY_ENVIRONMENT = "production";
     process.env.BREVO_API_KEY = "test-brevo-key";
@@ -140,10 +140,10 @@ describe("OTP mail delivery", () => {
       "445566",
     );
 
-    expect(result.provider).to.equal("brevo");
-    expect(fetchStub.calledOnce).to.equal(true);
-    expect(createTransportStub.called).to.equal(false);
-    expect(sendMailStub.called).to.equal(false);
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
   });
 
   it("uses the authenticated Gmail account as from address unless a custom alias is explicitly allowed", async () => {
