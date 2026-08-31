@@ -104,8 +104,8 @@ const OTP_EMAIL_PROVIDER_ORDER = String(process.env.OTP_EMAIL_PROVIDER_ORDER || 
   .split(",")
   .map((provider) => provider.trim().toLowerCase())
   .filter(Boolean);
-const OTP_EMAIL_FORCE_API_PROVIDER =
-  process.env.OTP_EMAIL_FORCE_API_PROVIDER === "true";
+const OTP_EMAIL_PREFER_SMTP_OVER_API =
+  process.env.OTP_EMAIL_PREFER_SMTP_OVER_API === "true";
 const ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE =
   process.env.OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE === "true";
 const activeBrevoFromEmail =
@@ -152,7 +152,7 @@ const stopAfterSmtpFailure =
   process.env.OTP_EMAIL_STRICT_SMTP === "true" ||
   (process.env.NODE_ENV === "production" &&
     (usingAutoProviderSelection ||
-      (hasApiProviderPreference && !OTP_EMAIL_FORCE_API_PROVIDER)) &&
+      (hasApiProviderPreference && OTP_EMAIL_PREFER_SMTP_OVER_API)) &&
     hasSmtpConfig &&
     !ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE);
 const primaryProvider = getConfiguredProviders()[0];
@@ -376,12 +376,12 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 function getConfiguredProviders() {
-  const preferSmtpUnlessApiProviderIsForced = (providers) => {
+  const preferSmtpWhenRequested = (providers) => {
     const hasApiProvider = providers.some((provider) =>
       ["brevo", "resend"].includes(provider),
     );
 
-    if (!hasSmtpConfig || !hasApiProvider || OTP_EMAIL_FORCE_API_PROVIDER) {
+    if (!hasSmtpConfig || !hasApiProvider || !OTP_EMAIL_PREFER_SMTP_OVER_API) {
       return providers;
     }
 
@@ -392,11 +392,11 @@ function getConfiguredProviders() {
   };
 
   if (["brevo", "sendinblue"].includes(OTP_EMAIL_PROVIDER)) {
-    return preferSmtpUnlessApiProviderIsForced(hasBrevoConfig ? ["brevo"] : []);
+    return preferSmtpWhenRequested(hasBrevoConfig ? ["brevo"] : []);
   }
 
   if (OTP_EMAIL_PROVIDER === "resend") {
-    return preferSmtpUnlessApiProviderIsForced(hasResendConfig ? ["resend"] : []);
+    return preferSmtpWhenRequested(hasResendConfig ? ["resend"] : []);
   }
 
   if (["gmail", "smtp"].includes(OTP_EMAIL_PROVIDER)) {
@@ -417,7 +417,7 @@ function getConfiguredProviders() {
       if (provider === "brevo") return hasBrevoConfig;
       return false;
     });
-    return preferSmtpUnlessApiProviderIsForced(orderedProviders);
+    return preferSmtpWhenRequested(orderedProviders);
   }
 
   // Keep auto mode consistent across local and live. The local app usually uses
@@ -487,7 +487,7 @@ export function getEmailDeliveryDiagnostics() {
     hasResendConfig,
     smtpPort: hasSmtpConfig ? SMTP_PORT : null,
     smtpSecure: hasSmtpConfig ? SMTP_SECURE : null,
-    apiProviderForceEnabled: OTP_EMAIL_FORCE_API_PROVIDER,
+    preferSmtpOverApi: OTP_EMAIL_PREFER_SMTP_OVER_API,
     ignoresLegacyEmailProvider: Boolean(
       LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER,
     ),
