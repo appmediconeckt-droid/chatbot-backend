@@ -30,6 +30,8 @@ const ENV_KEYS = [
   "ALLOW_UNVERIFIED_BREVO_SENDER",
   "OTP_EMAIL_PROVIDER",
   "OTP_EMAIL_PROVIDER_ORDER",
+  "OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE",
+  "OTP_EMAIL_STRICT_SMTP",
   "RAILWAY_ENVIRONMENT",
   "RAILWAY_PROJECT_ID",
   "RAILWAY_SERVICE_ID",
@@ -142,6 +144,70 @@ describe("OTP mail delivery", () => {
 
     expect(result.provider).to.equal("gmail");
     expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it("ignores legacy EMAIL_PROVIDER=brevo for OTP auto delivery when SMTP is configured", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.EMAIL_PROVIDER = "brevo";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "app-password";
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.OTP_EMAIL_PROVIDER_ORDER;
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-legacy" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub();
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP(
+      "developer@mindcrawller.com",
+      "778899",
+    );
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it("does not hide production SMTP failures behind Brevo fallback success", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "bad-password";
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.OTP_EMAIL_PROVIDER_ORDER;
+    delete process.env.OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE;
+
+    const sendMailStub = sinon.stub().rejects(new Error("Invalid login"));
+    sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub().resolves({
+      ok: true,
+      headers: { get: () => "application/json" },
+      json: async () => ({ messageId: "brevo-should-not-send" }),
+    });
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+
+    try {
+      await otpService.sendEmailOTP("developer@mindcrawller.com", "445566");
+      throw new Error("Expected sendEmailOTP to fail");
+    } catch (error) {
+      expect(error.message).to.include("SMTP/Gmail delivery failed");
+      expect(error.message).to.include("refusing API fallback in production");
+    }
+
     expect(sendMailStub.calledOnce).to.equal(true);
     expect(fetchStub.called).to.equal(false);
   });

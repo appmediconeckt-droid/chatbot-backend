@@ -81,15 +81,19 @@ const BREVO_FROM_EMAIL = String(
     process.env.HUMAELI_BREVO_FROM_EMAIL ||
     SMTP_FROM_EMAIL,
 ).trim();
-const OTP_EMAIL_PROVIDER = String(
-  process.env.OTP_EMAIL_PROVIDER || process.env.EMAIL_PROVIDER || "auto",
-)
+const EXPLICIT_OTP_EMAIL_PROVIDER = String(process.env.OTP_EMAIL_PROVIDER || "")
   .trim()
   .toLowerCase();
+const LEGACY_EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || "")
+  .trim()
+  .toLowerCase();
+const OTP_EMAIL_PROVIDER = EXPLICIT_OTP_EMAIL_PROVIDER || "auto";
 const OTP_EMAIL_PROVIDER_ORDER = String(process.env.OTP_EMAIL_PROVIDER_ORDER || "")
   .split(",")
   .map((provider) => provider.trim().toLowerCase())
   .filter(Boolean);
+const ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE =
+  process.env.OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE === "true";
 const activeBrevoFromEmail =
   !ALLOW_UNVERIFIED_BREVO_SENDER &&
   UNVERIFIED_BREVO_SENDERS.has(BREVO_FROM_EMAIL.toLowerCase())
@@ -125,6 +129,14 @@ const hasSmtpConfig = Boolean(
 );
 const hasBrevoConfig = Boolean(BREVO_API_KEY);
 const hasResendConfig = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+const usingAutoProviderSelection =
+  !EXPLICIT_OTP_EMAIL_PROVIDER && OTP_EMAIL_PROVIDER_ORDER.length === 0;
+const stopAfterSmtpFailure =
+  process.env.OTP_EMAIL_STRICT_SMTP === "true" ||
+  (process.env.NODE_ENV === "production" &&
+    usingAutoProviderSelection &&
+    hasSmtpConfig &&
+    !ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE);
 const primaryProvider = getConfiguredProviders()[0];
 const primarySenderEmail =
   primaryProvider === "resend"
@@ -136,6 +148,15 @@ const primarySenderEmail =
     : "none";
 
 console.log("✅ Primary sender email configured:", primarySenderEmail);
+
+if (LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER) {
+  console.warn(
+    `⚠️ EMAIL_PROVIDER=${LEGACY_EMAIL_PROVIDER} is ignored for OTP delivery.`,
+  );
+  console.warn(
+    "   Set OTP_EMAIL_PROVIDER or OTP_EMAIL_PROVIDER_ORDER only after the live sender is verified.",
+  );
+}
 
 if (SMTP_MAIL_FROM_EMAIL !== SMTP_FROM_EMAIL) {
   console.warn(
@@ -366,8 +387,9 @@ function getConfiguredProviders() {
   }
 
   // Keep auto mode consistent across local and live. The local app usually uses
-  // Gmail/SMTP successfully; choosing Brevo first only in production can make
-  // live OTP responses look successful while the recipient never sees the mail.
+  // Gmail/SMTP successfully; choosing Brevo first only in production, or via a
+  // legacy EMAIL_PROVIDER=brevo value, can make live OTP responses look
+  // successful while the recipient never sees the mail.
   // Use OTP_EMAIL_PROVIDER or OTP_EMAIL_PROVIDER_ORDER to force a different
   // live order after the sender/domain is fully verified.
   const providers = [];
@@ -399,6 +421,16 @@ export async function sendTransactionalEmail({ to, subject, html, text }) {
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
+      if (provider === "gmail" && stopAfterSmtpFailure) {
+        const strictSmtpError = new Error(
+          `SMTP/Gmail delivery failed for ${to}; refusing API fallback in production because it can report success without inbox delivery. ` +
+            `Fix live EMAIL_USER/EMAIL_PASSWORD or set OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE=true after Brevo/Resend sender verification. ` +
+            `Original error: ${error.message}`,
+        );
+        strictSmtpError.nonRetryable = true;
+        throw strictSmtpError;
+      }
+
       if (provider !== providers[providers.length - 1]) {
         console.warn(
           `${provider.toUpperCase()} delivery failed for ${to}. Trying next provider: ${error.message}`,
@@ -646,9 +678,9 @@ class OTPService {
         const status = error?.response?.status || error?.status || 0;
         const isClientError = status >= 400 && status < 500;
 
-        if (isClientError) {
+        if (isClientError || error?.nonRetryable) {
           console.error(
-            `❌ Client error (${status}) - not retrying: ${error?.message}`,
+            `❌ Non-retryable email error (${status || "delivery"}) - not retrying: ${error?.message}`,
           );
           break;
         }
