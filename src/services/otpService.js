@@ -23,7 +23,7 @@ const PLAY_REVIEW_FIXED_OTP = "123456";
 const FROM_NAME = "Humaeli";
 
 // ⚠️ IMPORTANT: Brevo sender email must exactly match an authenticated sender/domain.
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
+export const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@humaeli.com";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const DEFAULT_EMAIL_TEXT = "Please enable HTML to view this email.";
@@ -59,8 +59,20 @@ const GMAIL_SMTP_PASS = String(
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const EMAIL_HOST = String(process.env.EMAIL_HOST || "").trim();
 const ACTIVE_SMTP_HOST = SMTP_HOST || EMAIL_HOST;
-const SMTP_PORT = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || SMTP_PORT === 465;
+const isGmailSmtpHost =
+  !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
+const configuredSmtpPort = process.env.SMTP_PORT || process.env.EMAIL_PORT;
+const shouldUseGmailSslPort =
+  isGmailSmtpHost &&
+  (!configuredSmtpPort ||
+    (Number(configuredSmtpPort) === 587 &&
+      process.env.SMTP_USE_STARTTLS_587 !== "true"));
+const SMTP_PORT = Number(
+  shouldUseGmailSslPort ? 465 : configuredSmtpPort || 587,
+);
+const SMTP_SECURE =
+  String(process.env.SMTP_SECURE || "").toLowerCase() === "true" ||
+  SMTP_PORT === 465;
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
 const SMTP_PASS = String(
   process.env.SMTP_PASS ||
@@ -81,15 +93,21 @@ const BREVO_FROM_EMAIL = String(
     process.env.HUMAELI_BREVO_FROM_EMAIL ||
     SMTP_FROM_EMAIL,
 ).trim();
-const OTP_EMAIL_PROVIDER = String(
-  process.env.OTP_EMAIL_PROVIDER || process.env.EMAIL_PROVIDER || "auto",
-)
+const EXPLICIT_OTP_EMAIL_PROVIDER = String(process.env.OTP_EMAIL_PROVIDER || "")
   .trim()
   .toLowerCase();
+const LEGACY_EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || "")
+  .trim()
+  .toLowerCase();
+const OTP_EMAIL_PROVIDER = EXPLICIT_OTP_EMAIL_PROVIDER || "auto";
 const OTP_EMAIL_PROVIDER_ORDER = String(process.env.OTP_EMAIL_PROVIDER_ORDER || "")
   .split(",")
   .map((provider) => provider.trim().toLowerCase())
   .filter(Boolean);
+const OTP_EMAIL_PREFER_SMTP_OVER_API =
+  process.env.OTP_EMAIL_PREFER_SMTP_OVER_API === "true";
+const ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE =
+  process.env.OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE === "true";
 const activeBrevoFromEmail =
   !ALLOW_UNVERIFIED_BREVO_SENDER &&
   UNVERIFIED_BREVO_SENDERS.has(BREVO_FROM_EMAIL.toLowerCase())
@@ -98,15 +116,6 @@ const activeBrevoFromEmail =
 const SENDER_EMAILS = [
   ...new Set([activeBrevoFromEmail, VERIFIED_FALLBACK_FROM_EMAIL].filter(Boolean)),
 ];
-const IS_RAILWAY_RUNTIME = Boolean(
-  process.env.RAILWAY_ENVIRONMENT ||
-    process.env.RAILWAY_PROJECT_ID ||
-    process.env.RAILWAY_SERVICE_ID,
-);
-const IS_PRODUCTION_RUNTIME =
-  process.env.NODE_ENV === "production" || IS_RAILWAY_RUNTIME;
-const isGmailSmtpHost =
-  !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
 const SMTP_AUTH_USER = SMTP_USER || GMAIL_SMTP_USER;
 const ALLOW_CUSTOM_SMTP_FROM = process.env.SMTP_ALLOW_CUSTOM_FROM === "true";
 const SMTP_MAIL_FROM_EMAIL =
@@ -132,6 +141,20 @@ const hasSmtpConfig = Boolean(
 );
 const hasBrevoConfig = Boolean(BREVO_API_KEY);
 const hasResendConfig = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+const usingAutoProviderSelection =
+  !EXPLICIT_OTP_EMAIL_PROVIDER && OTP_EMAIL_PROVIDER_ORDER.length === 0;
+const hasApiProviderPreference =
+  ["brevo", "sendinblue", "resend"].includes(EXPLICIT_OTP_EMAIL_PROVIDER) ||
+  OTP_EMAIL_PROVIDER_ORDER.some((provider) =>
+    ["brevo", "sendinblue", "resend"].includes(provider),
+  );
+const stopAfterSmtpFailure =
+  process.env.OTP_EMAIL_STRICT_SMTP === "true" ||
+  (process.env.NODE_ENV === "production" &&
+    (usingAutoProviderSelection ||
+      (hasApiProviderPreference && OTP_EMAIL_PREFER_SMTP_OVER_API)) &&
+    hasSmtpConfig &&
+    !ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE);
 const primaryProvider = getConfiguredProviders()[0];
 const primarySenderEmail =
   primaryProvider === "resend"
@@ -143,6 +166,15 @@ const primarySenderEmail =
     : "none";
 
 console.log("✅ Primary sender email configured:", primarySenderEmail);
+
+if (LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER) {
+  console.warn(
+    `⚠️ EMAIL_PROVIDER=${LEGACY_EMAIL_PROVIDER} is ignored for OTP delivery.`,
+  );
+  console.warn(
+    "   Set OTP_EMAIL_PROVIDER or OTP_EMAIL_PROVIDER_ORDER only after the live sender is verified.",
+  );
+}
 
 if (SMTP_MAIL_FROM_EMAIL !== SMTP_FROM_EMAIL) {
   console.warn(
@@ -321,7 +353,7 @@ async function sendGmailEmail({ to, subject, html, text }) {
 
   const transporter = nodemailer.createTransport(transporterOptions);
 
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && typeof transporter.verify === "function") {
     try {
       await transporter.verify();
       console.log("SMTP ready");
@@ -344,12 +376,27 @@ async function sendGmailEmail({ to, subject, html, text }) {
 }
 
 function getConfiguredProviders() {
+  const preferSmtpWhenRequested = (providers) => {
+    const hasApiProvider = providers.some((provider) =>
+      ["brevo", "resend"].includes(provider),
+    );
+
+    if (!hasSmtpConfig || !hasApiProvider || !OTP_EMAIL_PREFER_SMTP_OVER_API) {
+      return providers;
+    }
+
+    return [
+      "gmail",
+      ...providers.filter((provider) => provider !== "gmail"),
+    ];
+  };
+
   if (["brevo", "sendinblue"].includes(OTP_EMAIL_PROVIDER)) {
-    return hasBrevoConfig ? ["brevo"] : [];
+    return preferSmtpWhenRequested(hasBrevoConfig ? ["brevo"] : []);
   }
 
   if (OTP_EMAIL_PROVIDER === "resend") {
-    return hasResendConfig ? ["resend"] : [];
+    return preferSmtpWhenRequested(hasResendConfig ? ["resend"] : []);
   }
 
   if (["gmail", "smtp"].includes(OTP_EMAIL_PROVIDER)) {
@@ -364,29 +411,29 @@ function getConfiguredProviders() {
         return provider;
       }),
     );
-    return [...providerSet].filter((provider) => {
+    const orderedProviders = [...providerSet].filter((provider) => {
       if (provider === "gmail") return hasSmtpConfig;
       if (provider === "resend") return hasResendConfig;
       if (provider === "brevo") return hasBrevoConfig;
       return false;
     });
+    return preferSmtpWhenRequested(orderedProviders);
   }
 
+  // Keep auto mode consistent across local and live. The local app usually uses
+  // Gmail/SMTP successfully; choosing Brevo first only in production, or via a
+  // legacy EMAIL_PROVIDER=brevo value, can make live OTP responses look
+  // successful while the recipient never sees the mail.
+  // Use OTP_EMAIL_PROVIDER or OTP_EMAIL_PROVIDER_ORDER to force a different
+  // live order after the sender/domain is fully verified.
   const providers = [];
-  if (IS_PRODUCTION_RUNTIME) {
-    if (hasResendConfig) providers.push("resend");
-    if (hasBrevoConfig) providers.push("brevo");
-    if (hasSmtpConfig) providers.push("gmail");
-    return providers;
-  }
-
   if (hasSmtpConfig) providers.push("gmail");
   if (hasResendConfig) providers.push("resend");
   if (hasBrevoConfig) providers.push("brevo");
   return providers;
 }
 
-async function sendTransactionalEmail({ to, subject, html, text }) {
+export async function sendTransactionalEmail({ to, subject, html, text }) {
   const providers = getConfiguredProviders();
 
   let lastError;
@@ -408,6 +455,16 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
       return { ...data, provider: "brevo" };
     } catch (error) {
       lastError = error;
+      if (provider === "gmail" && stopAfterSmtpFailure) {
+        const strictSmtpError = new Error(
+          `SMTP/Gmail delivery failed for ${to}; refusing API fallback in production because it can report success without inbox delivery. ` +
+            `Fix live EMAIL_USER/EMAIL_PASSWORD or set OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE=true after Brevo/Resend sender verification. ` +
+            `Original error: ${error.message}`,
+        );
+        strictSmtpError.nonRetryable = true;
+        throw strictSmtpError;
+      }
+
       if (provider !== providers[providers.length - 1]) {
         console.warn(
           `${provider.toUpperCase()} delivery failed for ${to}. Trying next provider: ${error.message}`,
@@ -419,6 +476,23 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
   }
 
   throw lastError || new Error("No email provider is configured for OTP delivery.");
+}
+
+export function getEmailDeliveryDiagnostics() {
+  return {
+    primaryProvider: primaryProvider || "none",
+    configuredProviders: getConfiguredProviders(),
+    hasSmtpConfig,
+    hasBrevoConfig,
+    hasResendConfig,
+    smtpPort: hasSmtpConfig ? SMTP_PORT : null,
+    smtpSecure: hasSmtpConfig ? SMTP_SECURE : null,
+    preferSmtpOverApi: OTP_EMAIL_PREFER_SMTP_OVER_API,
+    ignoresLegacyEmailProvider: Boolean(
+      LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER,
+    ),
+    strictSmtpDelivery: stopAfterSmtpFailure,
+  };
 }
 
 const buildEmailOTPHtml = (otp) => `
@@ -655,9 +729,9 @@ class OTPService {
         const status = error?.response?.status || error?.status || 0;
         const isClientError = status >= 400 && status < 500;
 
-        if (isClientError) {
+        if (isClientError || error?.nonRetryable) {
           console.error(
-            `❌ Client error (${status}) - not retrying: ${error?.message}`,
+            `❌ Non-retryable email error (${status || "delivery"}) - not retrying: ${error?.message}`,
           );
           break;
         }

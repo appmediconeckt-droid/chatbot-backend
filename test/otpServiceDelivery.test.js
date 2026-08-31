@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "SMTP_PASS",
   "SMTP_SECURE",
   "SMTP_ALLOW_CUSTOM_FROM",
+  "SMTP_USE_STARTTLS_587",
   "EMAIL_HOST",
   "EMAIL_PORT",
   "EMAIL_PASS",
@@ -30,6 +31,9 @@ const ENV_KEYS = [
   "ALLOW_UNVERIFIED_BREVO_SENDER",
   "OTP_EMAIL_PROVIDER",
   "OTP_EMAIL_PROVIDER_ORDER",
+  "OTP_EMAIL_FORCE_API_PROVIDER",
+  "OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE",
+  "OTP_EMAIL_STRICT_SMTP",
   "RAILWAY_ENVIRONMENT",
   "RAILWAY_PROJECT_ID",
   "RAILWAY_SERVICE_ID",
@@ -60,9 +64,10 @@ describe("OTP mail delivery", () => {
     delete global.fetch;
   });
 
-  it("uses the configured Brevo sender when it is not explicitly marked unverified", async () => {
+  it("can force the configured Brevo sender when it is not explicitly marked unverified", async () => {
     process.env.BREVO_API_KEY = "test-brevo-key";
     process.env.OTP_EMAIL_PROVIDER = "brevo";
+    process.env.OTP_EMAIL_FORCE_API_PROVIDER = "true";
     process.env.EMAIL_FROM = "info@humaeli.com";
     process.env.HUMAELI_EMAIL_FROM = "info@humaeli.com";
     process.env.EMAIL_USER = "info@humaeli.com";
@@ -113,7 +118,7 @@ describe("OTP mail delivery", () => {
     expect(fetchStub.called).to.equal(false);
   });
 
-  it("prefers Brevo over Gmail SMTP on Railway/live runtime", async () => {
+  it("keeps Gmail SMTP as the primary OTP sender on Railway/live runtime when configured", async () => {
     process.env.NODE_ENV = "production";
     process.env.RAILWAY_ENVIRONMENT = "production";
     process.env.BREVO_API_KEY = "test-brevo-key";
@@ -140,10 +145,102 @@ describe("OTP mail delivery", () => {
       "445566",
     );
 
-    expect(result.provider).to.equal("brevo");
-    expect(fetchStub.calledOnce).to.equal(true);
-    expect(createTransportStub.called).to.equal(false);
-    expect(sendMailStub.called).to.equal(false);
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it("prefers SMTP on live even when OTP_EMAIL_PROVIDER=brevo is set", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.OTP_EMAIL_PROVIDER = "brevo";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "app-password";
+    delete process.env.OTP_EMAIL_FORCE_API_PROVIDER;
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-forced-brevo" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub();
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP(
+      "developer@mindcrawller.com",
+      "336699",
+    );
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it("ignores legacy EMAIL_PROVIDER=brevo for OTP auto delivery when SMTP is configured", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.EMAIL_PROVIDER = "brevo";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "app-password";
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.OTP_EMAIL_PROVIDER_ORDER;
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-legacy" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub();
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP(
+      "developer@mindcrawller.com",
+      "778899",
+    );
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.calledOnce).to.equal(true);
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it("does not hide production SMTP failures behind Brevo fallback success", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.BREVO_API_KEY = "test-brevo-key";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASSWORD = "bad-password";
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.OTP_EMAIL_PROVIDER_ORDER;
+    delete process.env.OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE;
+
+    const sendMailStub = sinon.stub().rejects(new Error("Invalid login"));
+    sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+    const fetchStub = sinon.stub().resolves({
+      ok: true,
+      headers: { get: () => "application/json" },
+      json: async () => ({ messageId: "brevo-should-not-send" }),
+    });
+    global.fetch = fetchStub;
+
+    const { default: otpService } = await importFreshOtpService();
+
+    try {
+      await otpService.sendEmailOTP("developer@mindcrawller.com", "445566");
+      throw new Error("Expected sendEmailOTP to fail");
+    } catch (error) {
+      expect(error.message).to.include("SMTP/Gmail delivery failed");
+      expect(error.message).to.include("refusing API fallback in production");
+    }
+
+    expect(sendMailStub.calledOnce).to.equal(true);
+    expect(fetchStub.called).to.equal(false);
   });
 
   it("uses the authenticated Gmail account as from address unless a custom alias is explicitly allowed", async () => {
@@ -167,6 +264,32 @@ describe("OTP mail delivery", () => {
     expect(sendMailStub.firstCall.args[0].from).to.deep.equal({
       name: "Humaeli",
       address: "app.mediconeckt@gmail.com",
+    });
+  });
+
+  it("defaults Gmail SMTP host to secure port 465 when no port is configured", async () => {
+    delete process.env.BREVO_API_KEY;
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.SMTP_PORT;
+    delete process.env.EMAIL_PORT;
+    process.env.EMAIL_HOST = "smtp.gmail.com";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASS = "app-password";
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-465" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP("developer@mindcrawller.com", "654321");
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.firstCall.args[0]).to.include({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
     });
   });
 
@@ -203,8 +326,10 @@ describe("OTP mail delivery", () => {
     process.env.RESEND_API_KEY = "test-resend-key";
     process.env.RESEND_FROM_EMAIL = "otp@humaeli.com";
     process.env.OTP_EMAIL_PROVIDER = "resend";
+    process.env.OTP_EMAIL_FORCE_API_PROVIDER = "true";
     delete process.env.BREVO_API_KEY;
     delete process.env.EMAIL_USER;
+    delete process.env.EMAIL;
     delete process.env.EMAIL_PASSWORD;
     delete process.env.EMAIL_PASS;
 
