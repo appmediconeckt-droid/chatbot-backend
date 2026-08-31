@@ -1335,7 +1335,7 @@ export const sendEmailOTP = async (req, res) => {
     const expiresAt = new Date(Date.now() + REGISTRATION_OTP_TTL_MS);
 
     try {
-      await otpService.sendEmailOTP(normalizedEmail, otp, "User");
+      const delivery = await otpService.sendEmailOTP(normalizedEmail, otp, "User");
       emailOTPStore.set(normalizedEmail, {
         otp,
         expiresAt: expiresAt.getTime(),
@@ -1351,6 +1351,7 @@ export const sendEmailOTP = async (req, res) => {
         message: "Email OTP sent successfully",
         success: true,
         email: normalizedEmail,
+        deliveryProvider: delivery?.provider || "unknown",
       });
     } catch (sendError) {
       console.error("OTP sending error:", sendError);

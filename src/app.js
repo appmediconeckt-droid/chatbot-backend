@@ -284,6 +284,7 @@ import avatarRoutes from "./routes/avatarRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
 import aiRealtimeRoute from "./routes/aiRealtimeRoute.js"
 import { expirePendingPaidChatRequests } from "./services/paidSessionService.js";
+import { getEmailDeliveryDiagnostics } from "./services/otpService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -448,6 +449,7 @@ app.get("/api/health", (_req, res) => {
     features: {
       landingStats: true,
     },
+    mail: getEmailDeliveryDiagnostics(),
     db: {
       state: dbStatus,
       readyState: dbState,

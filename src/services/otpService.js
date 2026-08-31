@@ -444,6 +444,20 @@ export async function sendTransactionalEmail({ to, subject, html, text }) {
   throw lastError || new Error("No email provider is configured for OTP delivery.");
 }
 
+export function getEmailDeliveryDiagnostics() {
+  return {
+    primaryProvider: primaryProvider || "none",
+    configuredProviders: getConfiguredProviders(),
+    hasSmtpConfig,
+    hasBrevoConfig,
+    hasResendConfig,
+    ignoresLegacyEmailProvider: Boolean(
+      LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER,
+    ),
+    strictSmtpDelivery: stopAfterSmtpFailure,
+  };
+}
+
 const buildEmailOTPHtml = (otp) => `
 <!DOCTYPE html>
 <html lang="en">
