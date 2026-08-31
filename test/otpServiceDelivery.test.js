@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "SMTP_PASS",
   "SMTP_SECURE",
   "SMTP_ALLOW_CUSTOM_FROM",
+  "SMTP_USE_STARTTLS_587",
   "EMAIL_HOST",
   "EMAIL_PORT",
   "EMAIL_PASS",
@@ -263,6 +264,32 @@ describe("OTP mail delivery", () => {
     expect(sendMailStub.firstCall.args[0].from).to.deep.equal({
       name: "Humaeli",
       address: "app.mediconeckt@gmail.com",
+    });
+  });
+
+  it("defaults Gmail SMTP host to secure port 465 when no port is configured", async () => {
+    delete process.env.BREVO_API_KEY;
+    delete process.env.OTP_EMAIL_PROVIDER;
+    delete process.env.SMTP_PORT;
+    delete process.env.EMAIL_PORT;
+    process.env.EMAIL_HOST = "smtp.gmail.com";
+    process.env.EMAIL_FROM = "info@mediconeckt.com";
+    process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
+    process.env.EMAIL_PASS = "app-password";
+
+    const sendMailStub = sinon.stub().resolves({ messageId: "gmail-msg-465" });
+    const createTransportStub = sinon
+      .stub(nodemailer, "createTransport")
+      .returns({ sendMail: sendMailStub });
+
+    const { default: otpService } = await importFreshOtpService();
+    const result = await otpService.sendEmailOTP("developer@mindcrawller.com", "654321");
+
+    expect(result.provider).to.equal("gmail");
+    expect(createTransportStub.firstCall.args[0]).to.include({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
     });
   });
 

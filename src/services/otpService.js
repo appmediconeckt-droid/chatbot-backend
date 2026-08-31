@@ -59,8 +59,20 @@ const GMAIL_SMTP_PASS = String(
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const EMAIL_HOST = String(process.env.EMAIL_HOST || "").trim();
 const ACTIVE_SMTP_HOST = SMTP_HOST || EMAIL_HOST;
-const SMTP_PORT = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || SMTP_PORT === 465;
+const isGmailSmtpHost =
+  !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
+const configuredSmtpPort = process.env.SMTP_PORT || process.env.EMAIL_PORT;
+const shouldUseGmailSslPort =
+  isGmailSmtpHost &&
+  (!configuredSmtpPort ||
+    (Number(configuredSmtpPort) === 587 &&
+      process.env.SMTP_USE_STARTTLS_587 !== "true"));
+const SMTP_PORT = Number(
+  shouldUseGmailSslPort ? 465 : configuredSmtpPort || 587,
+);
+const SMTP_SECURE =
+  String(process.env.SMTP_SECURE || "").toLowerCase() === "true" ||
+  SMTP_PORT === 465;
 const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
 const SMTP_PASS = String(
   process.env.SMTP_PASS ||
@@ -104,8 +116,6 @@ const activeBrevoFromEmail =
 const SENDER_EMAILS = [
   ...new Set([activeBrevoFromEmail, VERIFIED_FALLBACK_FROM_EMAIL].filter(Boolean)),
 ];
-const isGmailSmtpHost =
-  !ACTIVE_SMTP_HOST || /(^|\.)gmail\.com$/i.test(ACTIVE_SMTP_HOST);
 const SMTP_AUTH_USER = SMTP_USER || GMAIL_SMTP_USER;
 const ALLOW_CUSTOM_SMTP_FROM = process.env.SMTP_ALLOW_CUSTOM_FROM === "true";
 const SMTP_MAIL_FROM_EMAIL =
@@ -475,6 +485,8 @@ export function getEmailDeliveryDiagnostics() {
     hasSmtpConfig,
     hasBrevoConfig,
     hasResendConfig,
+    smtpPort: hasSmtpConfig ? SMTP_PORT : null,
+    smtpSecure: hasSmtpConfig ? SMTP_SECURE : null,
     apiProviderForceEnabled: OTP_EMAIL_FORCE_API_PROVIDER,
     ignoresLegacyEmailProvider: Boolean(
       LEGACY_EMAIL_PROVIDER && !EXPLICIT_OTP_EMAIL_PROVIDER,
