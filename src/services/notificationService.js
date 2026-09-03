@@ -1,6 +1,14 @@
 import Notification from "../models/Notification.js";
+import User from "../models/userModel.js";
+import { sendPushNotification } from "./pushNotificationService.js";
 
-const enabledNotificationTypes = new Set(["appointment", "payment"]);
+const enabledNotificationTypes = new Set([
+  "appointment",
+  "payment",
+  "message",
+  "call",
+  "prescription",
+]);
 
 export const createNotification = async ({
   recipientId,
@@ -33,6 +41,29 @@ export const createNotification = async ({
       `counselor_${recipient}`,
     ];
     rooms.forEach((room) => global.io.to(room).emit("notification:new", payload));
+  }
+
+  const recipientUser = await User.findById(recipientId)
+    .select("fcmToken")
+    .lean();
+  if (recipientUser?.fcmToken) {
+    const pushType =
+      type === "call"
+        ? "INCOMING_CALL"
+        : type === "message"
+          ? "CHAT_MESSAGE"
+          : String(type || "NOTIFICATION").toUpperCase();
+
+    await sendPushNotification({
+      token: recipientUser.fcmToken,
+      title,
+      body: message,
+      data: {
+        ...data,
+        type: pushType,
+        notificationId: notification._id,
+      },
+    });
   }
 
   return notification;

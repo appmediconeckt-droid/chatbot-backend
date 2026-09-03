@@ -17,18 +17,29 @@ export const sendPushNotification = async ({
       safeData[key] = String(data[key]);
     });
 
+    const notificationType = String(safeData.type || '').toUpperCase();
+    const isCallNotification =
+      notificationType.includes('CALL') && Boolean(safeData.callId);
+
     const message = {
       token,
-      notification: {
-        title,
-        body,
-      },
-      data: safeData,
+      ...(isCallNotification
+        ? {
+            data: {
+              ...safeData,
+              title: String(title || 'Incoming call'),
+              body: String(body || 'Incoming call'),
+            },
+          }
+        : {
+            notification: { title, body },
+            data: safeData,
+          }),
       android: {
         priority: 'high',
-        notification: {
-          sound: 'default',
-        },
+        ...(isCallNotification
+          ? {}
+          : { notification: { sound: 'default' } }),
       },
     };
 

@@ -1235,6 +1235,8 @@ export const sendMessage = async (req, res) => {
       createdAt: populatedMessage.createdAt,
       isRead: populatedMessage.isRead,
     };
+    const recipientId =
+      req.user.role === "user" ? chat.counselorId : chat.userId;
 
     // ✅ Emit real-time event to everyone in the chat room (REST-based send)
     if (global.io) {
@@ -1242,8 +1244,6 @@ export const sendMessage = async (req, res) => {
       global.io.to(chatRoom).emit("new-message", messagePayloadForSocket);
 
       // Also notify the recipient's personal room for sidebar/badge updates
-      const recipientId =
-        req.user.role === "user" ? chat.counselorId : chat.userId;
       const recipientRoom =
         req.user.role === "user"
           ? `counsellor_${chat.counselorId}`
@@ -1266,6 +1266,25 @@ export const sendMessage = async (req, res) => {
       global.io.to(`counsellor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
       global.io.to(`counselor_${chat.counselorId}`).emit("chat-list-update", chatListUpdate);
     }
+
+    await createNotificationSafely({
+      recipientId,
+      actorId: req.user._id,
+      type: "message",
+      title: populatedMessage.senderId?.fullName || "New message",
+      message: hasAttachment
+        ? `Sent ${messagePayload.attachmentName || "an attachment"}`
+        : messageContent,
+      data: {
+        chatId: chat._id,
+        publicChatId: chat.chatId,
+        messageId: populatedMessage._id,
+        senderId: req.user._id,
+        senderRole: req.user.role,
+        senderName: populatedMessage.senderId?.fullName || "",
+      },
+      actionUrl: `/chat/${chat._id}`,
+    });
 
     // Billing follows real conversation activity, not React renders or every
     // individual message. Each message extends one inactivity-window session.
