@@ -1,10 +1,22 @@
 import Notification from "../models/Notification.js";
+import User from "../models/userModel.js";
+import { sendPushNotification } from "./pushNotificationService.js";
 
 const enabledNotificationTypes = new Set([
   "appointment",
   "payment",
   "message",
+  "call",
+  "system",
 ]);
+
+const notificationTypeToPushType = {
+  appointment: "APPOINTMENT",
+  payment: "PAYMENT",
+  message: "CHAT_MESSAGE",
+  call: "INCOMING_CALL",
+  system: "SYSTEM",
+};
 
 export const createNotification = async ({
   recipientId,
@@ -37,6 +49,33 @@ export const createNotification = async ({
       `counselor_${recipient}`,
     ];
     rooms.forEach((room) => global.io.to(room).emit("notification:new", payload));
+  }
+
+  try {
+    const recipient = await User.findById(recipientId)
+      .select("fcmToken role")
+      .lean();
+
+    if (recipient?.fcmToken) {
+      const pushData = {
+        type: data?.type || notificationTypeToPushType[type] || String(type).toUpperCase(),
+        notificationId: String(notification._id),
+        recipientId: String(recipientId),
+        recipientRole: recipient.role || "",
+        title,
+        body: message,
+        ...data,
+      };
+
+      await sendPushNotification({
+        token: recipient.fcmToken,
+        title,
+        body: message,
+        data: pushData,
+      });
+    }
+  } catch (error) {
+    console.error("Push delivery failed:", error.message);
   }
 
   return notification;

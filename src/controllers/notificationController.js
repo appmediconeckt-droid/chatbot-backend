@@ -2,12 +2,13 @@ import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
 import User from "../models/userModel.js";
 
-const visibleNotificationTypes = ["appointment", "payment", "message"];
+const visibleNotificationTypes = ["appointment", "payment", "message", "call", "system"];
 
 export const saveFCMToken = async (req, res) => {
   try {
     const userId = req.body?.userId || req.user?._id || req.user?.userId;
-    const { fcmToken, platform } = req.body || {};
+    const fcmToken = req.body?.fcmToken || req.body?.token;
+    const { platform } = req.body || {};
 
     if (!userId || !fcmToken) {
       return res.status(400).json({
