@@ -4,6 +4,7 @@ import User from "../models/userModel.js";
 import Call from "../models/Call.js";
 import mongoose from "mongoose";
 import { createNotificationSafely } from "../services/notificationService.js";
+import { recordTimedChatActivity } from "../services/paidSessionService.js";
 
 class SocketHandler {
   constructor(io) {
@@ -387,6 +388,13 @@ class SocketHandler {
 
   async handleSendMessage(socket, { chatId, content, contentType = "TEXT" }) {
     try {
+      const trimmedContent =
+        typeof content === "string" ? content.trim() : "";
+      if (!trimmedContent) {
+        socket.emit("error", { message: "Message content is required" });
+        return;
+      }
+
       const chat = await this.findChatByIdentifier(chatId);
 
       if (chat) {
@@ -415,6 +423,18 @@ class SocketHandler {
         return;
       }
 
+      if (
+        !["pending", "accepted", "active"].includes(
+          String(populatedChat.status || "").toLowerCase(),
+        )
+      ) {
+        socket.emit("error", {
+          message: `Cannot send messages. Chat is ${populatedChat.status}.`,
+          status: populatedChat.status,
+        });
+        return;
+      }
+
       // Check if admin has blocked the counselor from chatting
       const counselorForSocket = await User.findById(populatedChat.counselorId._id).lean();
       if (counselorForSocket?.chatPermission?.enabled === false) {
@@ -429,8 +449,8 @@ class SocketHandler {
       const message = await Message.create({
         chatId: populatedChat._id,
         senderId: socket.userId,
-        senderRole: socket.userRole,
-        content: content,
+        senderRole: this.isCounsellorRole(socket.userRole) ? "counsellor" : socket.userRole,
+        content: trimmedContent,
         contentType: contentType,
       });
 
@@ -443,7 +463,7 @@ class SocketHandler {
       );
       await Chat.findByIdAndUpdate(populatedChat._id, {
         $set: {
-          lastMessage: content,
+          lastMessage: trimmedContent,
           lastMessageAt: new Date(),
           updatedAt: new Date(),
           isActive: true,
@@ -505,7 +525,7 @@ class SocketHandler {
         actorId: socket.userId,
         type: "message",
         title: senderName || "New message",
-        message: content,
+        message: trimmedContent,
         data: {
           type: "CHAT_MESSAGE",
           chatId: populatedChat._id,
@@ -518,6 +538,10 @@ class SocketHandler {
           contentType: message.contentType,
         },
         actionUrl: `/chat/${populatedChat._id}`,
+      });
+
+      recordTimedChatActivity(populatedChat).catch((billingError) => {
+        console.error("Socket chat activity billing update failed:", billingError.message);
       });
 
       console.log(

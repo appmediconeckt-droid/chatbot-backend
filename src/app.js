@@ -517,18 +517,30 @@ expirePendingPaidChatRequests().catch((error) => {
 // ---------------------------
 const server = http.createServer(app);
 
-// Create Socket.IO server — polling-only (Render.com free tier blocks WS upgrades)
+const parseSocketTransports = (value) => {
+  const transports = String(value || "")
+    .split(",")
+    .map((transport) => transport.trim().toLowerCase())
+    .filter((transport) => transport === "websocket" || transport === "polling");
+
+  return transports.length ? transports : ["websocket", "polling"];
+};
+
+const socketTransports = parseSocketTransports(process.env.SOCKET_TRANSPORTS);
+
+// Create Socket.IO server. WebSocket is preferred for real-time delivery, with
+// polling kept as a fallback for networks/tunnels that cannot upgrade.
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
       if (isAllowedOrigin(origin)) return callback(null, true);
       return callback(new Error("Not allowed by CORS"), false);
     },
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   },
-  transports: ["polling"],
-  allowUpgrades: false,
+  transports: socketTransports,
+  allowUpgrades: socketTransports.includes("websocket"),
   pingTimeout: 60000,
   pingInterval: 25000,
   path: "/socket.io/",

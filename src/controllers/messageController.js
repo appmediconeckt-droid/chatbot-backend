@@ -584,6 +584,7 @@ export const acceptChat = async (req, res) => {
       // Notify user that chat was accepted
       global.io.to(`user_${chat.userId}`).emit("chat-status-update", {
         chatId: chat._id,
+        publicChatId: chat.chatId,
         status: "accepted",
         acceptedAt: chat.acceptedAt,
       });
@@ -592,6 +593,7 @@ export const acceptChat = async (req, res) => {
         id: acceptMsg._id,
         messageId: acceptMsg.messageId,
         chatId: chat._id,
+        publicChatId: chat.chatId,
         content: acceptMsg.content,
         senderRole: acceptMsg.senderRole,
         senderId: req.user._id,
@@ -700,6 +702,7 @@ export const rejectChat = async (req, res) => {
       const chatRoom = `chat_${chat.chatId}`;
       global.io.to(`user_${chat.userId}`).emit("chat-status-update", {
         chatId: chat._id,
+        publicChatId: chat.chatId,
         status: "rejected",
         rejectedAt: chat.rejectedAt,
       });
@@ -707,6 +710,7 @@ export const rejectChat = async (req, res) => {
         id: rejectMsg._id,
         messageId: rejectMsg.messageId,
         chatId: chat._id,
+        publicChatId: chat.chatId,
         content: rejectMsg.content,
         senderRole: rejectMsg.senderRole,
         senderId: req.user._id,
