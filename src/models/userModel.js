@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema({
     },
     phoneNumber: {
         type: String,
-        required: function() { return !this.googleId; }
+        required: function() { return !this.googleId && !this.appleId; }
     },
     phoneCountryCode: {
         type: String,
@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema({
     },
     password: {
         type: String,
-        required: function() { return !this.googleId; }
+        required: function() { return !this.googleId && !this.appleId; }
     },
     googleId: {
         type: String,
@@ -46,9 +46,20 @@ const userSchema = new mongoose.Schema({
         lowercase: true,
         default: null
     },
+    appleId: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    appleEmail: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: null
+    },
     authProvider: {
         type: String,
-        enum: ["local", "google"],
+        enum: ["local", "google", "apple"],
         default: "local"
     },
     sessionId: {
@@ -172,30 +183,30 @@ const userSchema = new mongoose.Schema({
     // (Google signup users complete these fields later via profile update)
     qualification: {
         type: String,
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     specialization: {
         type: [String],
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     experience: {
         type: Number,
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     location: {
         type: String,
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     consultationMode: {
         type: [String],
         enum: ["online", "offline", "both"],
         default: ["online"],
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     languages: {
         type: [String],
         default: [],
-        required: function() { return this.role === "counsellor" && !this.googleId; }
+        required: function() { return this.role === "counsellor" && !this.googleId && !this.appleId; }
     },
     aboutMe: {
         type: String,

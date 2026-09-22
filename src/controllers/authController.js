@@ -23,9 +23,16 @@ import { cleanupAccountData } from "../services/accountCleanupService.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getStrongPasswordError } from "../utils/passwordPolicy.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const APPLE_ISSUER = "https://appleid.apple.com";
+const APPLE_BUNDLE_ID =
+  process.env.APPLE_BUNDLE_ID ||
+  process.env.APPLE_CLIENT_ID ||
+  "com.mindcrawller.humaeli";
+const appleJWKS = createRemoteJWKSet(new URL(`${APPLE_ISSUER}/auth/keys`));
 
 // Twilio client is not used in this controller; removed to reduce bundle size.
 
@@ -405,6 +412,72 @@ const saveLoginLocationIfProvided = async ({ req, userId }) => {
       },
     },
   });
+};
+
+const setAuthCookies = (res, accessToken, refreshToken) => {
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 15 * 60 * 1000,
+  });
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+};
+
+const createLoginSession = async ({ req, res, user }) => {
+  const sessionId = new mongoose.Types.ObjectId();
+  const accessToken = generateAccessToken(
+    user._id,
+    sessionId.toString(),
+    user.role,
+  );
+  const refreshToken = generateRefreshToken(
+    user._id,
+    sessionId.toString(),
+    user.role,
+  );
+
+  await Session.create({
+    _id: sessionId,
+    userId: user._id,
+    refreshToken,
+    isActive: true,
+    lastActivityAt: new Date(),
+  });
+  await markUserOnline(user);
+  await saveLoginLocationIfProvided({ req, userId: user._id });
+  setAuthCookies(res, accessToken, refreshToken);
+
+  return { accessToken, refreshToken };
+};
+
+const getAppleFullName = (fullName) => {
+  if (!fullName || typeof fullName !== "object") return "";
+  return [
+    fullName.givenName,
+    fullName.middleName,
+    fullName.familyName,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
+};
+
+const isAppleEmailVerified = (value) =>
+  value === true || String(value || "").toLowerCase() === "true";
+
+const verifyAppleIdentityToken = async (identityToken) => {
+  const { payload } = await jwtVerify(identityToken, appleJWKS, {
+    issuer: APPLE_ISSUER,
+    audience: APPLE_BUNDLE_ID,
+  });
+
+  return payload;
 };
 
 // Clean up expired data every hour
@@ -2578,6 +2651,173 @@ export const googleAuth = async (req, res) => {
     console.error("Google auth error:", error);
     return res.status(500).json({
       message: "Error during Google authentication",
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+// ================= APPLE SIGN-IN (Sign-up + Login in one endpoint) =================
+export const appleLogin = async (req, res) => {
+  try {
+    const { identityToken, role, fullName } = req.body;
+
+    if (!identityToken) {
+      return res.status(400).json({
+        message: "Apple identityToken is required",
+        success: false,
+      });
+    }
+
+    const requestedRole = normalizeRole(role) === "counsellor" ? "counsellor" : "user";
+
+    let payload;
+    try {
+      payload = await verifyAppleIdentityToken(identityToken);
+    } catch (_verifyErr) {
+      return res.status(401).json({
+        message: "Invalid Apple identity token",
+        success: false,
+      });
+    }
+
+    const appleId = String(payload?.sub || "").trim();
+    const tokenEmail = normalizeEmail(payload?.email);
+    const emailVerified = isAppleEmailVerified(payload?.email_verified);
+
+    if (!appleId) {
+      return res.status(401).json({
+        message: "Apple token did not contain a subject identifier",
+        success: false,
+      });
+    }
+
+    let user = await User.findOne({ appleId });
+
+    if (!user && tokenEmail && emailVerified) {
+      const byEmail = await User.findOne({ email: tokenEmail });
+      if (byEmail) {
+        if (byEmail.appleId && byEmail.appleId !== appleId) {
+          return res.status(409).json({
+            message:
+              "This email is associated with a different Apple account. Please sign in with the original Apple account.",
+            success: false,
+            code: "APPLE_ID_MISMATCH",
+          });
+        }
+        user = byEmail;
+      }
+    }
+
+    if (user) {
+      if (normalizeRole(user.role) !== requestedRole) {
+        return res.status(403).json({
+          message: `This Apple account is registered as ${user.role}. Please pick the ${user.role} role and try again.`,
+          success: false,
+          code: "ROLE_MISMATCH",
+          actualRole: user.role,
+          requestedRole,
+        });
+      }
+
+      if (!user.appleId) {
+        user.appleId = appleId;
+      }
+
+      if (tokenEmail && emailVerified) {
+        const currentEmail = normalizeEmail(user.email);
+        const previousAppleEmail = normalizeEmail(user.appleEmail);
+        const shouldSyncProfileEmail =
+          user.authProvider === "apple" &&
+          (!previousAppleEmail || currentEmail === previousAppleEmail);
+
+        user.appleEmail = tokenEmail;
+        user.isEmailVerified = true;
+
+        if (shouldSyncProfileEmail && currentEmail !== tokenEmail) {
+          const taken = await User.findOne({
+            email: tokenEmail,
+            _id: { $ne: user._id },
+          });
+          if (taken) {
+            return res.status(409).json({
+              success: false,
+              code: "EMAIL_IN_USE",
+              message:
+                "Your Apple email is already in use by another account. Please contact support.",
+            });
+          }
+          user.email = tokenEmail;
+        }
+      }
+
+      if (!user.fullName || user.fullName === user.email?.split("@")[0]) {
+        const appleName = getAppleFullName(fullName);
+        if (appleName) user.fullName = appleName;
+      }
+
+      await user.save();
+
+      if (!user.isActive) {
+        return res
+          .status(401)
+          .json({ message: "Account is deactivated", success: false });
+      }
+    } else {
+      if (!tokenEmail || !emailVerified) {
+        return res.status(400).json({
+          message:
+            "Apple did not provide a verified email for this first login. Please retry Apple Sign-In and share your email.",
+          success: false,
+          code: "APPLE_EMAIL_REQUIRED",
+        });
+      }
+
+      const appleName = getAppleFullName(fullName);
+      user = await User.create({
+        fullName: appleName || tokenEmail.split("@")[0],
+        email: tokenEmail,
+        appleEmail: tokenEmail,
+        appleId,
+        authProvider: "apple",
+        role: requestedRole,
+        isEmailVerified: true,
+        isActive: true,
+        profileCompleted: false,
+        locationData: {
+          current: { type: "Point", coordinates: [0, 0] },
+          history: [],
+        },
+      });
+    }
+
+    await Session.updateMany(
+      { userId: user._id, isActive: true },
+      { $set: { isActive: false, logoutAt: new Date() } },
+    );
+
+    const { accessToken, refreshToken } = await createLoginSession({
+      req,
+      res,
+      user,
+    });
+
+    return res.status(200).json({
+      message: user.profileCompleted
+        ? "Login successful"
+        : "Account created. Please complete your profile.",
+      success: true,
+      accessToken,
+      refreshToken,
+      user: user.toJSON(),
+      role: user.role,
+      profileCompleted: user.profileCompleted,
+      isNewUser: !user.profileCompleted,
+    });
+  } catch (error) {
+    console.error("Apple auth error:", error?.message || error);
+    return res.status(500).json({
+      message: "Error during Apple authentication",
       success: false,
       error: error.message,
     });

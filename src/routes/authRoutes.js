@@ -26,6 +26,7 @@ import {
   logoutOtherDevicesAndSendOTP,
   verifyLoginOTP,
   googleAuth,
+  appleLogin,
   relinkGoogleAccount,
   sendUnlinkGoogleOtp,
   unlinkGoogleAccount,
@@ -60,6 +61,7 @@ authRoutes.post("/complete-registration",uploadProfilePhoto,completeRegistration
 authRoutes.post("/login", loginUser);
 // Google OAuth (signup + login in one endpoint — handles both new and existing users)
 authRoutes.post("/google", googleAuth);
+authRoutes.post("/apple-login", appleLogin);
 authRoutes.post("/google/relink", authMiddleware, relinkGoogleAccount);
 authRoutes.post("/google/unlink/send-otp", authMiddleware, sendUnlinkGoogleOtp);
 authRoutes.post("/google/unlink", authMiddleware, unlinkGoogleAccount);
