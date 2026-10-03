@@ -5,13 +5,19 @@ import crypto from "crypto";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
 
-export const PLAY_REVIEW_TEST_EMAILS = Object.freeze([
+export const APP_REVIEW_TEST_EMAILS = Object.freeze([
+  "appstore.user@humaeli.com",
+  "appstore.counsellor@humaeli.com",
   "playstore.user@humaeli.com",
   "playstore.counsellor@humaeli.com",
 ]);
 
+export const PLAY_REVIEW_TEST_EMAILS = APP_REVIEW_TEST_EMAILS;
+
 const configuredPlayReviewEmails = String(
-  process.env.PLAY_REVIEW_TEST_EMAILS || PLAY_REVIEW_TEST_EMAILS.join(","),
+  process.env.APP_REVIEW_TEST_EMAILS ||
+    process.env.PLAY_REVIEW_TEST_EMAILS ||
+    APP_REVIEW_TEST_EMAILS.join(","),
 )
   .split(",")
   .map((email) => email.trim().toLowerCase())

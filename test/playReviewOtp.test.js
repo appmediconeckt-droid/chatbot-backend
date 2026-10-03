@@ -1,11 +1,11 @@
 import { expect } from "chai";
 import otpService, {
-  PLAY_REVIEW_TEST_EMAILS,
+  APP_REVIEW_TEST_EMAILS,
 } from "../src/services/otpService.js";
 
-describe("Play Store review OTP", () => {
-  it("always returns 123456 for both allowlisted review emails", () => {
-    for (const email of PLAY_REVIEW_TEST_EMAILS) {
+describe("App review OTP", () => {
+  it("always returns 123456 for allowlisted review emails", () => {
+    for (const email of APP_REVIEW_TEST_EMAILS) {
       expect(otpService.generateOTP(email)).to.equal("123456");
       expect(otpService.generateOTP(` ${email.toUpperCase()} `)).to.equal(
         "123456",

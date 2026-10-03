@@ -9,9 +9,11 @@ import Message from "../models/Message.js";
 import Notification from "../models/Notification.js";
 import OTP from "../models/otpModel.js";
 import LoginOTP from "../models/loginOtpModel.js";
+import Prescription from "../models/Prescription.js";
 import Rating from "../models/Rating.js";
 import RatingStatus from "../models/RatingStatus.js";
 import RegistrationOTP from "../models/registrationOtpModel.js";
+import RefreshToken from "../models/refreshTokenModel.js";
 import Session from "../models/sessionModel.js";
 import AIChat from "../models/chatModel.js";
 
@@ -45,9 +47,18 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
       $or: [{ recipientId: objectId }, { actorId: objectId }],
     }),
     Session.deleteMany({ userId: objectId }),
+    RefreshToken.deleteMany({ userId: objectId }),
     OTP.deleteMany({ userId: objectId }),
     LoginOTP.deleteMany({ userId: objectId }),
     AIChat.deleteMany({ userId: idFilter }),
+    Prescription.deleteMany({
+      $or: [
+        { patientId: objectId },
+        { psychiatristId: objectId },
+        { "identityVerification.reviewedBy": objectId },
+        ...(chatObjectIds.length ? [{ chatId: { $in: chatObjectIds } }] : []),
+      ],
+    }),
     Conversation.deleteMany({
       $or: [
         { "participants.user": objectId },

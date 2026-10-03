@@ -4205,6 +4205,9 @@ export const deleteUser = async (req, res) => {
         .json({ message: "User not found", success: false });
 
     const profilePhotoPublicId = user.profilePhoto?.publicId;
+    const certificationPublicIds = (user.certifications || [])
+      .map((certification) => certification?.documentPublicId)
+      .filter(Boolean);
     const cleanup = await cleanupAccountData({ userId: id, email: user.email });
 
     if (profilePhotoPublicId) {
@@ -4217,6 +4220,19 @@ export const deleteUser = async (req, res) => {
         );
       }
     }
+
+    await Promise.allSettled(
+      certificationPublicIds.map(async (publicId) => {
+        try {
+          await deleteFromCloudinary(publicId);
+        } catch (certificationError) {
+          console.error(
+            "Account deletion certification cleanup failed:",
+            certificationError?.message || certificationError,
+          );
+        }
+      }),
+    );
 
     await User.findByIdAndDelete(id);
     return res
