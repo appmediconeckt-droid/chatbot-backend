@@ -10,6 +10,8 @@ export const APP_REVIEW_TEST_EMAILS = Object.freeze([
   "appstore.counsellor@humaeli.com",
   "playstore.user@humaeli.com",
   "playstore.counsellor@humaeli.com",
+  "demo.counsellor1@humaeli.com",
+  "demo.user1@humaeli.com",
 ]);
 
 export const PLAY_REVIEW_TEST_EMAILS = APP_REVIEW_TEST_EMAILS;

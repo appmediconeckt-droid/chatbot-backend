@@ -4,6 +4,11 @@ import otpService, {
 } from "../src/services/otpService.js";
 
 describe("App review OTP", () => {
+  it("includes the requested demo review accounts", () => {
+    expect(APP_REVIEW_TEST_EMAILS).to.include("demo.user1@humaeli.com");
+    expect(APP_REVIEW_TEST_EMAILS).to.include("demo.counsellor1@humaeli.com");
+  });
+
   it("always returns 123456 for allowlisted review emails", () => {
     for (const email of APP_REVIEW_TEST_EMAILS) {
       expect(otpService.generateOTP(email)).to.equal("123456");
