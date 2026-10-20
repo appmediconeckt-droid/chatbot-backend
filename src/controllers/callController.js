@@ -49,6 +49,10 @@ export const initiateCall = async (req, res) => {
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
+    const expectedReceiver = req.user.role === 'user' ? chat.counselorId._id : chat.userId._id;
+    if (String(receiverId) !== String(expectedReceiver)) {
+      return res.status(403).json({ error: 'Receiver must be the other chat participant' });
+    }
     
     // Get caller and receiver info
     const isCallerUser = req.user.role === 'user';

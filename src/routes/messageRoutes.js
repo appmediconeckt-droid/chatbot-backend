@@ -2,6 +2,8 @@
 // export default router;
 import express from "express";
 import { authenticateToken } from "../middleware/auth.js";
+import safetyRoutes from "./chatSafetyRoutes.js";
+import { requireUnblockedInteraction } from "../services/interactionSafety.js";
 import { uploadChatAttachment } from "../middleware/multerConfig.js";
 import {
   getChats,
@@ -30,15 +32,16 @@ import {
 } from "../controllers/messageController.js";
 
 const router = express.Router();
+router.use(safetyRoutes);
 
 // ==================== CHAT REQUEST ROUTES ====================
-router.post("/start", authenticateToken, startChat);
-router.patch("/accept/:chatId", authenticateToken, acceptChat);
+router.post("/start", authenticateToken, requireUnblockedInteraction, startChat);
+router.patch("/accept/:chatId", authenticateToken, requireUnblockedInteraction, acceptChat);
 router.patch("/reject/:chatId", authenticateToken, rejectChat);
 router.patch("/complete/:chatId", authenticateToken, completeChatSession);
 router.get("/pending-requests", authenticateToken, getPendingRequests);
 router.get("/payment-config", getPaymentConfig);
-router.post("/chat/:chatId/billing/start", authenticateToken, startChatUsage);
+router.post("/chat/:chatId/billing/start", authenticateToken, requireUnblockedInteraction, startChatUsage);
 router.post("/chat/:chatId/billing/stop", authenticateToken, stopChatUsage);
 router.post("/chat/:chatId/billing/heartbeat", authenticateToken, touchChatUsage);
 
@@ -49,6 +52,7 @@ router.get("/chat/:chatId/messages", authenticateToken, getChatMessages);
 router.post(
   "/chat/:chatId/message",
   authenticateToken,
+  requireUnblockedInteraction,
   uploadChatAttachment,
   sendMessage,
 );

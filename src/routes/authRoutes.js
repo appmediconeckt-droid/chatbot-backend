@@ -96,7 +96,7 @@ authRoutes.post("/resendOtp", resendOtp);
 authRoutes.get("/landing-stats", getLandingStats);
 authRoutes.get("/counsellors", getAllCounsellors);
 authRoutes.get("/counsellors/:counsellorId", getCounsellorById);
-authRoutes.get("/debug/counsellor", debugCounsellorByEmail);
+if (process.env.NODE_ENV !== "production") authRoutes.get("/debug/counsellor", authMiddleware, debugCounsellorByEmail);
 
 // PROTECTED ROUTES
 authRoutes.get(
@@ -105,7 +105,7 @@ authRoutes.get(
   authorizeRoles("user", "counsellor"), // both allowed
   getMyProfile,
 );
-authRoutes.get("/getUser/:userId", getUser);
+authRoutes.get("/getUser/:userId", authMiddleware, getUser);
 
 authRoutes.get(
   "/getAllUser",

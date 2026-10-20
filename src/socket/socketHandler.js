@@ -6,6 +6,8 @@ import mongoose from "mongoose";
 import { createNotificationSafely } from "../services/notificationService.js";
 import { recordTimedChatActivity } from "../services/paidSessionService.js";
 import { getAnonymousUserName } from "../utils/anonymousUser.js";
+import { interactionIsBlocked } from "../services/interactionSafety.js";
+import { getVideoCallParticipantIds } from "../controllers/videoCallController.js";
 
 const getUserPhotoUrl = (user) => {
   const photo = user?.profilePhoto || user?.avatar || null;
@@ -258,20 +260,14 @@ class SocketHandler {
           const callRoom = `call_${callId}`;
           const call = await Call.findOne({ callId: callId });
 
-          // DB-backed calls require authorization checks.
-          // For in-memory video calls (managed by videoCallController),
-          // Call.findOne can be empty and we still allow room join.
-          if (call) {
-            const isAuthorized =
-              call.callerId.toString() === socket.userId ||
-              call.receiverId.toString() === socket.userId;
-
-            if (!isAuthorized) {
+          const participants = call
+            ? [String(call.callerId), String(call.receiverId)]
+            : getVideoCallParticipantIds(callId);
+          if (!participants.includes(String(socket.userId)) || await interactionIsBlocked(participants[0], participants[1])) {
               socket.emit("error", {
                 message: "Unauthorized to join this call",
               });
               return;
-            }
           }
 
           socket.join(callRoom);
@@ -488,6 +484,10 @@ class SocketHandler {
       }
 
       // Create message
+      if (await interactionIsBlocked(populatedChat.userId._id, populatedChat.counselorId._id)) {
+        socket.emit("error", { code: "INTERACTION_BLOCKED", message: "This interaction is blocked" });
+        return;
+      }
       const message = await Message.create({
         chatId: populatedChat._id,
         senderId: socket.userId,
@@ -602,6 +602,8 @@ class SocketHandler {
     try {
       const chat = await this.findChatByIdentifier(chatId);
       if (!chat) return;
+      if (![chat.userId, chat.counselorId].some(id => String(id) === String(socket.userId))) return;
+      if (await interactionIsBlocked(chat.userId, chat.counselorId)) return;
 
       const chatRoom = `chat_${chat.chatId}`;
 

@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
+import { requireUnblockedInteraction } from '../services/interactionSafety.js';
 import {
   initiateCall,
   getCallDetails,
@@ -24,7 +25,7 @@ const router = express.Router();
  * @access  Private
  * @body    { chatId: string, callType: string, receiverId: string }
  */
-router.post('/initiate', authenticateToken, initiateCall);
+router.post('/initiate', authenticateToken, requireUnblockedInteraction, initiateCall);
 
 /**
  * @route   GET /api/call/:callId

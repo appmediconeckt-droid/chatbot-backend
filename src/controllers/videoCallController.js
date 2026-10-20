@@ -8,6 +8,10 @@ import { createNotificationSafely } from "../services/notificationService.js";
 // In-memory storage (replace with database in production)
 const callHistory = [];
 const activeCalls = new Map();
+export const getVideoCallParticipantIds = (callId) => {
+  const call = activeCalls.get(callId);
+  return call ? [String(call.initiator.id), String(call.receiver.id)] : [];
+};
 const userCallHistory = new Map(); // userId -> array of calls
 const userStatus = new Map(); // Track online/busy status of users
 const CALL_REQUEST_TIMEOUT_SECONDS = 30;
@@ -1102,7 +1106,7 @@ export const videoCallController = {
     try {
       const { callId } = req.params;
       const rejectingUserId = String(
-        req.body?.userId || req.body?.rejectorId || req.body?.acceptorId || "",
+        req.user?._id || "",
       ).trim();
       const { reason = "declined" } = req.body;
 
@@ -1926,7 +1930,7 @@ export const videoCallController = {
 
       if (mongoose.Types.ObjectId.isValid(userId)) {
         await User.findByIdAndUpdate(userId, {
-          $set: { isActive: status === "online" },
+          $set: { isOnline: status === "online" },
         });
       }
 
@@ -2310,7 +2314,8 @@ getCallHistory: async (req, res) => {
   getCallDetails: async (req, res) => {
     try {
       const { callId } = req.params;
-      const { userId, userType } = req.query;
+      const userId = String(req.user._id);
+      const userType = req.user.role;
 
       let call = activeCalls.get(callId);
       let isActive = true;
@@ -2327,6 +2332,9 @@ getCallHistory: async (req, res) => {
         });
       }
 
+      if (![call.initiator.id, call.receiver.id].some(id => String(id) === userId)) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
       // Get display names from the perspective of the requesting user
       const initiatorDisplayName = videoCallController.getDisplayName(
         {

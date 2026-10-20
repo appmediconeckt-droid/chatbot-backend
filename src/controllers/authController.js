@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
 import Chat from "../models/Chat.js";
+import Appointment from "../models/appointmentModel.js";
 import Message from "../models/Message.js";
 import OTP from "../models/otpModel.js";
 import LoginOTP from "../models/loginOtpModel.js";
@@ -8,6 +9,8 @@ import RegistrationOTP from "../models/registrationOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
+import { publicCounselorProfile } from "../utils/publicProfile.js";
+import { sanitizeUserForCounselor } from "../utils/anonymousUser.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
@@ -3275,8 +3278,8 @@ export const refreshAccessToken = async (req, res) => {
     }
 
     // ✅ FIXED: Pass sessionId to generateAccessToken
-    const newAccessToken = generateAccessToken(user._id, session._id);
-    const newRefreshToken = generateRefreshToken(user._id, session._id);
+    const newAccessToken = generateAccessToken(user._id, session._id, user.role);
+    const newRefreshToken = generateRefreshToken(user._id, session._id, user.role);
 
     // Update session with new refresh token
     session.refreshToken = newRefreshToken;
@@ -3571,7 +3574,7 @@ export const getAllCounsellors = async (req, res) => {
       // authenticated socket makes a counselor online in the directory.
       const liveOnline = global.socketHandler?.isUserOnline(counsellor._id) === true;
       return {
-        ...counsellor,
+        ...publicCounselorProfile(counsellor),
         patientConversationCount:
           patientConversationCountByCounsellor.get(String(counsellor._id)) || 0,
         isOnline: liveOnline,
@@ -3635,7 +3638,7 @@ export const getCounsellorById = async (req, res) => {
     return res.status(200).json({
       message: "Counsellor fetched successfully",
       success: true,
-      counsellor: counsellor.toJSON(),
+      counsellor: publicCounselorProfile(counsellor),
     });
   } catch (error) {
     console.log("Get counsellor error:", error);
@@ -4154,7 +4157,9 @@ export const registerCounsellor = async (req, res) => {
 
 export const getAlluser = async (req, res) => {
   try {
-    const users = await User.find().select("-password");
+    const relatedIds = await Chat.distinct("userId", { counselorId: req.user._id });
+    const records = await User.find({ _id: { $in: relatedIds }, role: "user" }).select("anonymous age gender isActive isOnline lastSeen");
+    const users = records.map(sanitizeUserForCounselor);
     return res.status(200).json({
       message: "Got all users",
       success: true,
@@ -4171,15 +4176,24 @@ export const getAlluser = async (req, res) => {
 export const getUser = async (req, res) => {
   try {
     const { userId } = req.params;
+    if (!mongoose.isValidObjectId(userId)) return res.status(400).json({ success: false, message: "Invalid account ID" });
     const user = await User.findById(userId);
     if (!user)
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
+    let profile;
+    if (String(req.user._id) === String(userId)) profile = user.toJSON();
+    else if (user.role === "counsellor") profile = publicCounselorProfile(user);
+    else if (req.user.role === "counsellor" && (
+      await Chat.exists({ userId: user._id, counselorId: req.user._id }) ||
+      await Appointment.exists({ patient: user._id, counselor: req.user._id })
+    )) profile = sanitizeUserForCounselor(user);
+    else return res.status(403).json({ success: false, message: "Access denied" });
     return res.status(200).json({
       message: "User fetched successfully",
       success: true,
-      user: user.toJSON(),
+      user: profile,
     });
   } catch (error) {
     return res

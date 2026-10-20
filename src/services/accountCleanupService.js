@@ -1,4 +1,6 @@
 import AIConsent from "../models/AIConsent.js";
+import UserBlock from "../models/UserBlock.js";
+import AbuseReport from "../models/AbuseReport.js";
 import { revokeConsent } from "./aiConsent.js";
 import mongoose from "mongoose";
 import Appointment from "../models/appointmentModel.js";
@@ -31,6 +33,8 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
   }
 
   await revokeConsent(objectId);
+  await UserBlock.deleteMany({ $or: [{ blockerId: objectId }, { blockedId: objectId }] });
+  await AbuseReport.deleteMany({ $or: [{ reporterId: objectId }, { reportedId: objectId }] });
 
   const idFilter = { $in: [objectId, String(objectId)] };
   const chats = await Chat.find({
