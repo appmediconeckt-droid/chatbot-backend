@@ -23,7 +23,6 @@ const buildUserContext = (user) => {
     return "Logged-in user context is not available for this call. Do not claim to know the user's profile.";
   }
 
-  const medical = user.medicalInfo || {};
   const chatContext = user.chatContext || {};
 
   return [
@@ -35,7 +34,6 @@ const buildUserContext = (user) => {
     `Current surrounding: ${chatContext.currentSurrounding || "not provided"}`,
     `Current company: ${chatContext.currentCompany || "not provided"}`,
     `Safety flags: ${joinList(chatContext.safetyFlags)}`,
-    `Medical context: allergies=${joinList(medical.allergies)}, chronicConditions=${joinList(medical.chronicConditions)}, currentMedications=${joinList(medical.currentMedications)}`,
   ].join("\n");
 };
 

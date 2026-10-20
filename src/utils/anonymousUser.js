@@ -45,9 +45,9 @@ export const sanitizeUserForCounselor = (user, fallbackId = null) => {
     isOnline: Boolean(user.isOnline),
     online: Boolean(user.isOnline),
     lastSeen: user.lastSeen || null,
-    profilePhoto: null,
-    avatar: null,
-    avatarUrl: null,
-    Image: null,
+    profilePhoto: user.profilePhoto || user.profileImage || user.profilePic || user.photoUrl || null,
+    avatar: user.avatar || null,
+    avatarUrl: user.avatarUrl || null,
+    Image: user.Image || user.image || null,
   };
 };

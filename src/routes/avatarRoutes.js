@@ -1,5 +1,6 @@
+import { authMiddleware } from "../middleware/authMiddleware.js";
+import { requireAIConsent, consentFetch, sendAIError } from "../services/aiConsent.js";
 import express from "express";
-import { authenticateToken } from "../middleware/auth.js";
 import OpenAI from "openai";
 import { toFile } from "openai/uploads";
 
@@ -20,14 +21,14 @@ function getOpenAI() {
       throw new Error("OPENAI_API_KEY is not set in environment variables");
     }
     openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.OPENAI_API_KEY, fetch: consentFetch, timeout: 60000, maxRetries: 0,
     });
   }
   return openai;
 }
 
 // ─── Analyze photo and generate AI avatar ──────────────────────────────────
-router.post("/analyze-and-generate", authenticateToken, async (req, res) => {
+router.post("/analyze-and-generate", authMiddleware, requireAIConsent, async (req, res) => {
   let failedStage = "photo analysis";
 
   try {
@@ -79,7 +80,7 @@ router.post("/analyze-and-generate", authenticateToken, async (req, res) => {
       ? await openai.chat.completions.create({
       // gpt-4o accepts image_url input. The previous gpt-4-turbo model caused
       // the "image_url is only supported by certain models" API error.
-      model: AVATAR_ANALYSIS_MODEL,
+      model: AVATAR_ANALYSIS_MODEL, store: false,
       max_tokens: 300,
       response_format: { type: "json_object" },
       messages: [
@@ -182,45 +183,19 @@ Provide ONLY the JSON response, no other text.`,
       message: "Avatar generated successfully",
     });
   } catch (error) {
-    console.error("❌ Avatar generation error:", error);
-
-    if (error.status === 401) {
-      return res.status(401).json({
-        success: false,
-        message: "OpenAI API key is invalid or expired",
-      });
-    }
-
-    if (error.status === 429) {
-      return res.status(429).json({
-        success: false,
-        message: "Rate limited. Please try again later.",
-      });
-    }
-
-    if (error.status === 400) {
-      const providerMessage = error?.error?.message || error.message || "Invalid request";
-      return res.status(422).json({
-        success: false,
-        message: `OpenAI ${failedStage} failed: ${providerMessage}`,
-        stage: failedStage,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to generate avatar",
-      error: error.message,
-    });
+    return sendAIError(res, error, "AI avatar service unavailable. Please retry.");
   }
 });
 
 // Apply the builder controls to an already-generated AI avatar. This keeps the
 // person's identity while allowing deliberate changes such as hairstyle,
 // glasses, eye expression, and outfit.
-router.post("/customize", authenticateToken, async (req, res) => {
+router.post("/customize", authMiddleware, requireAIConsent, async (req, res) => {
   try {
     const { avatarBase64, customization = {} } = req.body;
+    if (!customization || typeof customization !== "object" || Array.isArray(customization) || JSON.stringify(customization).length > 8000) {
+      return res.status(400).json({ success: false, message: "Avatar customization must be an object smaller than 8 KB." });
+    }
     if (typeof avatarBase64 !== "string") {
       return res.status(400).json({ success: false, message: "Avatar image is required" });
     }
@@ -259,12 +234,7 @@ router.post("/customize", authenticateToken, async (req, res) => {
       message: "Avatar customized successfully",
     });
   } catch (error) {
-    console.error("Avatar customization error:", error);
-    const providerMessage = error?.error?.message || error.message || "Unable to customize avatar";
-    return res.status(error.status === 400 ? 422 : 500).json({
-      success: false,
-      message: `OpenAI avatar customization failed: ${providerMessage}`,
-    });
+    return sendAIError(res, error, "AI avatar service unavailable. Please retry.");
   }
 });
 

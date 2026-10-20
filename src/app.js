@@ -1,3 +1,5 @@
+import privacyRoutes from "./routes/privacyRoutes.js";
+import aiConsentRoutes from "./routes/aiConsentRoutes.js";
 // // // // src/app.js
 // // // import express from "express";
 // // // import cors from "cors";
@@ -478,6 +480,8 @@ app.use("/api/avatar", avatarRoutes); // <--- Avatar generation with OpenAI
 // app.use("/api/admin", adminRoutes); // <--- Admin endpoints (cleanup, stats, etc.)
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);
+app.use("/privacy", privacyRoutes);
+app.use("/api/ai/consent", aiConsentRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/ai/realtime", aiRealtimeRoute);
 

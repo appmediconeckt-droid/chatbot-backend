@@ -1,5 +1,10 @@
+import {
+  requireAIConsent,
+  consentFetch,
+  sendAIError,
+} from "../services/aiConsent.js";
 import express from "express";
-import { optionalAuth } from "../middleware/authMiddleware.js";
+import { authMiddleware } from "../middleware/authMiddleware.js";
 import { buildRealtimeDataContext } from "../services/aiRealtimeContext.js";
 
 const router = express.Router();
@@ -9,7 +14,7 @@ const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "shimmer";
 const REALTIME_ROUTE_VERSION = "webrtc-text-sdp-2026-06-27";
 
 const REALTIME_SYSTEM_INSTRUCTIONS = `
-You are MediConeckt AI Assistant, a warm voice companion for mental health and general wellbeing support.
+You are Humaeli AI Assistant, a warm voice companion for mental health and general wellbeing support.
 Do not speak first when a voice call starts. Stay silent and wait until the user says something, then respond to that user message.
 Keep voice replies short, natural, and supportive. Ask one gentle follow-up question only when it helps.
 Use a warm female-presenting assistant persona. In Hindi, Hinglish, and other gendered languages, always refer to yourself with feminine grammar, for example "main bol rahi hoon", "main samajh rahi hoon", "main madad kar rahi hoon". Never say masculine self-references like "main bol raha hoon" or "main kar raha hoon".
@@ -57,14 +62,17 @@ const exchangeRealtimeSdp = async (offerSdp, user) => {
   formData.set("sdp", normalizedOfferSdp);
   formData.set("session", sessionConfig);
 
-  const response = await fetch("https://api.openai.com/v1/realtime/calls", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: formData,
-    signal: AbortSignal.timeout(30000),
-  });
+  const response = await consentFetch(
+    "https://api.openai.com/v1/realtime/calls",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: formData,
+      signal: AbortSignal.timeout(30000),
+    }
+  );
 
   const responseText = await response.text();
 
@@ -89,7 +97,9 @@ const extractSdpOffer = (body) => {
     if (text.startsWith("{")) {
       try {
         const parsed = JSON.parse(text);
-        return String(parsed.sdp || parsed.offer || parsed.offerSdp || "").trim();
+        return String(
+          parsed.sdp || parsed.offer || parsed.offerSdp || ""
+        ).trim();
       } catch {
         return text;
       }
@@ -107,7 +117,8 @@ const extractSdpOffer = (body) => {
 
 router.post(
   "/session",
-  optionalAuth,
+  authMiddleware,
+  requireAIConsent,
   express.text({
     type: ["application/sdp", "text/plain", "application/octet-stream"],
     limit: "1mb",
@@ -117,7 +128,7 @@ router.post(
       const offerSdp = extractSdpOffer(req.body);
       res.set("X-AI-Realtime-Route", REALTIME_ROUTE_VERSION);
 
-      if (!offerSdp || !offerSdp.includes("v=0")) {
+      if (!offerSdp || offerSdp.length > 1024 * 1024 || !offerSdp.includes("v=0")) {
         return res.status(400).json({
           success: false,
           message: "Valid SDP offer is required",
@@ -136,30 +147,11 @@ router.post(
 
       return res.status(200).type("application/sdp").send(answerSdp);
     } catch (error) {
-      const statusCode = error?.response?.status || 500;
-
-      const providerMessage =
-        typeof error?.response?.data === "string"
-          ? error.response.data
-          : error?.response?.data?.error?.message ||
-            error?.response?.data?.message ||
-            error.message;
-
-      console.error("OpenAI realtime session error:", {
-        routeVersion: REALTIME_ROUTE_VERSION,
-        statusCode,
-        message: providerMessage,
-        sdpLength: extractSdpOffer(req.body).length,
-        sdpStartsWith: extractSdpOffer(req.body).slice(0, 12),
-      });
-
-      return res.status(statusCode).json({
-        success: false,
-        message: "AI voice call session start nahi ho paya",
-        error: providerMessage,
-        routeVersion: REALTIME_ROUTE_VERSION,
-        sdpLength: extractSdpOffer(req.body).length,
-      });
+      return sendAIError(
+        res,
+        error,
+        "AI voice session unavailable. Please retry."
+      );
     }
   }
 );

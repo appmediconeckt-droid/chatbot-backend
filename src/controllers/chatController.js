@@ -1,3 +1,4 @@
+import { consentFetch, sendAIError } from "../services/aiConsent.js";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
 import OpenAI from "openai";
@@ -14,7 +15,7 @@ import { rankCounsellors, formatRankedForPrompt } from "../services/counsellorMa
 let _openaiClient = null;
 const getOpenAIClient = () => {
   if (!_openaiClient) {
-    _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, fetch: consentFetch, timeout: 60000, maxRetries: 0 });
   }
   return _openaiClient;
 };
@@ -52,6 +53,7 @@ export const chatWithAI = async (req, res) => {
   try {
     const { message, history: clientHistory } = req.body;
     const isOpeningEvent = isAiOpeningEvent(req.body);
+    if (typeof message === "string" && message.length > 16000) return res.status(413).json({ success: false, message: "Message is too long." });
 
     if (!isOpeningEvent && (typeof message !== "string" || message.trim().length === 0)) {
       return res.status(400).json({
@@ -117,15 +119,7 @@ export const chatWithAI = async (req, res) => {
       }
     }
 
-    console.log("[AI-CHAT DEBUG]", {
-      userId: userId?.toString(),
-      sessionId,
-      incomingSessionId: req.body.sessionId,
-      historyTurns: history.length,
-      isFirstTurn: history.length === 0,
-      lastTurn: history.slice(-2),
-      newMessage: message,
-    });
+
 
     const clientLang = req.body.language; // e.g. "hi-IN", "ta-IN", "en-IN"
     const clientLangCode = clientLang ? clientLang.split("-")[0] : null;
@@ -270,9 +264,7 @@ export const chatWithAI = async (req, res) => {
     const detectedTopics = matcherResult?.topics || [];
     const topMatchSummary = formatRankedForPrompt(rankedCounsellors, 3);
 
-    console.log(
-      `[AI-CHAT DEBUG] ${counsellors.length} online counsellors; detected topics=${detectedTopics.join(", ") || "(none)"}; top match: ${rankedCounsellors[0]?.counsellor?.fullName || "(none)"} score=${rankedCounsellors[0]?.score?.toFixed(1) || "n/a"}`,
-    );
+
 
     // Build system instruction - INTERACTIVE, SUPPORTIVE CHATBOT STYLE
     const systemInstruction = `
@@ -777,12 +769,8 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
       },
     });
   } catch (error) {
-    console.error("AI Chat Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "An error occurred while processing your request with the AI.",
-      error: error.message,
-    });
+    return sendAIError(res, error);
+
   }
 };
 
@@ -790,7 +778,7 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
 const sendCrisisAlert = async (counselor, userMessage, userId) => {
   // Implementation for sending alerts (email, SMS, push notification)
   // This can be expanded based on your notification system
-  console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. Message: ${userMessage.substring(0, 100)}...`);
+  console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. `);
 };
 
 // Return the authenticated user's latest AI chat session in the shape the web
@@ -1006,8 +994,8 @@ export const textToSpeech = async (req, res) => {
     });
     return res.send(audioBuffer);
   } catch (err) {
-    console.error("[TTS POST] error:", err.message);
-    return res.status(500).json({ success: false, message: "TTS failed", details: err.message });
+
+    return sendAIError(res, err, "TTS unavailable. Please retry.");
   }
 };
 
@@ -1027,7 +1015,7 @@ export const textToSpeechGet = async (req, res) => {
     });
     return res.send(audioBuffer);
   } catch (err) {
-    console.error("[TTS GET] error:", err.message);
-    return res.status(500).json({ success: false, message: "TTS failed", details: err.message });
+
+    return sendAIError(res, err, "TTS unavailable. Please retry.");
   }
 };

@@ -1,3 +1,5 @@
+import AIConsent from "../models/AIConsent.js";
+import { revokeConsent } from "./aiConsent.js";
 import mongoose from "mongoose";
 import Appointment from "../models/appointmentModel.js";
 import Call from "../models/Call.js";
@@ -28,6 +30,8 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
     throw new Error("A valid userId is required for account cleanup");
   }
 
+  await revokeConsent(objectId);
+
   const idFilter = { $in: [objectId, String(objectId)] };
   const chats = await Chat.find({
     $or: [{ userId: objectId }, { counselorId: objectId }],
@@ -39,6 +43,7 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
 
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const cleanupTasks = [
+    AIConsent.deleteMany({ userId: objectId }),
     Appointment.deleteMany({ $or: [{ patient: objectId }, { counselor: objectId }] }),
     Call.deleteMany({
       $or: [{ callerId: objectId }, { receiverId: objectId }, { endedBy: objectId }],

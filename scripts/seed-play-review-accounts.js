@@ -9,7 +9,8 @@ import { APP_REVIEW_TEST_EMAILS } from "../src/services/otpService.js";
 dotenv.config();
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-const TEST_PASSWORD = process.env.PLAY_REVIEW_TEST_PASSWORD || "Humaeli@123";
+const TEST_PASSWORD = process.env.APP_REVIEW_TEST_PASSWORD || process.env.PLAY_REVIEW_TEST_PASSWORD;
+if (!TEST_PASSWORD || TEST_PASSWORD.length < 12) throw new Error("Set a strong APP_REVIEW_TEST_PASSWORD (at least 12 characters).");
 const seededEmails = new Set([
   "appstore.user@humaeli.com",
   "appstore.counsellor@humaeli.com",
@@ -81,17 +82,7 @@ const accounts = [
       pincode: "452001",
       country: "India",
     },
-    certifications: [
-      {
-        name: "App Review Testing Certificate",
-        issuedBy: "Humaeli",
-        issueDate: new Date("2026-01-01T00:00:00.000Z"),
-        expiryDate: null,
-        documentUrl: "https://humaeli.com/app-review-certificate.pdf",
-        documentPublicId: null,
-        documentName: "app-review-certificate.pdf",
-      },
-    ],
+    certifications: [],
     profilePhoto: {
       url: "https://api.dicebear.com/7.x/adventurer/png?seed=AppReviewCounsellor",
       publicId: null,
@@ -138,17 +129,7 @@ const accounts = [
       pincode: "452001",
       country: "India",
     },
-    certifications: [
-      {
-        name: "Play Review Testing Certificate",
-        issuedBy: "Humaeli",
-        issueDate: new Date("2026-01-01T00:00:00.000Z"),
-        expiryDate: null,
-        documentUrl: "https://humaeli.com/play-review-certificate.pdf",
-        documentPublicId: null,
-        documentName: "play-review-certificate.pdf",
-      },
-    ],
+    certifications: [],
     profilePhoto: {
       url: "https://api.dicebear.com/7.x/adventurer/png?seed=PlayReviewCounsellor",
       publicId: null,
@@ -195,17 +176,7 @@ const accounts = [
       pincode: "452001",
       country: "India",
     },
-    certifications: [
-      {
-        name: "Demo Testing Certificate",
-        issuedBy: "Humaeli",
-        issueDate: new Date("2026-01-01T00:00:00.000Z"),
-        expiryDate: null,
-        documentUrl: "https://humaeli.com/demo-certificate.pdf",
-        documentPublicId: null,
-        documentName: "demo-certificate.pdf",
-      },
-    ],
+    certifications: [],
     profilePhoto: {
       url: "https://api.dicebear.com/7.x/adventurer/png?seed=DemoCounsellor1",
       publicId: null,
@@ -245,7 +216,7 @@ async function seedPlayReviewAccounts() {
     await User.findOneAndUpdate(
       { email: account.email },
       {
-        $set: {
+        $setOnInsert: {
           ...commonProfile,
           ...account,
           phoneNumber,

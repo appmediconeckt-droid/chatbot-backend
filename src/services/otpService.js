@@ -16,17 +16,12 @@ export const APP_REVIEW_TEST_EMAILS = Object.freeze([
 
 export const PLAY_REVIEW_TEST_EMAILS = APP_REVIEW_TEST_EMAILS;
 
-const configuredPlayReviewEmails = String(
-  process.env.APP_REVIEW_TEST_EMAILS ||
-    process.env.PLAY_REVIEW_TEST_EMAILS ||
-    APP_REVIEW_TEST_EMAILS.join(","),
-)
-  .split(",")
-  .map((email) => email.trim().toLowerCase())
-  .filter(Boolean);
-
-const playReviewEmailSet = new Set(configuredPlayReviewEmails);
-const PLAY_REVIEW_FIXED_OTP = "123456";
+const getReviewEmailSet = () => new Set(String(process.env.APP_REVIEW_TEST_EMAILS || process.env.PLAY_REVIEW_TEST_EMAILS || "").split(",").map(email => email.trim().toLowerCase()).filter(Boolean));
+const reviewOTP = () => {
+  const value = process.env.APP_REVIEW_OTP || "";
+  const expires = Date.parse(process.env.APP_REVIEW_EXPIRES_AT || "");
+  return process.env.APP_REVIEW_ENABLED === "true" && /^\d{6}$/.test(value) && expires > Date.now() ? value : null;
+};
 
 const FROM_NAME = "Humaeli";
 
@@ -612,18 +607,21 @@ const buildLoginOTPHtml = (otp) => `
 
 class OTPService {
   isPlayReviewEmail(email) {
-    return playReviewEmailSet.has(String(email || "").trim().toLowerCase());
+    return Boolean(reviewOTP()) && getReviewEmailSet().has(String(email || "").trim().toLowerCase());
   }
 
   generateOTP(email = "") {
     if (this.isPlayReviewEmail(email)) {
-      return PLAY_REVIEW_FIXED_OTP;
+      return reviewOTP();
     }
 
     return crypto.randomInt(100000, 999999).toString();
   }
 
   async sendLoginOTP(email, otp) {
+    // Only deployment-enabled, expiring review accounts use the configured code.
+    // Normal accounts still require their usual delivered OTP.
+    if (this.isPlayReviewEmail(email)) return { success: true, provider: "configured-app-review" };
     try {
       const textContent =
         `Humaeli - Mental Wellness - Login Verification\n\n` +

@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { requireAIConsent } from "../services/aiConsent.js";
 import express from "express";
-import { optionalAuth } from "../middleware/authMiddleware.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 import {
   chatWithAI,
@@ -14,9 +15,17 @@ import {
 
 const router = express.Router();
 
-router.post("/send-message", optionalAuth, chatWithAI);
-router.post("/tts", optionalAuth, textToSpeech);
-router.get("/tts", optionalAuth, textToSpeechGet);
+router.post("/send-message", authMiddleware, requireAIConsent, chatWithAI);
+router.post("/tts", authMiddleware, requireAIConsent, textToSpeech);
+router.get("/tts", authMiddleware, requireAIConsent, textToSpeechGet);
+router.post("/start-session", authMiddleware, (req, res) =>
+  res.json({ success: true, data: { sessionId: randomUUID() } })
+);
+router.get("/history/:userId", authMiddleware, (req, res, next) => {
+  if (String(req.user._id) !== req.params.userId)
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  return getMyChatHistory(req, res, next);
+});
 router.get("/history", authMiddleware, getMyChatHistory);
 // User-triggered: wipe the caller's own chat history so onboarding can
 // trigger fresh. Auth required — users can only clear their OWN messages.
