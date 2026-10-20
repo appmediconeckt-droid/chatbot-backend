@@ -190,6 +190,39 @@ describe("AI consent security (mocked database and provider)", () => {
     expect(r.status).to.equal(403);
     expect(provider.callCount).to.equal(0);
   });
+  for (const state of ["declined", "withdrawn", "obsolete"]) {
+    it(`rejects direct requests to every processing endpoint when consent is ${state}`, async () => {
+      if (state === "declined") {
+        const r = await auth(request(app).post("/api/ai/consent")).send({ accepted: false, consentVersion: CONSENT_VERSION });
+        expect(r.status).to.equal(400);
+      } else {
+        await grant(A);
+        if (state === "withdrawn") await auth(request(app).delete("/api/ai/consent"));
+        else states.get(A).consentVersion = "previous";
+      }
+      for (const [method, path] of [
+        ["post", "/api/ai-chat/send-message"], ["post", "/api/ai/message"],
+        ["post", "/api/ai-chat/tts"], ["get", "/api/ai-chat/tts"],
+        ["post", "/api/ai/realtime/session"],
+        ["post", "/api/avatar/analyze-and-generate"], ["post", "/api/avatar/customize"],
+      ]) {
+        const r = await auth(request(app)[method](path));
+        expect(r.status, `${method} ${path}`).to.equal(403);
+        expect(r.body.code).to.equal("AI_CONSENT_REQUIRED");
+      }
+      expect(provider.callCount).to.equal(0);
+    });
+  }
+  it("persists grant and withdrawal across authenticated sessions for the same account", async () => {
+    await grant(A);
+    const nextToken = jwt.sign({ userId: A, sessionId: "200000000000000000000002" }, process.env.ACCESS_SECRET);
+    const get = () => request(app).get("/api/ai/consent").set("Authorization", `Bearer ${nextToken}`);
+    expect((await get()).body.consented).to.equal(true);
+    expect(Session.findOne.lastCall.args[0]._id).to.equal("200000000000000000000002");
+    await auth(request(app).delete("/api/ai/consent"));
+    expect((await get()).body.consented).to.equal(false);
+    expect(provider.callCount).to.equal(0);
+  });
   it("rejects missing or invalid JWTs before any provider call", async () => {
     for (const header of ["", "Bearer invalid"])
       expect(
