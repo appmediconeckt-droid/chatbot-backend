@@ -131,16 +131,16 @@ Provide ONLY the JSON response, no other text.`,
         throw new Error("OpenAI returned an empty photo analysis");
       }
       analysis = JSON.parse(analysisText);
-    } catch (parseErr) {
-      console.error("Failed to parse analysis:", parseErr);
+    } catch {
+      console.error("Failed to parse AI photo analysis");
       return res.status(500).json({
         success: false,
         message: "Failed to analyze photo",
-        error: parseErr.message,
+        error: "Invalid AI photo analysis",
       });
     }
 
-    console.log("✅ Photo analyzed:", analysis);
+    console.log("✅ Photo analysis completed");
 
     // Step 2: Edit the actual selfie. The previous text-to-image call used only
     // inferred attributes, so it could generate a different person (for example,

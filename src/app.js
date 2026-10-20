@@ -574,15 +574,14 @@ resetAllUsersPresence().catch(err => {
 export { app };
 export default server;
 
-// Central error handler to catch JSON parse errors and log raw body
+// Parser errors may contain fragments of credentials or private messages.
 app.use((err, req, res, next) => {
   if (err && (err instanceof SyntaxError || err.type === 'entity.parse.failed')) {
-    console.error('JSON parse error:', err.message);
-    console.error('Raw request body:', req.rawBody);
+    console.error('Invalid JSON request');
     return res.status(400).json({
       success: false,
       message: 'Invalid JSON in request body',
-      error: err.message,
+      error: 'Invalid JSON',
     });
   }
 

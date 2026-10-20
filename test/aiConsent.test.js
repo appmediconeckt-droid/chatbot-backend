@@ -231,6 +231,45 @@ describe("AI consent security (mocked database and provider)", () => {
     ).to.equal(403);
     expect(provider.callCount).to.equal(0);
   });
+  for (const [label, invalid] of [
+    ["missing acceptance timestamp", { consentedAt: null }],
+    ["invalid acceptance timestamp", { consentedAt: new Date(NaN) }],
+    ["future acceptance timestamp", { consentedAt: new Date(Date.now() + 86400000) }],
+    ["revocation timestamp with inconsistent granted flag", { revokedAt: new Date() }],
+  ]) {
+    it(`rejects ${label} at both status and transmission checks`, async () => {
+      await grant(A);
+      Object.assign(states.get(A), invalid);
+      expect((await auth(request(app).get("/api/ai/consent"))).body.consented).to.equal(false);
+      expect((await auth(request(app).post("/probe")).send({ message: "synthetic" })).status).to.equal(403);
+      let failure;
+      try {
+        await aiContext.run({ userId: A }, () => consentFetch("https://api.openai.com/v1/chat/completions", { method: "POST" }));
+      } catch (error) { failure = error; }
+      expect(failure?.code).to.equal("AI_CONSENT_REQUIRED");
+      expect(provider.callCount).to.equal(0);
+    });
+  }
+  it("rejects an expired access token before consent or provider work", async () => {
+    await grant(A);
+    const expired = jwt.sign({ userId: A, sessionId: sid }, process.env.ACCESS_SECRET, { expiresIn: -1 });
+    const r = await request(app).post("/probe").set("Authorization", `Bearer ${expired}`).send({ message: "synthetic" });
+    expect(r.status).to.equal(401);
+    expect(r.body.code).to.equal("TOKEN_EXPIRED");
+    expect(provider.callCount).to.equal(0);
+  });
+  it("returns a safe provider failure and does not silently retry or enable another provider", async () => {
+    await grant(A);
+    provider.resolves(new Response(JSON.stringify({ error: { message: "private provider content" } }), {
+      status: 503, headers: { "content-type": "application/json" },
+    }));
+    const r = await auth(request(app).post("/api/ai-chat/tts")).send({ text: "synthetic" });
+    expect(r.status).to.equal(502);
+    expect(r.body.code).to.equal("AI_PROVIDER_UNAVAILABLE");
+    expect(r.text).not.to.include("private provider content");
+    expect(provider.callCount).to.equal(1);
+    expect((await auth(request(app).get("/api/ai/consent"))).body.consented).to.equal(true);
+  });
   it("rejects background work without authenticated request context", async () => {
     try {
       await generateAIResponse("private");
@@ -301,6 +340,26 @@ describe("AI consent security (mocked database and provider)", () => {
     expect(r.status).to.equal(502);
     expect(r.text).not.to.include("secret private content");
     expect(r.text).not.to.include("unit-test-key");
+  });
+  it("does not log or return private content from invalid avatar analysis", async () => {
+    await grant(A);
+    const previous = process.env.AVATAR_ENABLE_ANALYSIS;
+    process.env.AVATAR_ENABLE_ANALYSIS = "true";
+    const log = sandbox.stub(console, "log");
+    const errorLog = sandbox.stub(console, "error");
+    provider.resolves(new Response(JSON.stringify({ choices: [{ message: { content: "private-photo-analysis{invalid" } }] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    try {
+      const r = await auth(request(app).post("/api/avatar/analyze-and-generate")).send({ photoBase64: "aGVsbG8=" });
+      expect(r.status).to.equal(500);
+      expect(r.body.error).to.equal("Invalid AI photo analysis");
+      expect(r.text).not.to.include("private-photo-analysis");
+      expect(JSON.stringify([...log.args, ...errorLog.args])).not.to.include("private-photo-analysis");
+    } finally {
+      if (previous === undefined) delete process.env.AVATAR_ENABLE_ANALYSIS;
+      else process.env.AVATAR_ENABLE_ANALYSIS = previous;
+    }
   });
   it("fails closed on database outage", async () => {
     AIConsent.findOne.rejects(new Error("database private details"));

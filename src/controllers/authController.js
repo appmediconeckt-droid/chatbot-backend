@@ -1646,7 +1646,7 @@ export const sendPhoneOTP = async (req, res) => {
     const smsPhone = normalizedPhone.smsFormatted;
     const otp = otpService.generateOTP();
 
-    console.log(`📱 Sending Phone OTP to ${smsPhone}: ${otp}`);
+    console.log("Sending phone verification code");
 
     userVerification.phoneNumber = formattedPhone;
     userVerification.formattedPhone = formattedPhone;
@@ -3106,7 +3106,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
 
     // 1. Generate a short-lived OTP (6 digits)
     const otp = otpService.generateOTP(email);
-    console.log(`Generated OTP for ${email}: ${otp} (valid for 10 minutes);`);
+    console.log("Generated short-lived login verification code");
 
     await saveLoginOTP({ userId: user._id, email, otp });
 

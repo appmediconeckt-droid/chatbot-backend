@@ -9,7 +9,13 @@ export const consentError = () =>
     { status: 403, code: "AI_CONSENT_REQUIRED" }
   );
 export const isCurrentConsent = (state) =>
-  state?.consentGranted === true && state?.consentVersion === CONSENT_VERSION;
+  state?.consentGranted === true &&
+  state?.consentVersion === CONSENT_VERSION &&
+  state?.provider === "OpenAI" &&
+  state?.consentedAt instanceof Date &&
+  Number.isFinite(state.consentedAt.getTime()) &&
+  state.consentedAt.getTime() <= Date.now() &&
+  state.revokedAt == null;
 export const consentState = (state) => ({
   success: true,
   consented: isCurrentConsent(state),

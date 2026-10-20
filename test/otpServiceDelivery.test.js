@@ -32,6 +32,7 @@ const ENV_KEYS = [
   "OTP_EMAIL_PROVIDER",
   "OTP_EMAIL_PROVIDER_ORDER",
   "OTP_EMAIL_FORCE_API_PROVIDER",
+  "OTP_EMAIL_PREFER_SMTP_OVER_API",
   "OTP_EMAIL_ALLOW_API_FALLBACK_AFTER_SMTP_FAILURE",
   "OTP_EMAIL_STRICT_SMTP",
   "RAILWAY_ENVIRONMENT",
@@ -151,9 +152,10 @@ describe("OTP mail delivery", () => {
     expect(fetchStub.called).to.equal(false);
   });
 
-  it("prefers SMTP on live even when OTP_EMAIL_PROVIDER=brevo is set", async () => {
+  it("honors explicit SMTP preference on live when OTP_EMAIL_PROVIDER=brevo is set", async () => {
     process.env.NODE_ENV = "production";
     process.env.OTP_EMAIL_PROVIDER = "brevo";
+    process.env.OTP_EMAIL_PREFER_SMTP_OVER_API = "true";
     process.env.BREVO_API_KEY = "test-brevo-key";
     process.env.EMAIL_FROM = "info@mediconeckt.com";
     process.env.EMAIL_USER = "app.mediconeckt@gmail.com";
