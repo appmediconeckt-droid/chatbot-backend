@@ -4,6 +4,7 @@ dotenv.config();
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
+import DemoOtpConfig, { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 
 export const APP_REVIEW_TEST_EMAILS = Object.freeze([
   "appstore.user@humaeli.com",
@@ -606,6 +607,17 @@ const buildLoginOTPHtml = (otp) => `
 `;
 
 class OTPService {
+  async getDemoOTP(email) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!DEMO_ACCOUNT_EMAILS.includes(normalizedEmail)) return null;
+    const config = await DemoOtpConfig.findOne({ email: normalizedEmail, enabled: true }).lean();
+    return config?.otp === "123456" ? config.otp : null;
+  }
+
+  async generateOTPForAccount(email = "") {
+    return (await this.getDemoOTP(email)) || this.generateOTP(email);
+  }
+
   isPlayReviewEmail(email) {
     return Boolean(reviewOTP()) && getReviewEmailSet().has(String(email || "").trim().toLowerCase());
   }
@@ -619,6 +631,7 @@ class OTPService {
   }
 
   async sendLoginOTP(email, otp) {
+    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     // Only deployment-enabled, expiring review accounts use the configured code.
     // Normal accounts still require their usual delivered OTP.
     if (this.isPlayReviewEmail(email)) return { success: true, provider: "configured-app-review" };
@@ -651,6 +664,7 @@ class OTPService {
   }
 
   async sendPasswordResetOTP(email, otp) {
+    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     const year = new Date().getFullYear();
     const html = `
       <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:#fff;font-family:Arial,sans-serif;">
@@ -700,6 +714,7 @@ class OTPService {
   }
 
   async sendEmailOTP(email, otp) {
+    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     console.log(`📧 Sending email verification OTP to ${email}`);
 
     const textContent =
@@ -761,6 +776,7 @@ class OTPService {
   }
 
   async sendForgotPasswordOTP(email, otp) {
+    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     const year = new Date().getFullYear();
     const textContent =
       `Humaeli - Password Reset\n\n` +

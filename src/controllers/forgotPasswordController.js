@@ -26,7 +26,7 @@ export const sendForgotPasswordOTP = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP(normalizedEmail);
+    const otp = await otpService.generateOTPForAccount(normalizedEmail);
 
     await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
     const tokenRecord = await ForgotPasswordToken.create({
@@ -207,7 +207,7 @@ export const resendForgotPasswordOTP = async (req, res) => {
 
     await ForgotPasswordToken.deleteMany({ email: normalizedEmail });
 
-    const otp = otpService.generateOTP(normalizedEmail);
+    const otp = await otpService.generateOTPForAccount(normalizedEmail);
 
     const tokenRecord = await ForgotPasswordToken.create({
       email: normalizedEmail,

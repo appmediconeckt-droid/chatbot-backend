@@ -1445,7 +1445,7 @@ export const sendEmailOTP = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP(normalizedEmail);
+    const otp = await otpService.generateOTPForAccount(normalizedEmail);
     const expiresAt = new Date(Date.now() + REGISTRATION_OTP_TTL_MS);
 
     try {
@@ -1644,7 +1644,7 @@ export const sendPhoneOTP = async (req, res) => {
 
     const formattedPhone = normalizedPhone.formatted;
     const smsPhone = normalizedPhone.smsFormatted;
-    const otp = otpService.generateOTP();
+    const otp = await otpService.generateOTPForAccount(userEmail);
 
     console.log("Sending phone verification code");
 
@@ -2988,7 +2988,7 @@ export const sendUnlinkGoogleOtp = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP(email);
+    const otp = await otpService.generateOTPForAccount(email);
     unlinkGoogleOTPStore.set(String(user._id), {
       otp,
       expiresAt: Date.now() + 10 * 60 * 1000,
@@ -3105,7 +3105,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
     }
 
     // 1. Generate a short-lived OTP (6 digits)
-    const otp = otpService.generateOTP(email);
+    const otp = await otpService.generateOTPForAccount(email);
     console.log("Generated short-lived login verification code");
 
     await saveLoginOTP({ userId: user._id, email, otp });
@@ -4291,7 +4291,7 @@ export const resendEmailOTP = async (req, res) => {
         .status(404)
         .json({ message: "No pending verification", success: false });
 
-    const otp = otpService.generateOTP(email);
+    const otp = await otpService.generateOTPForAccount(email);
     const expiresAt = new Date(Date.now() + REGISTRATION_OTP_TTL_MS);
     await otpService.sendEmailOTP(email, otp, "User");
 
@@ -4328,7 +4328,7 @@ export const resendPhoneOTP = async (req, res) => {
         .json({ message: "No phone number found", success: false });
     }
 
-    const otp = otpService.generateOTP();
+    const otp = await otpService.generateOTPForAccount(email);
     const normalizedPhone = normalizePhoneNumber(
       userVerification.phoneNumber,
       userVerification.phoneCountryCode,
@@ -4471,7 +4471,7 @@ export const sendProfileChangeOTP = async (req, res) => {
         });
       }
 
-      const otp = otpService.generateOTP(normalized);
+      const otp = await otpService.generateOTPForAccount(normalized);
       profileChangeOTPStore.set(profileChangeKey(userId, "email"), {
         otp,
         newValue: normalized,
@@ -4522,7 +4522,7 @@ export const sendProfileChangeOTP = async (req, res) => {
       });
     }
 
-    const otp = otpService.generateOTP();
+    const otp = await otpService.generateOTPForAccount(currentUser.email);
     const formattedPhone = cleaned.formatted;
     const smsPhone = cleaned.smsFormatted;
     profileChangeOTPStore.set(profileChangeKey(userId, "phone"), {
