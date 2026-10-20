@@ -3289,14 +3289,14 @@ export const refreshAccessToken = async (req, res) => {
     // Set cookies (for browser clients)
     res.cookie("accessToken", newAccessToken, {
       httpOnly: true,
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
     });
 
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
     });

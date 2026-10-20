@@ -12,7 +12,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 try {
   await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 });
-  const accounts = await User.find({ email: { $in: DEMO_ACCOUNT_EMAILS } }).select("email role +password").lean();
+  const accounts = await User.find({ email: { $in: DEMO_ACCOUNT_EMAILS } }).select("email role password").lean();
   if (accounts.length !== DEMO_ACCOUNT_EMAILS.length) throw new Error("All four demo users must exist before configuration.");
   for (const account of accounts) {
     const expectedRole = account.email.includes("counsellor") ? "counsellor" : "user";

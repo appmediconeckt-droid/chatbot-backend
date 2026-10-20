@@ -79,12 +79,12 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
     // 7. Set new cookies
     const cookieBase = {
       httpOnly: true,
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
     };
-    res.cookie("accessToken", newAccessToken);
-    res.cookie("refreshToken", newRefreshToken);
+    res.cookie("accessToken", newAccessToken, cookieBase);
+    res.cookie("refreshToken", newRefreshToken, cookieBase);
     // 8. Expose new access token in header so frontend can store it
     res.setHeader("X-New-Access-Token", newAccessToken);
 

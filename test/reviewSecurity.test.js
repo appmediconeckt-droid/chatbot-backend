@@ -38,10 +38,11 @@ describe("App review account security", () => {
         .resolves({ _id: userId, role, isActive: true });
       sinon.stub(User, "findByIdAndUpdate").resolves({});
       let body;
+      const cookies = [];
       await refreshAccessToken(
         { body: { refreshToken: incoming }, cookies: {} },
         {
-          cookie() {},
+          cookie(name, value, options) { cookies.push({ name, options }); },
           json(value) {
             body = value;
           },
@@ -53,6 +54,11 @@ describe("App review account security", () => {
       expect(
         jwt.verify(body.accessToken, process.env.ACCESS_SECRET).role
       ).to.equal(role);
+      expect(cookies).to.have.length(2);
+      for (const cookie of cookies) {
+        expect(cookie.options.httpOnly).to.equal(true);
+        expect(cookie.options.secure).to.equal(process.env.NODE_ENV === "production");
+      }
       const app = express();
       app.get(
         "/protected",
