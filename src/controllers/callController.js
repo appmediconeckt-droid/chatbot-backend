@@ -406,6 +406,9 @@ export const missCall = async (req, res) => {
     if (!call) {
       return res.status(404).json({ error: 'Call not found' });
     }
+    if (![call.callerId, call.receiverId].some(id => String(id) === String(req.user._id))) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
     
     if (call.status === 'initiated' || call.status === 'ringing') {
       call.status = 'missed';
@@ -419,7 +422,7 @@ export const missCall = async (req, res) => {
         await Message.create({
           chatId: chat._id,
           senderId: call.callerId,
-          senderRole: call.callerId.toString() === call.callerId ? 'user' : 'counsellor',
+          senderRole: ['counsellor', 'counselor'].includes(call.initiatorType) ? 'counsellor' : 'user',
           content: `📞 ${call.callType === 'audio' ? 'Audio' : 'Video'} call missed`,
           contentType: 'TEXT'
         });
@@ -620,6 +623,9 @@ export const ringCall = async (req, res) => {
     const call = await Call.findOne({ callId: callId });
     if (!call) {
       return res.status(404).json({ error: 'Call not found' });
+    }
+    if (![call.callerId, call.receiverId].some(id => String(id) === String(req.user._id))) {
+      return res.status(403).json({ error: 'Unauthorized' });
     }
     
     if (call.status === 'initiated') {

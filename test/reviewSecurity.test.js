@@ -14,11 +14,21 @@ import { authenticateToken, authorizeRoles } from "../src/middleware/auth.js";
 import { publicCounselorProfile } from "../src/utils/publicProfile.js";
 import videoRoutes from "../src/routes/videoRoutes.js";
 import Call from "../src/models/Call.js";
-import { getRecentCalls } from "../src/controllers/callController.js";
+import { getRecentCalls, missCall, ringCall } from "../src/controllers/callController.js";
 import { videoCallController } from "../src/controllers/videoCallController.js";
 
 describe("App review account security", () => {
   afterEach(() => sinon.restore());
+  for (const handler of [missCall, ringCall]) {
+    it(`denies unrelated accounts changing call state through ${handler.name}`, async () => {
+      const save = sinon.spy();
+      sinon.stub(Call, "findOne").resolves({ callerId: new mongoose.Types.ObjectId(), receiverId: new mongoose.Types.ObjectId(), save });
+      const res = { status: sinon.stub().returnsThis(), json: sinon.spy() };
+      await handler({ params: { callId: "fixture" }, user: { _id: new mongoose.Types.ObjectId() } }, res);
+      expect(res.status.calledWith(403)).to.equal(true);
+      expect(save.called).to.equal(false);
+    });
+  }
   it("keeps patient identity and precise location out of legacy call history", async () => {
     const callerId = new mongoose.Types.ObjectId(),
       receiverId = new mongoose.Types.ObjectId();
