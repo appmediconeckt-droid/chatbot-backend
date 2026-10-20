@@ -1,6 +1,7 @@
 import express from "express";
 import UserBlock from "../models/UserBlock.js";
 import AbuseReport from "../models/AbuseReport.js";
+import Message from "../models/Message.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.js";
 import { resolveSafetyChat } from "../services/interactionSafety.js";
 import { stopTimedChatUsage } from "../services/paidSessionService.js";
@@ -18,6 +19,63 @@ router.get("/moderation/reports", authorizeRoles("admin"), async (req, res) => {
     res.status(503).json({ error: "Unable to read reports" });
   }
 });
+router.get(
+  "/moderation/reports/:id",
+  authorizeRoles("admin"),
+  async (req, res) => {
+    try {
+      const report = await AbuseReport.findById(req.params.id).lean();
+      if (!report) return res.status(404).json({ error: "Report not found" });
+      const messages = await Message.find({ chatId: report.chatId })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .select(
+          "messageId senderId senderRole content contentType attachmentUrl createdAt moderationHidden"
+        )
+        .lean();
+      res.set("Cache-Control", "no-store").json({ report, messages });
+    } catch {
+      res.status(503).json({ error: "Unable to review report" });
+    }
+  }
+);
+router.patch(
+  "/moderation/reports/:id/messages/:messageId",
+  authorizeRoles("admin"),
+  async (req, res) => {
+    if (typeof req.body?.hidden !== "boolean")
+      return res
+        .status(400)
+        .json({ error: "Choose whether to hide the message" });
+    try {
+      const report = await AbuseReport.findById(req.params.id).lean();
+      if (!report) return res.status(404).json({ error: "Report not found" });
+      const message = await Message.findOneAndUpdate(
+        { _id: req.params.messageId, chatId: report.chatId },
+        { $set: { moderationHidden: req.body.hidden } },
+        { new: true }
+      );
+      if (!message)
+        return res
+          .status(404)
+          .json({ error: "Message not found in the reported conversation" });
+      if (req.body.hidden && global.io) {
+        for (const userId of [report.reporterId, report.reportedId])
+          global.io
+            .to(`user_${userId}`)
+            .emit("message-deleted", {
+              chatId: String(report.chatId),
+              messageId: String(message._id),
+              publicMessageId: message.messageId,
+              deletedForUserId: String(userId),
+            });
+      }
+      res.json({ success: true, hidden: req.body.hidden });
+    } catch {
+      res.status(503).json({ error: "Unable to update moderation visibility" });
+    }
+  }
+);
 router.patch(
   "/moderation/reports/:id",
   authorizeRoles("admin"),
@@ -102,12 +160,10 @@ router.post("/safety/:chatId/report", async (req, res) => {
         createdAt: { $gte: new Date(Date.now() - 3600000) },
       })) >= 10
     )
-      return res
-        .status(429)
-        .json({
-          error:
-            "Too many reports. Contact support@humaeli.com for urgent concerns.",
-        });
+      return res.status(429).json({
+        error:
+          "Too many reports. Contact support@humaeli.com for urgent concerns.",
+      });
     const report = await AbuseReport.create({
       reporterId: req.user._id,
       reportedId: req.safetyTarget,
@@ -115,21 +171,16 @@ router.post("/safety/:chatId/report", async (req, res) => {
       reason: req.body.reason,
       details: req.body.details || "",
     });
-    res
-      .status(201)
-      .json({
-        success: true,
-        reportId: report._id,
-        message:
-          "Report submitted for review. You can also block this account.",
-      });
+    res.status(201).json({
+      success: true,
+      reportId: report._id,
+      message: "Report submitted for review. You can also block this account.",
+    });
   } catch {
-    res
-      .status(503)
-      .json({
-        error:
-          "Unable to submit report. Please retry or contact support@humaeli.com.",
-      });
+    res.status(503).json({
+      error:
+        "Unable to submit report. Please retry or contact support@humaeli.com.",
+    });
   }
 });
 export default router;

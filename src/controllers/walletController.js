@@ -69,10 +69,15 @@ const escapeRegex = (value = '') =>
 // Create Razorpay Order
 export const createOrder = async (req, res) => {
     try {
-        const { amount } = req.body;
+        // The iOS demo wallet must never open a live checkout while promising
+        // that no real money will be charged.
+        if (req.body?.demoOnly === true && !String(process.env.RAZORPAY_KEY_ID || '').startsWith('rzp_test_')) {
+            return res.status(503).json({ success: false, code: 'DEMO_PAYMENTS_UNAVAILABLE', message: 'Demo payments are currently unavailable. No payment was started.' });
+        }
+        const amount = Number(req.body.amount);
         const userId = req.user._id;
 
-        if (!amount || amount <= 0) {
+        if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(Math.round(amount * 100)) || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
             return res.status(400).json({ message: 'Invalid amount' });
         }
 

@@ -69,6 +69,7 @@ const findChatByIdentifier = async (identifier) => {
 
 const visibleMessageFilter = (userId) => ({
   deletedFor: { $ne: userId },
+  moderationHidden: { $ne: true },
 });
 
 const restoreChatForBothParticipants = (chat) => {
@@ -887,6 +888,7 @@ export const getPendingRequests = async (req, res) => {
     const messages = await Message.find({
       chatId: { $in: chatIds },
       senderRole: "user",
+      ...visibleMessageFilter(req.user._id),
     })
       .sort({ createdAt: 1 })
       .lean();

@@ -57,6 +57,7 @@ const userSchema = new mongoose.Schema({
         lowercase: true,
         default: null
     },
+    appleTokenCiphertext: { type: String, select: false },
     authProvider: {
         type: String,
         enum: ["local", "google", "apple"],
@@ -439,6 +440,7 @@ userSchema.methods.toJSON = function() {
     }
     user.hasPassword = Boolean(user.password);
     delete user.password;
+    delete user.appleTokenCiphertext;
     delete user.profilePhotoPublicId;
     delete user.emailOTP;
     delete user.phoneOTP;

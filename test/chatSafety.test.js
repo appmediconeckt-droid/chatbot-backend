@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import UserBlock from "../src/models/UserBlock.js";
 import AbuseReport from "../src/models/AbuseReport.js";
 import Chat from "../src/models/Chat.js";
+import Message from "../src/models/Message.js";
 import Session from "../src/models/sessionModel.js";
 import safetyRoutes from "../src/routes/chatSafetyRoutes.js";
 import {
@@ -30,6 +31,36 @@ describe("Conversation safety", () => {
     app.use(safetyRoutes);
   });
   afterEach(() => sinon.restore());
+  it("lets only an admin hide content from the reported conversation", async () => {
+    sinon
+      .stub(AbuseReport, "findById")
+      .returns({
+        lean: async () => ({ _id: C, chatId: C, reporterId: A, reportedId: B }),
+      });
+    const update = sinon
+      .stub(Message, "findOneAndUpdate")
+      .resolves({ _id: C, messageId: "message-test" });
+    await request(app)
+      .patch(`/moderation/reports/${C}/messages/${C}`)
+      .set("Authorization", `Bearer ${token(A, "admin")}`)
+      .send({ hidden: true })
+      .expect(200);
+    expect(update.firstCall.args[0]).to.deep.equal({ _id: C, chatId: C });
+    expect(update.firstCall.args[1]).to.deep.equal({
+      $set: { moderationHidden: true },
+    });
+  });
+  it("denies normal accounts access to report context or moderation actions", async () => {
+    await request(app)
+      .get(`/moderation/reports/${C}`)
+      .set("Authorization", `Bearer ${token()}`)
+      .expect(403);
+    await request(app)
+      .patch(`/moderation/reports/${C}/messages/${C}`)
+      .set("Authorization", `Bearer ${token()}`)
+      .send({ hidden: true })
+      .expect(403);
+  });
   it("checks blocks in both directions", async () => {
     const find = sinon.stub(UserBlock, "exists").resolves({ _id: C });
     expect(await interactionIsBlocked(A, B)).to.equal(true);

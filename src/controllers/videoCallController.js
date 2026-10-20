@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { getAnonymousUserName } from "../utils/anonymousUser.js";
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
@@ -261,17 +262,17 @@ export const videoCallController = {
 
       return {
         id: user._id,
-        fullName: user.fullName,
-        name: user.fullName,
+        fullName: user.role === "user" ? getAnonymousUserName(user) : user.fullName,
+        name: user.role === "user" ? getAnonymousUserName(user) : user.fullName,
         anonymous: user.anonymous || false,
-        email: user.email,
+        email: "",
         type: user.role,
-        profilePhoto: user.profilePhoto?.url || null,
+        profilePhoto: user.role === "user" ? null : user.profilePhoto?.url || null,
         specialization: user.specialization || [],
         rating: user.rating || 0,
         experience: user.experience || 0,
         qualification: user.qualification || "",
-        location: user.location || "",
+        location: user.role === "user" ? "" : user.location || "",
         languages: user.languages || [],
         aboutMe: user.aboutMe || "",
         isActive: user.isActive,
@@ -2073,16 +2074,10 @@ getCallHistory: async (req, res) => {
     });
 
     const getDisplayName = (user, fallbackName = "Anonymous User") => {
-      if (!user) return fallbackName || "Anonymous User";
+      if (!user) return "Anonymous User";
 
       if (user.role === "user") {
-        return (
-          user.anonymous ||
-          user.fullName ||
-          user.full_name ||
-          user.name ||
-          "Anonymous User"
-        );
+        return getAnonymousUserName(user);
       }
 
       return (
@@ -2095,7 +2090,7 @@ getCallHistory: async (req, res) => {
     };
 
     const getAvatar = (user, fallbackAvatar = null) => {
-      if (!user) return fallbackAvatar;
+      if (!user || user.role === "user") return null;
 
       return (
         user.profilePhoto?.url ||

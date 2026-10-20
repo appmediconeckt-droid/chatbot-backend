@@ -13,9 +13,80 @@ import {
 import { authenticateToken, authorizeRoles } from "../src/middleware/auth.js";
 import { publicCounselorProfile } from "../src/utils/publicProfile.js";
 import videoRoutes from "../src/routes/videoRoutes.js";
+import Call from "../src/models/Call.js";
+import { getRecentCalls } from "../src/controllers/callController.js";
+import { videoCallController } from "../src/controllers/videoCallController.js";
 
 describe("App review account security", () => {
   afterEach(() => sinon.restore());
+  it("keeps patient identity and precise location out of legacy call history", async () => {
+    const callerId = new mongoose.Types.ObjectId(),
+      receiverId = new mongoose.Types.ObjectId();
+    sinon
+      .stub(Call, "find")
+      .returns({
+        sort: () => ({
+          limit: async () => [
+            {
+              callerId,
+              receiverId,
+              initiatorType: "user",
+              receiverType: "counsellor",
+              callerName: "Private Patient",
+              callerAvatar: "private-photo",
+              callerLocation: "Private address",
+              callerLocationData: { coordinates: [1, 2] },
+            },
+          ],
+        }),
+      });
+    let body;
+    await getRecentCalls(
+      { query: {}, user: { _id: receiverId, role: "counsellor" } },
+      {
+        json: (value) => {
+          body = value;
+        },
+        status() {
+          return this;
+        },
+      }
+    );
+    expect(body.calls[0].otherParty).to.include({
+      name: "Anonymous User",
+      avatar: null,
+      location: null,
+      locationData: null,
+    });
+  });
+  it("uses anonymous identity when preparing patient video-call context", async () => {
+    const id = new mongoose.Types.ObjectId();
+    sinon
+      .stub(User, "findById")
+      .returns({
+        select: async () => ({
+          _id: id,
+          role: "user",
+          isActive: true,
+          fullName: "Private Patient",
+          anonymous: "CalmRiver",
+          email: "private@example.com",
+          profilePhoto: { url: "private-photo" },
+          location: "Private address",
+        }),
+      });
+    const details = await videoCallController.getUserDetails(
+      String(id),
+      "user"
+    );
+    expect(details).to.include({
+      fullName: "CalmRiver",
+      name: "CalmRiver",
+      email: "",
+      profilePhoto: null,
+      location: "",
+    });
+  });
   for (const role of ["user", "counsellor"]) {
     it(`preserves ${role} access to protected routes after refresh`, async () => {
       const userId = new mongoose.Types.ObjectId();
@@ -42,7 +113,9 @@ describe("App review account security", () => {
       await refreshAccessToken(
         { body: { refreshToken: incoming }, cookies: {} },
         {
-          cookie(name, value, options) { cookies.push({ name, options }); },
+          cookie(name, value, options) {
+            cookies.push({ name, options });
+          },
           json(value) {
             body = value;
           },
@@ -57,7 +130,9 @@ describe("App review account security", () => {
       expect(cookies).to.have.length(2);
       for (const cookie of cookies) {
         expect(cookie.options.httpOnly).to.equal(true);
-        expect(cookie.options.secure).to.equal(process.env.NODE_ENV === "production");
+        expect(cookie.options.secure).to.equal(
+          process.env.NODE_ENV === "production"
+        );
       }
       const app = express();
       app.get(

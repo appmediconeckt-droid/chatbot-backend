@@ -11,6 +11,7 @@ import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
 import { publicCounselorProfile } from "../utils/publicProfile.js";
 import { sanitizeUserForCounselor } from "../utils/anonymousUser.js";
+import { appleTokenStorageConfigured, exchangeAppleCode, revokeAppleAuthorization } from "../services/appleTokenService.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
@@ -2663,7 +2664,7 @@ export const googleAuth = async (req, res) => {
 // ================= APPLE SIGN-IN (Sign-up + Login in one endpoint) =================
 export const appleLogin = async (req, res) => {
   try {
-    const { identityToken, role, fullName } = req.body;
+    const { identityToken, authorizationCode, role, fullName } = req.body;
 
     if (!identityToken) {
       return res.status(400).json({
@@ -2695,6 +2696,9 @@ export const appleLogin = async (req, res) => {
       });
     }
 
+    const appleTokenCiphertext = authorizationCode && appleTokenStorageConfigured()
+      ? await exchangeAppleCode(authorizationCode, appleId, verifyAppleIdentityToken)
+      : null;
     let user = await User.findOne({ appleId });
 
     if (!user && tokenEmail && emailVerified) {
@@ -2726,6 +2730,7 @@ export const appleLogin = async (req, res) => {
       if (!user.appleId) {
         user.appleId = appleId;
       }
+      if (appleTokenCiphertext) user.appleTokenCiphertext = appleTokenCiphertext;
 
       if (tokenEmail && emailVerified) {
         const currentEmail = normalizeEmail(user.email);
@@ -2782,6 +2787,7 @@ export const appleLogin = async (req, res) => {
         email: tokenEmail,
         appleEmail: tokenEmail,
         appleId,
+        ...(appleTokenCiphertext ? { appleTokenCiphertext } : {}),
         authProvider: "apple",
         role: requestedRole,
         isEmailVerified: true,
@@ -4212,12 +4218,14 @@ export const deleteUser = async (req, res) => {
         .status(401)
         .json({ message: "Authentication required", success: false });
     }
-    const user = await User.findById(id);
+    const user = await User.findById(id).select("+appleTokenCiphertext");
     if (!user)
       return res
         .status(404)
         .json({ message: "User not found", success: false });
 
+    // Confirm revocation before removing local data; failures remain retryable.
+    await revokeAppleAuthorization(user);
     const profilePhotoPublicId = user.profilePhoto?.publicId;
     const certificationPublicIds = (user.certifications || [])
       .map((certification) => certification?.documentPublicId)
@@ -4258,6 +4266,7 @@ export const deleteUser = async (req, res) => {
       });
   } catch (error) {
     console.error("deleteUser error:", error);
+    if (String(error.code || "").startsWith("APPLE_")) return res.status(error.status || 503).json({ success: false, code: error.code, message: error.message });
     return res
       .status(500)
       .json({ message: "Error deleting user", success: false });

@@ -1,27 +1,20 @@
 import Call from '../models/Call.js';
+import { getAnonymousUserName } from '../utils/anonymousUser.js';
 import Chat from '../models/Chat.js';
 import User from '../models/userModel.js';
 import Message from '../models/Message.js';
 
-const pickUserLocationForCall = (user) => {
-  const current = user?.locationData?.current;
-  const coords = current?.coordinates;
-  const hasCoords = Array.isArray(coords) && coords.length === 2;
-
-  const locationData = hasCoords
-    ? {
-        coordinates: coords,
-        address: current.address || '',
-        city: current.city || '',
-        state: current.state || '',
-        country: current.country || '',
-        capturedAt: current.capturedAt || null,
-      }
-    : null;
-
-  const locationText = (current?.address && String(current.address).trim()) || user?.location || null;
-
-  return { locationText, locationData };
+// Ordinary call setup does not require a participant's precise location.
+const pickUserLocationForCall = () => ({ locationText: null, locationData: null });
+const callPerson = (call, side, viewerRole) => {
+  const patient = side === 'caller' ? call.initiatorType === 'user' : call.receiverType === 'user';
+  const privateIdentity = viewerRole === 'counsellor' && patient;
+  return {
+    name: privateIdentity ? 'Anonymous User' : call[`${side}Name`],
+    avatar: privateIdentity ? null : call[`${side}Avatar`],
+    location: null,
+    locationData: null,
+  };
 };
 
 // Initiate a new call
@@ -35,8 +28,8 @@ export const initiateCall = async (req, res) => {
     
     // Check if chat exists
     const chat = await Chat.findOne({ chatId: chatId })
-      .populate('userId', 'fullName profilePhoto location locationData.current')
-      .populate('counselorId', 'fullName profilePhoto location locationData.current');
+      .populate('userId', 'fullName anonymous role profilePhoto')
+      .populate('counselorId', 'fullName anonymous role profilePhoto');
     
     if (!chat) {
       return res.status(404).json({ error: 'Chat not found' });
@@ -57,7 +50,7 @@ export const initiateCall = async (req, res) => {
     // Get caller and receiver info
     const isCallerUser = req.user.role === 'user';
     const caller = isCallerUser ? chat.userId : chat.counselorId;
-    const receiver = await User.findById(receiverId).select('fullName profilePhoto location locationData.current');
+    const receiver = await User.findById(receiverId).select('fullName anonymous role profilePhoto');
     
     if (!receiver) {
       return res.status(404).json({ error: 'Receiver not found' });
@@ -90,10 +83,12 @@ export const initiateCall = async (req, res) => {
       receiverId: receiverId,
       callType: callType,
       status: 'initiated',
-      callerName: caller.fullName,
-      receiverName: receiver.fullName,
-      callerAvatar: caller.profilePhoto?.url || null,
-      receiverAvatar: receiver.profilePhoto?.url || null,
+      initiatorType: caller.role,
+      receiverType: receiver.role,
+      callerName: caller.role === 'user' ? getAnonymousUserName(caller) : caller.fullName,
+      receiverName: receiver.role === 'user' ? getAnonymousUserName(receiver) : receiver.fullName,
+      callerAvatar: caller.role === 'user' ? null : caller.profilePhoto?.url || null,
+      receiverAvatar: receiver.role === 'user' ? null : receiver.profilePhoto?.url || null,
       callerLocation: callerLoc.locationText,
       receiverLocation: receiverLoc.locationText,
       callerLocationData: callerLoc.locationData || undefined,
@@ -118,17 +113,17 @@ export const initiateCall = async (req, res) => {
         status: call.status,
         caller: {
           id: call.callerId,
-          name: call.callerName,
-          avatar: call.callerAvatar,
-          location: call.callerLocation,
-          locationData: call.callerLocationData || null
+          name: callPerson(call, 'caller', req.user.role).name,
+          avatar: callPerson(call, 'caller', req.user.role).avatar,
+          location: callPerson(call, 'caller', req.user.role).location,
+          locationData: callPerson(call, 'caller', req.user.role).locationData || null
         },
         receiver: {
           id: call.receiverId,
-          name: call.receiverName,
-          avatar: call.receiverAvatar,
-          location: call.receiverLocation,
-          locationData: call.receiverLocationData || null
+          name: callPerson(call, 'receiver', req.user.role).name,
+          avatar: callPerson(call, 'receiver', req.user.role).avatar,
+          location: callPerson(call, 'receiver', req.user.role).location,
+          locationData: callPerson(call, 'receiver', req.user.role).locationData || null
         },
         createdAt: call.createdAt
       }
@@ -166,17 +161,17 @@ export const getCallDetails = async (req, res) => {
         status: call.status,
         caller: {
           id: call.callerId,
-          name: call.callerName,
-          avatar: call.callerAvatar,
-          location: call.callerLocation,
-          locationData: call.callerLocationData || null
+          name: callPerson(call, 'caller', req.user.role).name,
+          avatar: callPerson(call, 'caller', req.user.role).avatar,
+          location: callPerson(call, 'caller', req.user.role).location,
+          locationData: callPerson(call, 'caller', req.user.role).locationData || null
         },
         receiver: {
           id: call.receiverId,
-          name: call.receiverName,
-          avatar: call.receiverAvatar,
-          location: call.receiverLocation,
-          locationData: call.receiverLocationData || null
+          name: callPerson(call, 'receiver', req.user.role).name,
+          avatar: callPerson(call, 'receiver', req.user.role).avatar,
+          location: callPerson(call, 'receiver', req.user.role).location,
+          locationData: callPerson(call, 'receiver', req.user.role).locationData || null
         },
         isMuted: call.isMuted,
         isSpeakerOn: call.isSpeakerOn,
@@ -482,13 +477,13 @@ export const getCallHistory = async (req, res) => {
         status: call.status,
         caller: {
           id: call.callerId,
-          name: call.callerName,
-          avatar: call.callerAvatar
+          name: callPerson(call, 'caller', req.user.role).name,
+          avatar: callPerson(call, 'caller', req.user.role).avatar
         },
         receiver: {
           id: call.receiverId,
-          name: call.receiverName,
-          avatar: call.receiverAvatar
+          name: callPerson(call, 'receiver', req.user.role).name,
+          avatar: callPerson(call, 'receiver', req.user.role).avatar
         },
         duration: call.duration,
         formattedDuration: call.formattedDuration,
@@ -531,16 +526,16 @@ export const getRecentCalls = async (req, res) => {
         const isIncoming = call.receiverId.toString() === req.user._id.toString();
         const otherParty = isIncoming ? {
           id: call.callerId,
-          name: call.callerName,
-          avatar: call.callerAvatar,
-          location: call.callerLocation,
-          locationData: call.callerLocationData || null
+          name: callPerson(call, 'caller', req.user.role).name,
+          avatar: callPerson(call, 'caller', req.user.role).avatar,
+          location: callPerson(call, 'caller', req.user.role).location,
+          locationData: callPerson(call, 'caller', req.user.role).locationData || null
         } : {
           id: call.receiverId,
-          name: call.receiverName,
-          avatar: call.receiverAvatar,
-          location: call.receiverLocation,
-          locationData: call.receiverLocationData || null
+          name: callPerson(call, 'receiver', req.user.role).name,
+          avatar: callPerson(call, 'receiver', req.user.role).avatar,
+          location: callPerson(call, 'receiver', req.user.role).location,
+          locationData: callPerson(call, 'receiver', req.user.role).locationData || null
         };
         
         return {
@@ -582,16 +577,16 @@ export const getActiveCall = async (req, res) => {
     const isCaller = activeCall.callerId.toString() === req.user._id.toString();
     const otherParty = isCaller ? {
       id: activeCall.receiverId,
-      name: activeCall.receiverName,
-      avatar: activeCall.receiverAvatar,
-      location: activeCall.receiverLocation,
-      locationData: activeCall.receiverLocationData || null
+      name: callPerson(activeCall, 'receiver', req.user.role).name,
+      avatar: callPerson(activeCall, 'receiver', req.user.role).avatar,
+      location: callPerson(activeCall, 'receiver', req.user.role).location,
+      locationData: callPerson(activeCall, 'receiver', req.user.role).locationData || null
     } : {
       id: activeCall.callerId,
-      name: activeCall.callerName,
-      avatar: activeCall.callerAvatar,
-      location: activeCall.callerLocation,
-      locationData: activeCall.callerLocationData || null
+      name: callPerson(activeCall, 'caller', req.user.role).name,
+      avatar: callPerson(activeCall, 'caller', req.user.role).avatar,
+      location: callPerson(activeCall, 'caller', req.user.role).location,
+      locationData: callPerson(activeCall, 'caller', req.user.role).locationData || null
     };
     
     res.json({
