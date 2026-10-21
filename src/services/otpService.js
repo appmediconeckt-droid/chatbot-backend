@@ -4,7 +4,12 @@ dotenv.config();
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
-import DemoOtpConfig, { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
+import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
+
+const demoOTPForEmail = (email) =>
+  DEMO_ACCOUNT_EMAILS.includes(String(email || "").trim().toLowerCase())
+    ? "123456"
+    : null;
 
 export const APP_REVIEW_TEST_EMAILS = Object.freeze([
   "appstore.user@humaeli.com",
@@ -608,10 +613,9 @@ const buildLoginOTPHtml = (otp) => `
 
 class OTPService {
   async getDemoOTP(email) {
-    const normalizedEmail = String(email || "").trim().toLowerCase();
-    if (!DEMO_ACCOUNT_EMAILS.includes(normalizedEmail)) return null;
-    const config = await DemoOtpConfig.findOne({ email: normalizedEmail, enabled: true }).lean();
-    return config?.otp === "123456" && new Date(config.expiresAt || 0).getTime() > Date.now() ? config.otp : null;
+    // These dedicated demo accounts always use the published review code.
+    // OTP requests still create and verify normal short-lived, single-use records.
+    return demoOTPForEmail(email);
   }
 
   async generateOTPForAccount(email = "") {
@@ -623,6 +627,8 @@ class OTPService {
   }
 
   generateOTP(email = "") {
+    const demoOTP = demoOTPForEmail(email);
+    if (demoOTP) return demoOTP;
     if (this.isPlayReviewEmail(email)) {
       return reviewOTP();
     }

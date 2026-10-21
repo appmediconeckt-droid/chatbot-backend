@@ -11,6 +11,16 @@ export const getAnonymousUserName = (
   return anonymous || fallback;
 };
 
+// Patient avatars are stored in profilePhoto by the profile update endpoint.
+// Legacy real photos must remain private when returning counselor-facing data.
+export const getUserAvatarForCounselor = (user) => {
+  const photo = user?.profilePhoto;
+  const url = asTrimmedString(typeof photo === "string" ? photo : photo?.url);
+  return /^https:\/\/api\.dicebear\.com\//i.test(url) || /^data:image\//i.test(url)
+    ? url
+    : null;
+};
+
 export const sanitizeUserForCounselor = (user, fallbackId = null) => {
   if (!user) {
     return fallbackId
@@ -30,6 +40,7 @@ export const sanitizeUserForCounselor = (user, fallbackId = null) => {
 
   const id = user._id || user.id || fallbackId;
   const anonymous = getAnonymousUserName(user);
+  const avatarUrl = getUserAvatarForCounselor(user);
 
   return {
     id: id ? String(id) : null,
@@ -46,8 +57,9 @@ export const sanitizeUserForCounselor = (user, fallbackId = null) => {
     online: Boolean(user.isOnline),
     lastSeen: user.lastSeen || null,
     profilePhoto: null,
-    avatar: null,
-    avatarUrl: null,
+    avatar: avatarUrl,
+    avatarUrl,
+    anonymousAvatarUrl: avatarUrl,
     Image: null,
   };
 };

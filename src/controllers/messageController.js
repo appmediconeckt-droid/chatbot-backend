@@ -1014,8 +1014,8 @@ export const getChats = async (req, res) => {
           ? getAnonymousUserName(otherParty)
           : otherParty.fullName;
         const otherPartyAvatar = isCounselorViewingUser
-          ? null
-          : otherParty.profilePhoto?.url || null;
+          ? sanitizeUserForCounselor(otherParty).avatarUrl
+          : getUserPhotoUrl(otherParty);
 
         return {
           id: chat._id,
@@ -1030,6 +1030,10 @@ export const getChats = async (req, res) => {
             name: otherPartyName,
             anonymous: otherParty.anonymous,
             avatar: otherPartyAvatar,
+            avatarUrl: otherPartyAvatar,
+            ...(isCounselorViewingUser
+              ? { anonymousAvatarUrl: otherPartyAvatar }
+              : { profilePhoto: otherPartyAvatar }),
             age: otherParty.age ?? null,
             gender: otherParty.gender || null,
             dateOfBirth: otherParty.dateOfBirth || null,

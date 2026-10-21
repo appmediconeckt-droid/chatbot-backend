@@ -19,8 +19,8 @@ describe("Review OTP configuration", () => {
       else process.env[key] = saved[key];
     })
   );
-  it("has no permanent review bypass by default", () => {
-    expect(otpService.isPlayReviewEmail("appstore.user@humaeli.com")).to.equal(
+  it("keeps other review accounts behind deployment configuration", () => {
+    expect(otpService.isPlayReviewEmail("playstore.user@humaeli.com")).to.equal(
       false
     );
   });
@@ -30,15 +30,15 @@ describe("Review OTP configuration", () => {
     process.env.APP_REVIEW_EXPIRES_AT = new Date(
       Date.now() + 60000
     ).toISOString();
-    process.env.APP_REVIEW_TEST_EMAILS = "appstore.user@humaeli.com";
-    expect(otpService.generateOTP(" APPSTORE.USER@HUMAELI.COM ")).to.equal(
+    process.env.APP_REVIEW_TEST_EMAILS = "playstore.user@humaeli.com";
+    expect(otpService.generateOTP(" PLAYSTORE.USER@HUMAELI.COM ")).to.equal(
       "394827"
     );
     expect(otpService.isPlayReviewEmail("normal@example.com")).to.equal(false);
     process.env.APP_REVIEW_EXPIRES_AT = new Date(
       Date.now() - 1000
     ).toISOString();
-    expect(otpService.isPlayReviewEmail("appstore.user@humaeli.com")).to.equal(
+    expect(otpService.isPlayReviewEmail("playstore.user@humaeli.com")).to.equal(
       false
     );
   });
