@@ -1,10 +1,11 @@
+import { issueLoginChallenge, consumeLoginChallenge, discardLoginChallenge } from "../services/loginChallengeService.js";
+import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import mongoose from "mongoose";
 import User from "../models/userModel.js";
 import Chat from "../models/Chat.js";
 import Appointment from "../models/appointmentModel.js";
 import Message from "../models/Message.js";
 import OTP from "../models/otpModel.js";
-import LoginOTP from "../models/loginOtpModel.js";
 import RegistrationOTP from "../models/registrationOtpModel.js";
 import bcrypt from "bcryptjs";
 import { formatCertifications } from "../utils/certificationFormatter.js";
@@ -301,27 +302,17 @@ const isCounsellorProfileComplete = (data) => {
     hasCertification(data?.certifications)
   );
 };
-const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
-
-const saveLoginOTP = async ({ userId, email, otp }) => {
-  const normalizedEmail = normalizeEmail(email);
-  await LoginOTP.deleteMany({ userId });
-  return LoginOTP.create({
-    userId,
-    email: normalizedEmail,
-    otp: String(otp),
-    expiresAt: new Date(Date.now() + LOGIN_OTP_TTL_MS),
-  });
+// Fixed review codes are accepted only alongside the account password.
+const validLoginOtpAccount = async (user, body) => {
+  if (!user?.isActive) return false;
+  if (body.role && normalizeRole(body.role) !== normalizeRole(user.role)) return false;
+  if (!DEMO_ACCOUNT_EMAILS.includes(user.email)) return true;
+  const expectedRole = user.email.includes("counsellor") ? "counsellor" : "user";
+  return user.role === expectedRole &&
+    typeof body.password === "string" && Boolean(user.password) &&
+    await bcrypt.compare(body.password, user.password);
 };
 
-const getPendingLoginOTP = async (email) => {
-  const normalizedEmail = normalizeEmail(email);
-  return LoginOTP.findOne({ email: normalizedEmail }).sort({ createdAt: -1 });
-};
-
-const clearLoginOTP = async (userId) => {
-  await LoginOTP.deleteMany({ userId });
-};
 
 setInterval(() => {
   const now = Date.now();
@@ -2390,7 +2381,7 @@ export const loginUser = async (req, res) => {
       role: user.role,
     });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error("Login failed");
     return res.status(500).json({
       message: "Error in login",
       success: false,
@@ -3113,25 +3104,23 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
         .json({ message: "User not found", success: false });
     }
 
-    // 1. Generate a short-lived OTP (6 digits)
-    const otp = await otpService.generateOTPForAccount(email);
+    if (!await validLoginOtpAccount(user, req.body)) {
+      return res.status(401).json({ success: false, message: "Valid account credentials are required" });
+    }
+    const otp = await otpService.generateLoginOTPForAccount(email);
     console.log("Generated short-lived login verification code");
 
-    await saveLoginOTP({ userId: user._id, email, otp });
+    const challenge = await issueLoginChallenge(user, otp);
 
     try {
       await otpService.sendLoginOTP(email, otp);
       console.log(`✅ OTP email sent successfully to ${email}`);
     } catch (emailError) {
-      await clearLoginOTP(user._id);
-      console.error(
-        `❌ Failed to send OTP email to ${email}:`,
-        emailError.message,
-      );
+      await discardLoginChallenge(challenge);
+      console.error("Login OTP delivery failed");
       return res.status(500).json({
         message: "OTP generated but failed to send email. Please try again.",
         success: false,
-        error: emailError.message,
       });
     }
 
@@ -3143,10 +3132,10 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
       email,
     });
   } catch (err) {
-    console.error("❌ logoutOtherDevices error:", err);
+    console.error("Login OTP request failed");
     return res
       .status(500)
-      .json({ message: "Server error", success: false, error: err.message });
+      .json({ message: "Server error", success: false });
   }
 };
 
@@ -3161,27 +3150,13 @@ export const verifyLoginOTP = async (req, res) => {
         .json({ message: "Email and OTP required", success: false });
     }
 
-    const stored = await getPendingLoginOTP(email);
-    if (!stored) {
-      return res
-        .status(400)
-        .json({ message: "No OTP found – request a new one", success: false });
+    if (!/^\d{6}$/.test(otp)) return res.status(400).json({ success: false, message: "Invalid OTP" });
+    const user = await User.findOne({ email });
+    if (!await validLoginOtpAccount(user, req.body)) {
+      return res.status(401).json({ success: false, message: "Valid account credentials are required" });
     }
-
-    if (Date.now() > stored.expiresAt.getTime()) {
-      await clearLoginOTP(stored.userId);
-      return res.status(400).json({ message: "OTP expired", success: false });
-    }
-
-    if (String(stored.otp) !== otp) {
-      return res.status(400).json({ message: "Invalid OTP", success: false });
-    }
-
-    const user = await User.findById(stored.userId);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ message: "User not found", success: false });
+    if (!await consumeLoginChallenge(user, otp)) {
+      return res.status(400).json({ success: false, message: "Invalid, expired or already used OTP. Request a new code." });
     }
 
     // Logout all existing sessions ONLY after OTP verification succeeds
@@ -3211,8 +3186,7 @@ export const verifyLoginOTP = async (req, res) => {
     });
     await markUserOnline(user);
 
-    // Clean up the OTP entry
-    await clearLoginOTP(user._id);
+    // The atomic consume above prevents concurrent reuse across instances.
 
     // Optional: if client sends GPS on OTP-login, store it (and append history event=login)
     await saveLoginLocationIfProvided({ req, userId: user._id });
@@ -3241,7 +3215,7 @@ export const verifyLoginOTP = async (req, res) => {
       role: user.role,
     });
   } catch (err) {
-    console.error("verifyLoginOTP error:", err);
+    console.error("Login OTP verification failed");
     return res.status(500).json({ message: "Server error", success: false });
   }
 };
@@ -3974,6 +3948,10 @@ export const setPassword = async (req, res) => {
 // ================= VERIFY PASSWORD OTP (no login/session side effects) =================
 export const verifyPasswordOtp = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(normalizeEmail(req.body?.email))) {
+      return res.status(403).json({ success: false, message: "Use email and password login for review accounts" });
+    }
+
     const { email, otp } = req.body || {};
     const normalizedEmail = normalizeEmail(email);
     const normalizedOtp = String(otp || "").trim();
@@ -4060,6 +4038,10 @@ export const changePassword = async (req, res) => {
 // ================= SET PASSWORD BY OTP (unauthenticated, uses verifiedUsersStore)
 export const setPasswordByOtp = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(normalizeEmail(req.body?.email))) {
+      return res.status(403).json({ success: false, message: "Use email and password login for review accounts" });
+    }
+
     const { email, password, otp } = req.body;
 
     if (!email || !password) {
@@ -4421,7 +4403,7 @@ const sendProfileChangeOtpViaSMS = async (formattedPhone, otp) => {
   if (!isTwilioConfigured) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(
-        `[profile-change] Twilio not configured; dev OTP for ${formattedPhone}: ${otp}`,
+        "[profile-change] Twilio not configured",
       );
       return { devOtp: otp };
     }

@@ -1,3 +1,5 @@
+import { verifyLoginOTP } from "../controllers/authController.js";
+import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
 import Session from "../models/sessionModel.js";
@@ -8,6 +10,12 @@ export const verifyOtp = async (req, res) => {
     const { email, otp } = req.body;
 
     // 1. Find user
+    if (DEMO_ACCOUNT_EMAILS.includes(String(email || "").trim().toLowerCase())) {
+      if (typeof req.body.password !== "string" || !req.body.password) {
+        return res.status(401).json({ success: false, code: "REVIEW_PASSWORD_REQUIRED", message: "Enter the review account password to continue" });
+      }
+      return verifyLoginOTP(req, res);
+    }
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "User not found", success: false });

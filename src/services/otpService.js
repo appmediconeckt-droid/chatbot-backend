@@ -11,23 +11,8 @@ const demoOTPForEmail = (email) =>
     ? "123456"
     : null;
 
-export const APP_REVIEW_TEST_EMAILS = Object.freeze([
-  "appstore.user@humaeli.com",
-  "appstore.counsellor@humaeli.com",
-  "playstore.user@humaeli.com",
-  "playstore.counsellor@humaeli.com",
-  "demo.counsellor1@humaeli.com",
-  "demo.user1@humaeli.com",
-]);
-
+export const APP_REVIEW_TEST_EMAILS = DEMO_ACCOUNT_EMAILS;
 export const PLAY_REVIEW_TEST_EMAILS = APP_REVIEW_TEST_EMAILS;
-
-const getReviewEmailSet = () => new Set(String(process.env.APP_REVIEW_TEST_EMAILS || process.env.PLAY_REVIEW_TEST_EMAILS || "").split(",").map(email => email.trim().toLowerCase()).filter(Boolean));
-const reviewOTP = () => {
-  const value = process.env.APP_REVIEW_OTP || "";
-  const expires = Date.parse(process.env.APP_REVIEW_EXPIRES_AT || "");
-  return process.env.APP_REVIEW_ENABLED === "true" && /^\d{6}$/.test(value) && expires > Date.now() ? value : null;
-};
 
 const FROM_NAME = "Humaeli";
 
@@ -612,35 +597,24 @@ const buildLoginOTPHtml = (otp) => `
 `;
 
 class OTPService {
-  async getDemoOTP(email) {
-    // These dedicated demo accounts always use the published review code.
-    // OTP requests still create and verify normal short-lived, single-use records.
-    return demoOTPForEmail(email);
+  async getDemoOTP(email) { return demoOTPForEmail(email); }
+
+  // Generic OTPs (registration, recovery, profile changes and SMS) are always random.
+  async generateOTPForAccount() { return this.generateOTP(); }
+  isPlayReviewEmail() { return false; }
+  generateOTP() {
+    // The published review code must never be issued for recovery or SMS.
+    let code;
+    do { code = crypto.randomInt(100000, 1000000).toString(); } while (code === "123456");
+    return code;
   }
-
-  async generateOTPForAccount(email = "") {
-    return (await this.getDemoOTP(email)) || this.generateOTP(email);
-  }
-
-  isPlayReviewEmail(email) {
-    return Boolean(reviewOTP()) && getReviewEmailSet().has(String(email || "").trim().toLowerCase());
-  }
-
-  generateOTP(email = "") {
-    const demoOTP = demoOTPForEmail(email);
-    if (demoOTP) return demoOTP;
-    if (this.isPlayReviewEmail(email)) {
-      return reviewOTP();
-    }
-
-    return crypto.randomInt(100000, 999999).toString();
+  async generateLoginOTPForAccount(email) {
+    return (await this.getDemoOTP(email)) || this.generateOTP();
   }
 
   async sendLoginOTP(email, otp) {
     if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
-    // Only deployment-enabled, expiring review accounts use the configured code.
-    // Normal accounts still require their usual delivered OTP.
-    if (this.isPlayReviewEmail(email)) return { success: true, provider: "configured-app-review" };
+
     try {
       const textContent =
         `Humaeli - Mental Wellness - Login Verification\n\n` +
@@ -670,7 +644,6 @@ class OTPService {
   }
 
   async sendPasswordResetOTP(email, otp) {
-    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     const year = new Date().getFullYear();
     const html = `
       <div style="max-width:600px;margin:20px auto;border:1px solid #e6e6e6;border-radius:10px;overflow:hidden;background:#fff;font-family:Arial,sans-serif;">
@@ -720,7 +693,6 @@ class OTPService {
   }
 
   async sendEmailOTP(email, otp) {
-    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     console.log(`📧 Sending email verification OTP to ${email}`);
 
     const textContent =
@@ -782,7 +754,6 @@ class OTPService {
   }
 
   async sendForgotPasswordOTP(email, otp) {
-    if (await this.getDemoOTP(email) === String(otp)) return { success: true, provider: "demo-account" };
     const year = new Date().getFullYear();
     const textContent =
       `Humaeli - Password Reset\n\n` +

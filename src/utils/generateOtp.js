@@ -1,3 +1,5 @@
+import { logoutOtherDevicesAndSendOTP } from "../controllers/authController.js";
+import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
 import otpService from "../services/otpService.js";
@@ -11,6 +13,12 @@ export const generateOtp = async (req, res) => {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
+    if (DEMO_ACCOUNT_EMAILS.includes(String(email || "").trim().toLowerCase())) {
+      if (typeof req.body.password !== "string" || !req.body.password) {
+        return res.status(401).json({ success: false, code: "REVIEW_PASSWORD_REQUIRED", message: "Enter the review account password to continue" });
+      }
+      return logoutOtherDevicesAndSendOTP(req, res);
+    }
     const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {

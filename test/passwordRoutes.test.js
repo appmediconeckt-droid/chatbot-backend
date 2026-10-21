@@ -1,3 +1,5 @@
+import sinon from "sinon";
+import { AuthRateBucket } from "../src/middleware/authRateLimit.js";
 import { describe, it } from 'mocha';
 import request from 'supertest';
 import { expect } from 'chai';
@@ -5,6 +7,8 @@ import { app } from '../src/app.js';
 
 describe('Password endpoints (basic smoke tests)', function () {
   this.timeout(10000);
+  beforeEach(() => sinon.stub(AuthRateBucket, "findOneAndUpdate").resolves({ count: 1 }));
+  afterEach(() => sinon.restore());
 
   it('POST /api/auth/set-password-by-otp -> 400 when email not verified', async () => {
     const res = await request(app)

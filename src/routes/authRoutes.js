@@ -1,3 +1,4 @@
+import { authRateLimit } from "../middleware/authRateLimit.js";
 import express from "express";
 import {
   loginUser,
@@ -51,14 +52,14 @@ import {
 export const authRoutes = express.Router();
 
 // OTP & REGISTRATION FLOW
-authRoutes.post("/send-email-otp", sendEmailOTP);
-authRoutes.post("/verify-email-otp", verifyEmailOTP);
-authRoutes.post("/send-phone-otp", sendPhoneOTP);
-authRoutes.post("/verify-phone-otp", verifyPhoneOTP);
+authRoutes.post("/send-email-otp", authRateLimit, sendEmailOTP);
+authRoutes.post("/verify-email-otp", authRateLimit, verifyEmailOTP);
+authRoutes.post("/send-phone-otp", authRateLimit, sendPhoneOTP);
+authRoutes.post("/verify-phone-otp", authRateLimit, verifyPhoneOTP);
 authRoutes.post("/complete-registration",uploadProfilePhoto,completeRegistration,);
 
 // AUTHENTICATION ROUTES
-authRoutes.post("/login", loginUser);
+authRoutes.post("/login", authRateLimit, loginUser);
 // Google OAuth (signup + login in one endpoint — handles both new and existing users)
 authRoutes.post("/google", googleAuth);
 authRoutes.post("/apple-login", appleLogin);
@@ -66,8 +67,8 @@ authRoutes.post("/google/relink", authMiddleware, relinkGoogleAccount);
 authRoutes.post("/google/unlink/send-otp", authMiddleware, sendUnlinkGoogleOtp);
 authRoutes.post("/google/unlink", authMiddleware, unlinkGoogleAccount);
 // NEW routes for the one‑device flow
-authRoutes.post("/logout-other-devices", logoutOtherDevicesAndSendOTP);
-authRoutes.post("/verify-login-otp", verifyLoginOTP);
+authRoutes.post("/logout-other-devices", authRateLimit, logoutOtherDevicesAndSendOTP);
+authRoutes.post("/verify-login-otp", authRateLimit, verifyLoginOTP);
 
 authRoutes.post("/logout", authMiddleware, logout);
 authRoutes.post("/session-heartbeat", authMiddleware, sessionHeartbeat);
@@ -75,8 +76,8 @@ authRoutes.post("/session-heartbeat", authMiddleware, sessionHeartbeat);
 authRoutes.post("/setPassword", authMiddleware, setPassword);
 authRoutes.post("/changePassword", authMiddleware, changePassword);
 // Password OTP endpoints do not create login sessions during settings flows.
-authRoutes.post("/verify-password-otp", verifyPasswordOtp);
-authRoutes.post("/set-password-by-otp", setPasswordByOtp);
+authRoutes.post("/verify-password-otp", authRateLimit, verifyPasswordOtp);
+authRoutes.post("/set-password-by-otp", authRateLimit, setPasswordByOtp);
 authRoutes.post("/refresh-token", refreshAccessTokenHandler);
 authRoutes.post("/logout-all", authMiddleware, logoutAllDevices);
 
@@ -88,9 +89,9 @@ authRoutes.get(
 );
 
 // OTP ROUTES For Login
-authRoutes.post("/generateOtp", generateOtp);
-authRoutes.post("/verifyOtp", verifyOtp);
-authRoutes.post("/resendOtp", resendOtp);
+authRoutes.post("/generateOtp", authRateLimit, generateOtp);
+authRoutes.post("/verifyOtp", authRateLimit, verifyOtp);
+authRoutes.post("/resendOtp", authRateLimit, resendOtp);
 
 // PUBLIC COUNSELLOR ROUTES
 authRoutes.get("/landing-stats", getLandingStats);
@@ -140,6 +141,7 @@ authRoutes.delete("/delete", authMiddleware, deleteUser);
 // PASSWORD RESET ROUTES
 authRoutes.post(
   "/forgotPassword",
+  authRateLimit,
   [body("email").isEmail().withMessage("Please provide a valid email")],
   forgotPassword,
 );

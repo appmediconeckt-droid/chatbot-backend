@@ -1,3 +1,4 @@
+import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 // controllers/forgotPasswordController.js
 import User from '../models/userModel.js';
 import ForgotPasswordToken from '../models/ForgotPasswordToken.js';
@@ -8,6 +9,11 @@ import { getStrongPasswordError } from '../utils/passwordPolicy.js';
 // ==================== SEND FORGOT PASSWORD OTP ====================
 export const sendForgotPasswordOTP = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(String(req.body?.email || '').trim().toLowerCase())) {
+      return res.status(403).json({ success: false, code: 'REVIEW_LOGIN_REQUIRED',
+        message: 'Use the supplied review account password and email login verification. Review passwords cannot be reset with the published login code.' });
+    }
+
     const { email } = req.body;
 
     if (!email) {
@@ -60,6 +66,11 @@ export const sendForgotPasswordOTP = async (req, res) => {
 // ==================== VERIFY FORGOT PASSWORD OTP ====================
 export const verifyForgotPasswordOTP = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(String(req.body?.email || '').trim().toLowerCase())) {
+      return res.status(403).json({ success: false, code: 'REVIEW_LOGIN_REQUIRED',
+        message: 'Use the supplied review account password and email login verification. Review passwords cannot be reset with the published login code.' });
+    }
+
     const { email, otp } = req.body;
 
     if (!email || !otp) {
@@ -117,6 +128,11 @@ export const verifyForgotPasswordOTP = async (req, res) => {
 // ==================== RESET PASSWORD ====================
 export const resetPassword = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(String(req.body?.email || '').trim().toLowerCase())) {
+      return res.status(403).json({ success: false, code: 'REVIEW_LOGIN_REQUIRED',
+        message: 'Use the supplied review account password and email login verification. Review passwords cannot be reset with the published login code.' });
+    }
+
     const { email, newPassword, confirmPassword } = req.body;
 
     if (!email || !newPassword || !confirmPassword) {
@@ -187,6 +203,11 @@ export const resetPassword = async (req, res) => {
 // ==================== RESEND OTP ====================
 export const resendForgotPasswordOTP = async (req, res) => {
   try {
+    if (DEMO_ACCOUNT_EMAILS.includes(String(req.body?.email || '').trim().toLowerCase())) {
+      return res.status(403).json({ success: false, code: 'REVIEW_LOGIN_REQUIRED',
+        message: 'Use the supplied review account password and email login verification. Review passwords cannot be reset with the published login code.' });
+    }
+
     const { email } = req.body;
 
     if (!email) {
