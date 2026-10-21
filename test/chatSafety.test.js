@@ -3,6 +3,7 @@ import sinon from "sinon";
 import express from "express";
 import request from "supertest";
 import jwt from "jsonwebtoken";
+import User from "../src/models/userModel.js";
 import UserBlock from "../src/models/UserBlock.js";
 import AbuseReport from "../src/models/AbuseReport.js";
 import Chat from "../src/models/Chat.js";
@@ -20,8 +21,9 @@ const A = "100000000000000000000001",
 describe("Conversation safety", () => {
   let app;
   const token = (id = A, role = "user") =>
-    jwt.sign({ userId: id, sessionId: sid, role }, process.env.ACCESS_SECRET);
+    jwt.sign({ userId: role === "admin" ? "100000000000000000000004" : id, sessionId: sid, role }, process.env.ACCESS_SECRET);
   beforeEach(() => {
+    sinon.stub(User, "findById").callsFake(async id => ({ _id: id, role: String(id) === "100000000000000000000004" ? "admin" : "user", isActive: true }));
     sinon.stub(Session, "findOne").resolves({ isActive: true });
     sinon
       .stub(Chat, "findOne")

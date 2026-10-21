@@ -46,6 +46,8 @@ const chatSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  demoStatus: { type: String, enum: ["simulation_only", "not_applicable"], default: "not_applicable" },
+    paymentMode: { type: String, enum: ["demo", "free"], default: "free" },
   paymentStatus: {
     type: String,
     enum: ['free', 'hold', 'paid', 'refunded', 'released'],

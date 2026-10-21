@@ -58,7 +58,10 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
   let counsellor;
   let uniq;
 
+  let previousExpiry;
   before(async () => {
+    previousExpiry = process.env.COUNSELOR_REQUEST_EXPIRY_HOURS;
+    process.env.COUNSELOR_REQUEST_EXPIRY_HOURS = String(30 / 3600);
     await connectDB();
   });
 
@@ -73,6 +76,10 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
       googleId: `gid-counsellor-${uniq}`,
       authProvider: "google",
       role: "counsellor",
+      profileCompleted: true,
+      qualification: "M.Sc. Psychology",
+      specialization: ["Mental Wellness"],
+      experience: 5,
       isActive: true,
       locationData: {
         current: { type: "Point", coordinates: [77.5946, 12.9716] },
@@ -104,6 +111,8 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
   });
 
   after(async () => {
+    if (previousExpiry === undefined) delete process.env.COUNSELOR_REQUEST_EXPIRY_HOURS;
+    else process.env.COUNSELOR_REQUEST_EXPIRY_HOURS = previousExpiry;
     await mongoose.disconnect();
   });
 
@@ -145,6 +154,8 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     expect(persistedUser).to.exist;
     expect(persistedUser.googleId).to.equal(googleSub);
     expect(persistedUser.authProvider).to.equal("google");
+
+    await User.updateOne({ _id: persistedUser._id }, { $set: { demoWalletBalance: 1000, demoPaymentsEnabled: true } });
 
     // Step 3: New user sends chat request to the counsellor
     const startReq = {
@@ -232,6 +243,8 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
       googleId: googleSub,
       authProvider: "google",
       role: "user",
+      demoWalletBalance: 1000,
+      demoPaymentsEnabled: true,
       isActive: true,
       isEmailVerified: true,
       locationData: {
@@ -278,6 +291,8 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
       googleId: oldGoogleSub,
       authProvider: "google",
       role: "user",
+      demoWalletBalance: 1000,
+      demoPaymentsEnabled: true,
       isActive: true,
       isEmailVerified: true,
       locationData: {
@@ -370,6 +385,8 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
       googleId: googleSub,
       authProvider: "google",
       role: "user",
+      demoWalletBalance: 1000,
+      demoPaymentsEnabled: true,
       isActive: true,
       isEmailVerified: true,
       // ensure unlink is allowed

@@ -327,6 +327,10 @@ const userSchema = new mongoose.Schema({
     refreshToken:{
         type: String
     },
+    // Server-managed; never accepted by public profile/registration updates.
+    demoPaymentsEnabled: { type: Boolean, default: false },
+    demoWalletBalance: { type: Number, default: 0, min: 0 },
+    demoWalletCreditIds: { type: [String], default: [], select: false },
     walletBalance: {
       type: Number,
       default: 0

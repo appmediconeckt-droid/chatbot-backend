@@ -11,6 +11,6 @@ router.post("/", authenticateToken, authorizeRoles("user"), requireUnblockedInte
 router.get("/", authenticateToken, appointmentCtrl.getAppointments);
 
 // Counsellors can update appointment status
-router.patch("/:id/status", authenticateToken, authorizeRoles("counsellor"), appointmentCtrl.updateStatus);
+router.patch("/:id/status", authenticateToken, authorizeRoles("user", "counsellor"), appointmentCtrl.updateStatus);
 
 export default router;

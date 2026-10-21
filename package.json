@@ -14,7 +14,9 @@
     "migrate:chat-deletion": "node scripts/migrate-chat-participant-deletion.js",
     "seed:play-review": "node scripts/seed-play-review-accounts.js",
     "seed:app-review": "node scripts/seed-play-review-accounts.js",
-    "migrate:ai-consent": "node scripts/migrate-ai-consent.js"
+    "migrate:ai-consent": "node scripts/migrate-ai-consent.js",
+    "test:local": "node scripts/test-local-mongo.js",
+    "review:local": "node scripts/start-local-review.js"
   },
   "keywords": [],
   "author": "",
@@ -44,7 +46,6 @@
     "openai": "^6.34.0",
     "otp-generator": "^4.0.1",
     "pdfmake": "^0.3.11",
-    "razorpay": "^2.9.6",
     "resend": "^6.12.2",
     "socket.io": "^4.8.3",
     "stream-chat": "^8.60.0",

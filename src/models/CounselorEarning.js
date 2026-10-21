@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 
 const counselorEarningSchema = new mongoose.Schema(
   {
+    paymentMode: { type: String, enum: ["demo"], default: "demo" },
+    redeemable: { type: Boolean, default: false, immutable: true },
     counselorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -55,14 +57,14 @@ const counselorEarningSchema = new mongoose.Schema(
     },
     earningStatus: {
       type: String,
-      enum: ["completed", "refunded", "reversed"],
-      default: "completed",
+      enum: ["completed", "refunded", "reversed", "demo_completed"],
+      default: "demo_completed",
       index: true,
     },
     payoutStatus: {
       type: String,
-      enum: ["pending", "approved", "paid", "rejected"],
-      default: "pending",
+      enum: ["pending", "approved", "paid", "rejected", "demo_unavailable"],
+      default: "demo_unavailable",
       index: true,
     },
     paidAt: {

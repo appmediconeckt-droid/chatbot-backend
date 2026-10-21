@@ -65,6 +65,12 @@ const chatSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    demoStatus: {
+      type: String,
+      enum: ["simulation_only"],
+      default: "simulation_only",
+    },
+    paymentMode: { type: String, enum: ["demo"] },
     paymentStatus: {
       type: String,
       enum: ["free", "hold", "paid", "refunded", "released"],
@@ -113,12 +119,13 @@ const chatSessionSchema = new mongoose.Schema(
       default: {},
     },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
 chatSessionSchema.index({ counselorId: 1, sessionStatus: 1, createdAt: -1 });
 
 const ChatSession =
-  mongoose.models.ChatSession || mongoose.model("ChatSession", chatSessionSchema);
+  mongoose.models.ChatSession ||
+  mongoose.model("ChatSession", chatSessionSchema);
 
 export default ChatSession;

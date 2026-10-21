@@ -670,17 +670,6 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     if (crisisDetection.isCrisis && crisisDetection.level !== "medium") {
       aiResponse = generateCrisisResponse(crisisDetection.level);
 
-      // Crisis override: alert ALL active counsellors regardless of online status.
-      // Safety takes priority over the usual online-only filter.
-      if (crisisDetection.level === "critical") {
-        const emergencyCounselors = await User.find({
-          role: "counsellor",
-          isActive: true,
-        });
-        for (const counselor of emergencyCounselors) {
-          await sendCrisisAlert(counselor, message, userId);
-        }
-      }
     } else {
       // Hard safety guard — blocks sexual content / abuse-context responses
       // before they ever reach the LLM. Critical for minors. If this returns
@@ -697,24 +686,6 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
         );
         aiResponse = safety.reply;
 
-        // Treat abuse signals as a critical incident: alert active counsellors
-        // the same way crisis detection does, so a human can step in.
-        if (
-          safety.reason === "abuse_signal" ||
-          safety.reason === "minor_sexual_howto"
-        ) {
-          try {
-            const emergencyCounselors = await User.find({
-              role: "counsellor",
-              isActive: true,
-            });
-            for (const counselor of emergencyCounselors) {
-              await sendCrisisAlert(counselor, message, userId);
-            }
-          } catch (alertErr) {
-            console.error("[AI-CHAT SAFETY] alert dispatch failed:", alertErr.message);
-          }
-        }
       } else {
         // Generate normal AI response
         aiResponse = await generateAIResponse(
@@ -772,13 +743,6 @@ Your goal: Be a supportive friend who helps them feel heard, understood, and gui
     return sendAIError(res, error);
 
   }
-};
-
-// Helper function to send crisis alert to counselors
-const sendCrisisAlert = async (counselor, userMessage, userId) => {
-  // Implementation for sending alerts (email, SMS, push notification)
-  // This can be expanded based on your notification system
-  console.log(`🚨 CRISIS ALERT: User ${userId} needs immediate help. `);
 };
 
 // Return the authenticated user's latest AI chat session in the shape the web

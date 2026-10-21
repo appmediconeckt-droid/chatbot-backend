@@ -448,6 +448,8 @@ app.get("/api/health", (_req, res) => {
     status: isHealthy ? "ok" : "degraded",
     service: "humaeli-backend",
     environment: process.env.NODE_ENV || "development",
+    revision: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_VERSION || null,
+    payments: { realPaymentsEnabled: false, withdrawalsEnabled: false, publicWorkflows: "free", simulation: "designated_accounts_only" },
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     features: {

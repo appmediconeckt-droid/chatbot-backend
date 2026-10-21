@@ -100,39 +100,12 @@ export const detectCrisis = (message) => {
   };
 };
 
+// This app cannot dispatch emergency services or promise clinician contact.
+// Resource phone numbers must not be guessed or presented as globally valid.
 export const generateCrisisResponse = (crisisLevel) => {
-  const responses = {
-    [CRISIS_LEVELS.CRITICAL]: `
-🚨 I can see you're in a critical situation right now. Your safety is the most important thing.
-
-IMMEDIATE HELP:
-📞 National Suicide Prevention Lifeline (India): 9152987821
-📞 iCall (24/7 Mental Health Support): 9152987821
-📞 Vandrevala Foundation: 9999 77 6666
-📞 AASRA: 9820466726
-
-✅ I'm connecting you with an emergency counselor right now. Please stay safe.
-    `,
-    [CRISIS_LEVELS.HIGH]: `
-⚠️ I'm concerned about what you're sharing. You deserve immediate professional support.
-
-I'm connecting you with a specialized counselor who can help you right now. They will reach out to you shortly.
-
-Please reach out to these resources while you wait:
-📞 iCall: 9152987821 (Hindi, English, Marathi)
-📞 Vandrevala Foundation: 9999 77 6666
-📞 AASRA: 9820466726
-
-You're not alone. Help is here. 💙
-    `,
-    [CRISIS_LEVELS.MEDIUM]: `
-I hear you, and I'm here to listen and support you. Based on what you've shared, I'd like to connect you with a professional counselor who specializes in this area.
-
-They can provide more personalized support and guidance. Is that okay with you?
-    `,
-  };
-
-  return responses[crisisLevel] || "";
+  if (crisisLevel === CRISIS_LEVELS.CRITICAL) return "I'm sorry you are facing this. Your immediate safety matters. If you might act on thoughts of harming yourself, have already harmed yourself, or cannot stay safe, call your local emergency services or go to the nearest emergency department now. Ask someone you trust to stay with you, and move away from anything you could use to hurt yourself if you can do so safely. Humaeli is not an emergency service and cannot contact a counselor or emergency responder for you. Are you in immediate danger right now?";
+  if (crisisLevel === CRISIS_LEVELS.HIGH) return "I'm concerned about what you are experiencing. If you are in immediate danger or have a medical emergency, contact local emergency services or go to the nearest emergency department. If possible, reach out to someone you trust and seek urgent professional support. Humaeli cannot dispatch help or guarantee a counselor will contact you. Are you safe right now?";
+  if (crisisLevel === CRISIS_LEVELS.MEDIUM) return "I hear you. A qualified professional can offer personal support. You can choose to contact a consultant in the directory; this does not automatically arrange an emergency response. Would you like help exploring your support options?";
+  return "";
 };
-
 export const CRISIS_LEVELS_EXPORT = CRISIS_LEVELS;

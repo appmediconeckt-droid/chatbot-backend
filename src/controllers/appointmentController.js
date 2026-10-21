@@ -1,4 +1,6 @@
 // mindCrawller/src/controllers/appointmentController.js
+import Transaction from "../models/transactionModel.js";
+import mongoose from "mongoose";
 import Appointment from "../models/appointmentModel.js";
 import User from "../models/userModel.js";
 import { createNotificationSafely } from "../services/notificationService.js";
@@ -10,7 +12,8 @@ import {
 // Delete appointments that never became a completed/confirmed session once
 // their scheduled date/time is past. Support both American and British
 // cancellation spellings because older clients store both variants.
-const EXPIRED_UNRESOLVED_STATUS_PATTERN = /^(pending|rejected|reject|canceled|cancelled)$/i;
+const EXPIRED_UNRESOLVED_STATUS_PATTERN =
+  /^(pending|rejected|reject|canceled|cancelled)$/i;
 
 // Pending/rejected/canceled appointments are no longer actionable once their
 // scheduled time has passed. deleteMany is idempotent, so it is safe to run
@@ -25,7 +28,7 @@ export const deleteExpiredUnresolvedAppointments = async () => {
 
   if (result.deletedCount > 0) {
     console.log(
-      `Appointment cleanup: removed ${result.deletedCount} expired unresolved appointment(s)`,
+      `Appointment cleanup: removed ${result.deletedCount} expired unresolved appointment(s)`
     );
   }
 
@@ -91,12 +94,50 @@ export const book = async (req, res) => {
       });
     }
 
-    const appointment = await Appointment.create({
-      patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
-      counselor: counselorId,
-      date: appointmentDate,
-      notes,
-    });
+    const demoAmount = Number(req.body.demoAmount || 0);
+    if (
+      !Number.isFinite(demoAmount) ||
+      demoAmount < 0 ||
+      demoAmount > 100000 ||
+      Math.abs(demoAmount * 100 - Math.round(demoAmount * 100)) > 0.000001
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Invalid simulated appointment amount" });
+    }
+    const appointmentId = new mongoose.Types.ObjectId();
+    if (req.body.paymentMode === "demo" && req.user.demoPaymentsEnabled !== true) {
+      return res.status(403).json({ code: "DEMO_SIMULATION_DISABLED", message: "Demo simulation is not enabled for this account" });
+    }
+    const simulation = req.user.demoPaymentsEnabled === true && req.body.paymentMode === "demo";
+    const transaction = simulation ? await Transaction.create({
+      userId: req.user._id,
+      counselorId,
+      appointmentId,
+      amount: demoAmount,
+      paymentMode: "demo",
+      status: "demo_completed",
+      type: "debit",
+      description:
+        "Demo appointment payment — no charge or monetary entitlement",
+      metadata: { simulationOnly: true, redeemable: false },
+    }) : null;
+    let appointment;
+    try {
+      appointment = await Appointment.create({
+        _id: appointmentId,
+        paymentMode: simulation ? "demo" : "free",
+        paymentStatus: simulation ? "demo_completed" : "not_required",
+        paymentTransactionId: transaction?._id || null,
+        patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
+        counselor: counselorId,
+        date: appointmentDate,
+        notes,
+      });
+    } catch (error) {
+      if (transaction) await Transaction.deleteOne({ _id: transaction._id });
+      throw error;
+    }
 
     // Notify the counselor via socket if global.io exists
     if (global.io) {
@@ -115,8 +156,16 @@ export const book = async (req, res) => {
       actorId: req.user._id,
       type: "appointment",
       title: "New appointment request",
-      message: `${getAnonymousUserName(req.user)} requested an appointment for ${new Date(date).toLocaleString("en-IN")}.`,
-      data: { appointmentId: appointment._id, status: appointment.status, date },
+      message: `${getAnonymousUserName(
+        req.user
+      )} requested an appointment for ${new Date(date).toLocaleString(
+        "en-IN"
+      )}.`,
+      data: {
+        appointmentId: appointment._id,
+        status: appointment.status,
+        date,
+      },
       actionUrl: "/counselor/appointments",
     });
 
@@ -180,9 +229,9 @@ export const getAppointments = async (req, res) => {
           ...appointment,
           patient: sanitizeUserForCounselor(
             appointment.patient,
-            appointment.patient?._id || appointment.patient,
+            appointment.patient?._id || appointment.patient
           ),
-        })),
+        }))
       );
     }
 
@@ -196,7 +245,10 @@ export const getAppointments = async (req, res) => {
 export const updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const requestedStatus = String(req.body.status || "").toLowerCase();
+    const status = requestedStatus === "cancelled" ? "canceled" : requestedStatus;
+    if (!["pending", "confirmed", "canceled", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid appointment status" });
+    if (req.user.role === "user" && status !== "canceled") return res.status(403).json({ message: "Users may only cancel their own appointments" });
     const userId = req.user._id;
 
     const appointment = await Appointment.findById(id);
@@ -212,6 +264,13 @@ export const updateStatus = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+    const transitions = { pending: ["confirmed", "rejected", "canceled"], confirmed: ["canceled"], canceled: [], rejected: [] };
+    if (appointment.status !== status && !transitions[appointment.status]?.includes(status)) {
+      return res.status(409).json({ message: "Appointment status changed. Refresh before trying again." });
+    }
+    if (status === "canceled" && new Date(appointment.date).getTime() <= Date.now()) {
+      return res.status(400).json({ message: "A past appointment cannot be canceled" });
+    }
     if (
       String(status).toLowerCase() === "confirmed" &&
       new Date(appointment.date).getTime() <= Date.now()
@@ -225,7 +284,7 @@ export const updateStatus = async (req, res) => {
     await appointment.save();
 
     await createNotificationSafely({
-      recipientId: appointment.patient,
+      recipientId: String(userId) === String(appointment.patient) ? appointment.counselor : appointment.patient,
       actorId: req.user._id,
       type: "appointment",
       title: `Appointment ${status}`,

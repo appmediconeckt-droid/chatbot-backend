@@ -178,14 +178,15 @@ const assertSufficientChatBalance = async (userId, sessionType) => {
   if (!isPaidSessionsEnabled()) return;
 
   const amount = getSessionAmount(sessionType);
-  const user = await User.findById(userId).select("walletBalance");
+  const user = await User.findById(userId).select("demoWalletBalance demoPaymentsEnabled");
+  if (user?.demoPaymentsEnabled !== true) return;
   const requiredAmount =
     sessionType === "chat" ? Number((amount / 30).toFixed(2)) : amount;
-  if ((user?.walletBalance || 0) < requiredAmount) {
+  if ((user?.demoWalletBalance || 0) < requiredAmount) {
     const error = new Error("Insufficient wallet balance");
     error.statusCode = 402;
     error.requiredAmount = requiredAmount;
-    error.walletBalance = user?.walletBalance || 0;
+    error.walletBalance = user?.demoWalletBalance || 0;
     throw error;
   }
 };
@@ -372,7 +373,7 @@ export const startChat = async (req, res) => {
             startedAt: populatedChat.startedAt,
             paymentStatus: populatedChat.paymentStatus,
             amount: populatedChat.amount,
-            paidMode: isPaidSessionsEnabled(),
+            paidMode: Boolean(paidHold),
             walletBalance: paidHold?.walletBalance,
           },
         });
@@ -405,7 +406,7 @@ export const startChat = async (req, res) => {
       chatId: chat._id,
       senderId: req.user._id,
       senderRole: "user",
-      content: `👋 Hello! I'd like to start a conversation with you.`,
+      content: `👋 Hello! I'd like to start a conversation with you.${chat.expiresAt ? ` This request expires in ${Math.max(1, Math.round((new Date(chat.expiresAt).getTime() - Date.now()) / 1000))} seconds.` : ""}`,
       contentType: "TEXT",
     });
     await createNotificationSafely({
@@ -456,7 +457,7 @@ export const startChat = async (req, res) => {
         startedAt: populatedChat.startedAt,
         paymentStatus: populatedChat.paymentStatus,
         amount: populatedChat.amount,
-        paidMode: isPaidSessionsEnabled(),
+        paidMode: Boolean(paidHold),
         walletBalance: paidHold?.walletBalance,
       },
     });
@@ -469,7 +470,7 @@ export const startChat = async (req, res) => {
         error: error.message,
         requiredAmount: error.requiredAmount,
         walletBalance: error.walletBalance,
-        paidMode: isPaidSessionsEnabled(),
+        paidMode: Boolean(paidHold),
       });
     }
 
@@ -562,7 +563,7 @@ export const startChat = async (req, res) => {
             startedAt: populatedChat.startedAt,
             paymentStatus: populatedChat.paymentStatus,
             amount: populatedChat.amount,
-            paidMode: isPaidSessionsEnabled(),
+            paidMode: Boolean(paidHold),
             walletBalance: paidHold?.walletBalance,
           },
         });
@@ -581,7 +582,7 @@ export const acceptChat = async (req, res) => {
     console.log("Accepting chat with identifier:", chatId);
 
     // Use helper function to find chat by either _id or chatId
-    const chat = await findChatByIdentifier(chatId);
+    let chat = await findChatByIdentifier(chatId);
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
@@ -627,6 +628,13 @@ export const acceptChat = async (req, res) => {
     }
 
 
+    if (chat.status === "pending" && chat.expiresAt && new Date(chat.expiresAt).getTime() <= Date.now()) {
+      await Chat.updateOne({ _id: chat._id, status: "pending", expiresAt: { $lte: new Date() } },
+        { $set: { status: "cancelled", isActive: false, cancelledAt: new Date() } });
+      await refundPaidSession(chat, "request_expired");
+      return res.status(400).json({ error: "This chat request has expired. Please send a new request.", status: "expired", canResend: true, chatId: chat._id });
+    }
+
     // Check if chat is pending
     if (chat.status !== "pending") {
       return res.status(400).json({
@@ -635,11 +643,13 @@ export const acceptChat = async (req, res) => {
       });
     }
 
-    // Accept the chat
-    chat.status = "accepted";
-    chat.acceptedAt = new Date();
-    chat.updatedAt = new Date();
-    await chat.save();
+    // Compare state and deadline in MongoDB so concurrent accept/reject or
+    // deadline-crossing requests cannot accept an expired request.
+    const accepted = await Chat.findOneAndUpdate({ _id: chat._id, status: "pending",
+      $or: [{ expiresAt: null }, { expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }]
+    }, { $set: { status: "accepted", acceptedAt: new Date(), updatedAt: new Date() } }, { returnDocument: "after" });
+    if (!accepted) return res.status(409).json({ error: "Request changed or expired. Refresh and try again." });
+    chat = accepted;
     await activatePaidSession(chat);
 
     // Add acceptance message
@@ -1056,7 +1066,7 @@ export const getChats = async (req, res) => {
 };
 
 export const getPaymentConfig = async (_req, res) => {
-  res.json(getPaidSessionConfig());
+  res.json({ ...getPaidSessionConfig(), enabled: false, paymentMode: "free", fees: { chat: 0, voice: 0, video: 0 }, simulation: "designated_accounts_only" });
 };
 
 export const completeChatSession = async (req, res) => {

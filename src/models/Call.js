@@ -173,9 +173,11 @@ const callSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    demoStatus: { type: String, enum: ["simulation_only", "not_applicable"], default: "not_applicable" },
+    paymentMode: { type: String, enum: ["demo", "free"], default: "free" },
     paymentStatus: {
       type: String,
-      enum: ["unpaid", "paid", "failed"],
+      enum: ["unpaid", "paid", "failed", "demo_completed", "not_required"],
       default: "unpaid",
     },
   },

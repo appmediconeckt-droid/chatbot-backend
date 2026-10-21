@@ -218,10 +218,11 @@ async function seedPlayReviewAccounts() {
       {
         $setOnInsert: {
           ...commonProfile,
+          demoPaymentsEnabled: true,
           ...account,
           phoneNumber,
           password,
-          ...(account.role === "user" ? { walletBalance: 2000 } : {}),
+          ...(account.role === "user" ? { demoWalletBalance: 2000 } : {}),
         },
       },
       { upsert: true, returnDocument: "after", runValidators: true },

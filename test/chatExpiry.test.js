@@ -48,7 +48,10 @@ describe("Chat request 30-second expiry", function () {
   let user;
   let counselor;
 
+  let previousExpiry;
   before(async () => {
+    previousExpiry = process.env.COUNSELOR_REQUEST_EXPIRY_HOURS;
+    process.env.COUNSELOR_REQUEST_EXPIRY_HOURS = String(30 / 3600);
     await connectDB();
   });
 
@@ -67,6 +70,8 @@ describe("Chat request 30-second expiry", function () {
       phoneNumber: `9${uniq.slice(-9).replace(/\D/g, "0").padStart(9, "0")}`,
       password: "testpass123",
       role: "user",
+      demoWalletBalance: 1000,
+      demoPaymentsEnabled: true,
       isActive: true,
       locationData: { current: { type: "Point", coordinates: coords } },
     });
@@ -80,6 +85,10 @@ describe("Chat request 30-second expiry", function () {
       googleId: `gid-${uniq}`,
       authProvider: "google",
       role: "counsellor",
+      profileCompleted: true,
+      qualification: "M.Sc. Psychology",
+      specialization: ["Mental Wellness"],
+      experience: 5,
       isActive: true,
       locationData: { current: { type: "Point", coordinates: coords } },
     });
@@ -99,6 +108,8 @@ describe("Chat request 30-second expiry", function () {
   });
 
   after(async () => {
+    if (previousExpiry === undefined) delete process.env.COUNSELOR_REQUEST_EXPIRY_HOURS;
+    else process.env.COUNSELOR_REQUEST_EXPIRY_HOURS = previousExpiry;
     // Belt-and-braces sweep in case a test crashed before afterEach
     const taggedUsers = await User.find({
       fullName: { $regex: TEST_TAG },

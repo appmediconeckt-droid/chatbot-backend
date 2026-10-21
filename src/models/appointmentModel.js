@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 
 const appointmentSchema = new mongoose.Schema(
   {
+    paymentMode: { type: String, enum: ["demo", "free"], default: "free" },
+    paymentStatus: { type: String, enum: ["demo_completed", "not_required"], default: "not_required" },
+    paymentTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

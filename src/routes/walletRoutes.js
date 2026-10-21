@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+  simulatePayment,
   createOrder,
   verifyPayment,
   getWalletData,
@@ -14,6 +15,7 @@ const router = express.Router();
 
 // Wallet functionality is typically for users only
 router.get('/data', authenticateToken, authorizeRoles("user"), getWalletData);
+router.post('/demo-payment', authenticateToken, authorizeRoles("user"), simulatePayment);
 router.post('/create-order', authenticateToken, authorizeRoles("user"), createOrder);
 router.post('/verify-payment', authenticateToken, authorizeRoles("user"), verifyPayment);
 router.post('/reconcile-payment', authenticateToken, authorizeRoles("user"), reconcileWalletPayment);

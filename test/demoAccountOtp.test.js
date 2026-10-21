@@ -7,7 +7,7 @@ describe("Database demo account OTP", () => {
   afterEach(() => sinon.restore());
 
   it("uses the DB configuration for exactly the four demo accounts", async () => {
-    const lookup = sinon.stub(DemoOtpConfig, "findOne").returns({ lean: async () => ({ otp: "123456" }) });
+    const lookup = sinon.stub(DemoOtpConfig, "findOne").returns({ lean: async () => ({ otp: "123456", expiresAt: new Date(Date.now() + 3600000) }) });
     for (const email of DEMO_ACCOUNT_EMAILS) {
       expect(await otpService.generateOTPForAccount(` ${email.toUpperCase()} `)).to.equal("123456");
       expect(lookup.lastCall.args[0]).to.deep.equal({ email, enabled: true });
@@ -31,8 +31,16 @@ describe("Database demo account OTP", () => {
     expect(await otpService.generateOTPForAccount(DEMO_ACCOUNT_EMAILS[0])).to.equal("987654");
   });
 
+  it("rejects unbounded and expired fixed OTP configurations", async () => {
+    const lookup = sinon.stub(DemoOtpConfig, "findOne");
+    lookup.onFirstCall().returns({ lean: async () => ({ otp: "123456" }) });
+    lookup.onSecondCall().returns({ lean: async () => ({ otp: "123456", expiresAt: new Date(0) }) });
+    expect(await otpService.getDemoOTP(DEMO_ACCOUNT_EMAILS[0])).to.equal(null);
+    expect(await otpService.getDemoOTP(DEMO_ACCOUNT_EMAILS[0])).to.equal(null);
+  });
+
   it("allows demo login, verification and password reset without a working demo inbox", async () => {
-    sinon.stub(DemoOtpConfig, "findOne").returns({ lean: async () => ({ otp: "123456" }) });
+    sinon.stub(DemoOtpConfig, "findOne").returns({ lean: async () => ({ otp: "123456", expiresAt: new Date(Date.now() + 3600000) }) });
     for (const send of ["sendLoginOTP", "sendEmailOTP", "sendPasswordResetOTP", "sendForgotPasswordOTP"]) {
       expect(await otpService[send](DEMO_ACCOUNT_EMAILS[0], "123456")).to.deep.equal({ success: true, provider: "demo-account" });
     }

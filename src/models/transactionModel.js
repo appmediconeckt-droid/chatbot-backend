@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
 
 const transactionSchema = new mongoose.Schema({
+    paymentMode: { type: String, enum: ['demo'], default: 'demo' },
+    demoRequestId: { type: String },
+    redeemable: { type: Boolean, default: false, immutable: true },
+    appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment' },
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -26,7 +30,7 @@ const transactionSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'completed', 'failed', 'hold', 'refunded'],
+        enum: ['pending', 'completed', 'failed', 'hold', 'refunded', 'demo_pending', 'demo_completed', 'demo_refunded'],
         default: 'pending'
     },
     description: {
@@ -59,6 +63,8 @@ const transactionSchema = new mongoose.Schema({
         default: {}
     }
 }, { timestamps: true });
+
+transactionSchema.index({ userId: 1, demoRequestId: 1 }, { unique: true, partialFilterExpression: { demoRequestId: { $type: 'string' } } });
 
 const Transaction = mongoose.model('Transaction', transactionSchema);
 export default Transaction;

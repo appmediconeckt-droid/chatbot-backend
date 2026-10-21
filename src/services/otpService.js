@@ -611,7 +611,7 @@ class OTPService {
     const normalizedEmail = String(email || "").trim().toLowerCase();
     if (!DEMO_ACCOUNT_EMAILS.includes(normalizedEmail)) return null;
     const config = await DemoOtpConfig.findOne({ email: normalizedEmail, enabled: true }).lean();
-    return config?.otp === "123456" ? config.otp : null;
+    return config?.otp === "123456" && new Date(config.expiresAt || 0).getTime() > Date.now() ? config.otp : null;
   }
 
   async generateOTPForAccount(email = "") {

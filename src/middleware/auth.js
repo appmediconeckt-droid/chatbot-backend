@@ -9,7 +9,7 @@ export const authenticateToken = async (req, res, next) => {
     const token = authHeader && authHeader.split(" ")[1];
 
     if (!token) {
-      return res.status(401).json({ error: "Access token required" });
+      return res.status(401).json({ code: "NO_TOKEN", error: "Access token required" });
     }
 
     const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
@@ -19,8 +19,8 @@ export const authenticateToken = async (req, res, next) => {
     const sessionId = decoded.sessionId;
     const role = decoded.role;
 
-    if (!userId || !sessionId || !role) {
-      return res.status(401).json({ error: "Invalid token payload" });
+    if (!userId || !sessionId || !role || !mongoose.isValidObjectId(userId) || !mongoose.isValidObjectId(sessionId)) {
+      return res.status(401).json({ code: "INVALID_TOKEN", error: "Invalid token payload" });
     }
 
     // ✅ Validate session only (important for one-device policy)
@@ -32,25 +32,34 @@ export const authenticateToken = async (req, res, next) => {
 
     if (!activeSession) {
       return res.status(401).json({
+        code: "SESSION_EXPIRED",
         error: "Session expired or logged out from another device",
       });
     }
 
-    // ✅ Attach clean user info (NO extra DB call)
+    const account = await User.findById(userId);
+    if (!account || !account.isActive) {
+      return res.status(401).json({ code: "ACCOUNT_DEACTIVATED", error: "Account is unavailable" });
+    }
+    if (account.role !== role) {
+      return res.status(401).json({ code: "SESSION_INVALID", error: "Account role changed. Please sign in again." });
+    }
+    // Privileges come from the active account, never request JSON or JWT flags.
     req.user = {
       _id: userId,
       userId,
       role,
       sessionId,
+      demoPaymentsEnabled: account.demoPaymentsEnabled === true,
     };
 
     next();
   } catch (error) {
     if (error.name === "JsonWebTokenError") {
-      return res.status(401).json({ error: "Invalid token" });
+      return res.status(401).json({ code: "INVALID_TOKEN", error: "Invalid token" });
     }
     if (error.name === "TokenExpiredError") {
-      return res.status(401).json({ error: "Token expired" });
+      return res.status(401).json({ code: "TOKEN_EXPIRED", error: "Token expired" });
     }
 
     console.error("Auth error:", error);

@@ -31,6 +31,7 @@ describe("paid counselor session billing gates", function () {
     const session = {
       _id: new mongoose.Types.ObjectId(),
       sessionStatus: "pending",
+      paymentMode: "demo",
       paymentStatus: "free",
       amount: 0,
       save: sandbox.stub().resolves(),
@@ -57,10 +58,11 @@ describe("paid counselor session billing gates", function () {
       _id: new mongoose.Types.ObjectId(),
       userId: new mongoose.Types.ObjectId(),
       sessionType: "chat",
+      paymentMode: "demo",
       sessionStatus: "active",
       metadata: {},
     };
-    const selectStub = sandbox.stub().resolves({ walletBalance: 250 });
+    const selectStub = sandbox.stub().resolves({ demoWalletBalance: 250 });
 
     sandbox.stub(ChatSession, "findById").resolves(session);
     sandbox.stub(User, "findById").returns({ select: selectStub });

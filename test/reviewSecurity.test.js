@@ -208,4 +208,31 @@ describe("App review account security", () => {
       .send({ userId: "other", status: "offline" })
       .expect(401);
   });
+  it('denies deactivated accounts even when their session is active', async () => {
+    const uid = new mongoose.Types.ObjectId(), sid = new mongoose.Types.ObjectId();
+    sinon.stub(Session, 'findOne').resolves({ isActive: true });
+    sinon.stub(User, 'findById').resolves({ _id: uid, isActive: false, role: 'user' });
+    const app = express(); app.get('/protected', authenticateToken, (_req, res) => res.json({ ok: true }));
+    const token = jwt.sign({ userId: uid, sessionId: sid, role: 'user' }, process.env.ACCESS_SECRET);
+    await request(app).get('/protected').set('Authorization', `Bearer ${token}`).expect(401);
+  });
+  it('ignores client-supplied simulation privileges and rejects stale token roles', async () => {
+    const uid = new mongoose.Types.ObjectId(), sid = new mongoose.Types.ObjectId();
+    sinon.stub(Session, 'findOne').resolves({ isActive: true });
+    sinon.stub(User, 'findById').resolves({ _id: uid, isActive: true, role: 'user', demoPaymentsEnabled: false });
+    const app = express(); app.use(express.json()); app.post('/protected', authenticateToken, (req, res) => res.json({ demo: req.user.demoPaymentsEnabled }));
+    const token = jwt.sign({ userId: uid, sessionId: sid, role: 'user', demoPaymentsEnabled: true }, process.env.ACCESS_SECRET);
+    const response = await request(app).post('/protected').set('Authorization', `Bearer ${token}`).send({ demoPaymentsEnabled: true }).expect(200);
+    expect(response.body.demo).to.equal(false);
+    const stale = jwt.sign({ userId: uid, sessionId: sid, role: 'admin' }, process.env.ACCESS_SECRET);
+    await request(app).post('/protected').set('Authorization', `Bearer ${stale}`).expect(401);
+  });
+  it('returns an explicit expiry code before database access for expired tokens', async () => {
+    const find = sinon.stub(Session, 'findOne');
+    const token = jwt.sign({ userId: new mongoose.Types.ObjectId(), sessionId: new mongoose.Types.ObjectId(), role: 'user' }, process.env.ACCESS_SECRET, { expiresIn: -1 });
+    const app = express(); app.get('/protected', authenticateToken, (_req, res) => res.json({ ok: true }));
+    const response = await request(app).get('/protected').set('Authorization', `Bearer ${token}`).expect(401);
+    expect(response.body.code).to.equal('TOKEN_EXPIRED'); expect(find.called).to.equal(false);
+  });
+
 });

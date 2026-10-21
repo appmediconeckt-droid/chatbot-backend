@@ -11,6 +11,7 @@ export const DEMO_ACCOUNT_EMAILS = Object.freeze([
 const schema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, enum: DEMO_ACCOUNT_EMAILS },
   enabled: { type: Boolean, default: false },
+  expiresAt: { type: Date, default: null },
   otp: { type: String, required: true, enum: ["123456"] },
 }, { timestamps: true });
 

@@ -11,7 +11,7 @@ const pendingChatStops = new Map();
 
 export const isPaidSessionsEnabled = () => {
   const configured = String(
-    process.env.PAID_COUNSELOR_SESSIONS_ENABLED || "",
+    process.env.PAID_COUNSELOR_SESSIONS_ENABLED || ""
   ).toLowerCase();
   if (falsy.has(configured)) return false;
   return configured === "" || truthy.has(configured);
@@ -19,6 +19,8 @@ export const isPaidSessionsEnabled = () => {
 
 export const getPaidSessionConfig = () => ({
   enabled: isPaidSessionsEnabled(),
+  paymentMode: "demo",
+  redeemable: false,
   billing: {
     chat: "per_minute",
     voice: "per_minute",
@@ -49,10 +51,10 @@ export const calculateCallCharge = ({
   if (packageMinutes <= 0 || packageRate < 0) return 0;
   const billedSeconds = Math.min(
     Math.max(0, Math.floor(Number(durationSeconds) || 0)),
-    packageMinutes * 60,
+    packageMinutes * 60
   );
   return Number(
-    ((billedSeconds / (packageMinutes * 60)) * packageRate).toFixed(2),
+    ((billedSeconds / (packageMinutes * 60)) * packageRate).toFixed(2)
   );
 };
 
@@ -81,22 +83,25 @@ export const createPaidSessionHold = async ({
   // balance eligibility check and as the rate for the configured duration;
   // it must not be removed from the wallet before any usage occurs.
   if (["chat", "voice", "video"].includes(sessionType)) {
-    const user = await User.findById(userId).select("walletBalance");
+    const user = await User.findById(userId).select("demoWalletBalance demoPaymentsEnabled");
     if (!user) {
       const error = new Error("User not found");
       error.statusCode = 404;
       throw error;
     }
 
-    if (sessionType !== "chat" && (user.walletBalance || 0) < amount) {
+    if (user.demoPaymentsEnabled !== true) return null;
+
+    if (sessionType !== "chat" && (user.demoWalletBalance || 0) < amount) {
       const error = new Error("Insufficient wallet balance");
       error.statusCode = 402;
       error.requiredAmount = amount;
-      error.walletBalance = user.walletBalance || 0;
+      error.walletBalance = user.demoWalletBalance || 0;
       throw error;
     }
 
     const session = await ChatSession.create({
+      paymentMode: "demo",
       userId,
       counselorId,
       chatId: chat._id,
@@ -115,13 +120,15 @@ export const createPaidSessionHold = async ({
       expiresAt: chat.expiresAt || getRequestExpiryDate(),
     });
 
+    chat.paymentMode = "demo";
+    chat.demoStatus = "simulation_only";
     chat.amount = 0;
     chat.sessionType = sessionType;
     chat.paymentStatus = "free";
     chat.paidSessionId = session._id;
     await chat.save();
 
-    return { session, amount: 0, walletBalance: user?.walletBalance || 0 };
+    return { session, amount: 0, walletBalance: user?.demoWalletBalance || 0 };
   }
 };
 
@@ -131,7 +138,11 @@ export const activatePaidSession = async (chat) => {
   }
 
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionStatus !== "pending") {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionStatus !== "pending"
+  ) {
     return session;
   }
 
@@ -148,21 +159,28 @@ export const activatePaidSession = async (chat) => {
 
 export const startTimedChatUsage = async (
   chat,
-  { fromBillableActivity = false } = {},
+  { fromBillableActivity = false } = {}
 ) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) return null;
 
   let session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionType !== "chat" || session.sessionStatus !== "active") {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionType !== "chat" ||
+    session.sessionStatus !== "active"
+  ) {
     return session;
   }
   const metadata = getSessionMetadata(session);
   if (!fromBillableActivity || !metadata.hasBillableActivity) {
-    const user = await User.findById(session.userId).select("walletBalance");
+    const user = await User.findById(session.userId).select(
+      "demoWalletBalance"
+    );
     return {
       active: false,
       reason: "waiting_for_chat_activity",
-      walletBalance: user?.walletBalance || 0,
+      walletBalance: user?.demoWalletBalance || 0,
     };
   }
   const stopKey = String(session._id);
@@ -185,19 +203,24 @@ export const startTimedChatUsage = async (
     session.lastBilledAt = session.activeSegmentStartedAt;
     await session.save();
   }
-  const user = await User.findById(session.userId).select("walletBalance");
+  const user = await User.findById(session.userId).select("demoWalletBalance demoPaymentsEnabled");
   return {
     startedAt: session.activeSegmentStartedAt,
     rate: session.ratePerMinute || getSessionAmount("chat"),
     rateDurationMinutes: session.rateDurationMinutes || 30,
-    walletBalance: user?.walletBalance || 0,
+    walletBalance: user?.demoWalletBalance || 0,
   };
 };
 
 export const touchTimedChatUsage = async (chat) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) return null;
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionType !== "chat" || !session.activeSegmentStartedAt) {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionType !== "chat" ||
+    !session.activeSegmentStartedAt
+  ) {
     return session;
   }
   session.lastBilledAt = new Date();
@@ -205,14 +228,24 @@ export const touchTimedChatUsage = async (chat) => {
   return { active: true, lastSeenAt: session.lastBilledAt };
 };
 
-export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) => {
+export const stopTimedChatUsage = async (
+  chat,
+  { endedAt = Date.now() } = {}
+) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) return null;
 
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionType !== "chat") return session;
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionType !== "chat"
+  )
+    return session;
   if (!session.activeSegmentStartedAt) {
-    const user = await User.findById(session.userId).select("walletBalance");
-    return { session, charged: 0, walletBalance: user?.walletBalance || 0 };
+    const user = await User.findById(session.userId).select(
+      "demoWalletBalance"
+    );
+    return { session, charged: 0, walletBalance: user?.demoWalletBalance || 0 };
   }
 
   const segmentStartedAt = new Date(session.activeSegmentStartedAt);
@@ -229,18 +262,20 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
   const effectiveEndAt = Math.min(requestedEndAt, lastSeenAt + 20_000);
   const elapsedSeconds = Math.max(
     1,
-    Math.floor((effectiveEndAt - segmentStartedAt.getTime()) / 1000),
+    Math.floor((effectiveEndAt - segmentStartedAt.getTime()) / 1000)
   );
   const rate = session.ratePerMinute || getSessionAmount("chat");
   const rateDurationMinutes = session.rateDurationMinutes || 30;
   const requestedAmount = Number(
-    ((elapsedSeconds / (rateDurationMinutes * 60)) * rate).toFixed(2),
+    ((elapsedSeconds / (rateDurationMinutes * 60)) * rate).toFixed(2)
   );
   const user = await User.findById(session.userId);
-  const available = Number(user?.walletBalance || 0);
+  const available = Number(user?.demoWalletBalance || 0);
 
   if (!user || available < requestedAmount) {
-    const error = new Error("Insufficient wallet balance. Chat session has been stopped.");
+    const error = new Error(
+      "Insufficient wallet balance. Chat session has been stopped."
+    );
     error.statusCode = 402;
     error.walletBalance = available;
     error.requiredAmount = requestedAmount;
@@ -248,7 +283,7 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
   }
 
   const charge = requestedAmount;
-  user.walletBalance = Number((available - charge).toFixed(2));
+  user.demoWalletBalance = Number((available - charge).toFixed(2));
   await user.save();
 
   const counselor = await User.findById(session.counselorId).select("fullName");
@@ -259,9 +294,12 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
     chatId: session.chatId,
     sessionId: session._id,
     amount: charge,
-    status: "completed",
+    paymentMode: "demo",
+    status: "demo_completed",
     type: "debit",
-    description: `Chat with ${counselor?.fullName || "Counselor"} (${durationMinutes} min)`,
+    description: `Demo: Chat with ${
+      counselor?.fullName || "Counselor"
+    } (${durationMinutes} min)`,
     metadata: {
       sessionType: "chat",
       billedSeconds: elapsedSeconds,
@@ -282,10 +320,16 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
   await chat.save();
 
   const commissionRate = getPaidSessionConfig().commissionRate;
-  const commission = Number((charge * commissionRate / 100).toFixed(2));
+  const commission = Number(((charge * commissionRate) / 100).toFixed(2));
   const earningAmount = Number((charge - commission).toFixed(2));
-  const existingEarning = await CounselorEarning.findOne({ sessionId: session._id });
-  if (!existingEarning) {
+  const demoCounselor = await User.findById(session.counselorId).select("demoPaymentsEnabled");
+  const existingEarning = await CounselorEarning.findOne({
+    sessionId: session._id,
+    paymentMode: "demo",
+  });
+  if (demoCounselor?.demoPaymentsEnabled !== true) {
+    // Real accounts have no financial entitlement from a review simulation.
+  } else if (!existingEarning) {
     await CounselorEarning.create({
       counselorId: session.counselorId,
       userId: session.userId,
@@ -296,25 +340,26 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
       totalAmount: charge,
       commission,
       earningAmount,
-      earningStatus: "completed",
-      payoutStatus: "pending",
+      paymentMode: "demo",
+      earningStatus: "demo_completed",
+      payoutStatus: "demo_unavailable",
     });
     await User.findByIdAndUpdate(session.counselorId, {
-      $inc: { walletBalance: earningAmount },
+      $inc: { demoWalletBalance: earningAmount },
     });
   } else {
     existingEarning.totalAmount = Number(
-      ((existingEarning.totalAmount || 0) + charge).toFixed(2),
+      ((existingEarning.totalAmount || 0) + charge).toFixed(2)
     );
     existingEarning.commission = Number(
-      ((existingEarning.commission || 0) + commission).toFixed(2),
+      ((existingEarning.commission || 0) + commission).toFixed(2)
     );
     existingEarning.earningAmount = Number(
-      ((existingEarning.earningAmount || 0) + earningAmount).toFixed(2),
+      ((existingEarning.earningAmount || 0) + earningAmount).toFixed(2)
     );
     await existingEarning.save();
     await User.findByIdAndUpdate(session.counselorId, {
-      $inc: { walletBalance: earningAmount },
+      $inc: { demoWalletBalance: earningAmount },
     });
   }
 
@@ -323,24 +368,28 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
       recipientId: session.userId,
       actorId: session.counselorId,
       type: "payment",
-      title: "Chat payment deducted",
-      message: `₹${charge.toFixed(2)} was deducted for ${durationMinutes} minutes of counselor chat.`,
+      title: "Demo chat balance deducted",
+      message: `Demo amount ₹${charge.toFixed(
+        2
+      )} was deducted for ${durationMinutes} minutes of counselor chat.`,
       data: {
         transactionId: transaction._id,
         sessionId: session._id,
         sessionType: "chat",
         amount: charge,
         durationMinutes,
-        balance: user.walletBalance,
+        balance: user.demoWalletBalance,
       },
       actionUrl: "/wallet",
     }),
-    createNotificationSafely({
+    demoCounselor?.demoPaymentsEnabled === true ? createNotificationSafely({
       recipientId: session.counselorId,
       actorId: session.userId,
       type: "payment",
-      title: "New chat earning",
-      message: `You earned ₹${earningAmount.toFixed(2)} after ${commissionRate}% platform commission.`,
+      title: "New demo chat earning",
+      message: `Simulated earnings: ₹${earningAmount.toFixed(
+        2
+      )} after ${commissionRate}% platform commission.`,
       data: {
         transactionId: transaction._id,
         sessionId: session._id,
@@ -350,7 +399,7 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
         earningAmount,
       },
       actionUrl: "/counselor/earnings",
-    }),
+    }) : Promise.resolve(null),
   ]);
 
   return {
@@ -359,14 +408,19 @@ export const stopTimedChatUsage = async (chat, { endedAt = Date.now() } = {}) =>
     segmentSeconds: elapsedSeconds,
     segmentMinutes: durationMinutes,
     billedMinutes: session.billedMinutes,
-    walletBalance: user.walletBalance,
+    walletBalance: user.demoWalletBalance,
   };
 };
 
 export const requestTimedChatStop = async (chat) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) return null;
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionType !== "chat" || !session.activeSegmentStartedAt) {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionType !== "chat" ||
+    !session.activeSegmentStartedAt
+  ) {
     return { scheduled: false };
   }
 
@@ -386,7 +440,7 @@ export const requestTimedChatStop = async (chat) => {
   const requestedAt = new Date();
   const inactivitySeconds = Math.max(
     15,
-    Number(process.env.CHAT_BILLING_INACTIVITY_SECONDS || 120),
+    Number(process.env.CHAT_BILLING_INACTIVITY_SECONDS || 120)
   );
   const timer = setTimeout(async () => {
     pendingChatStops.delete(stopKey);
@@ -412,7 +466,12 @@ export const requestTimedChatStop = async (chat) => {
 export const recordTimedChatActivity = async (chat) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) return null;
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionType !== "chat" || session.sessionStatus !== "active") {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionType !== "chat" ||
+    session.sessionStatus !== "active"
+  ) {
     return session;
   }
 
@@ -425,7 +484,9 @@ export const recordTimedChatActivity = async (chat) => {
     await session.save();
   }
 
-  const started = await startTimedChatUsage(chat, { fromBillableActivity: true });
+  const started = await startTimedChatUsage(chat, {
+    fromBillableActivity: true,
+  });
   if (!started?.startedAt) return started;
   await touchTimedChatUsage(chat);
   return requestTimedChatStop(chat);
@@ -435,11 +496,12 @@ export const settleInactiveChatSessions = async () => {
   if (!isPaidSessionsEnabled()) return 0;
   const inactivitySeconds = Math.max(
     15,
-    Number(process.env.CHAT_BILLING_INACTIVITY_SECONDS || 120),
+    Number(process.env.CHAT_BILLING_INACTIVITY_SECONDS || 120)
   );
   const cutoff = new Date(Date.now() - inactivitySeconds * 1000);
   const inactiveSessions = await ChatSession.find({
     sessionType: "chat",
+    paymentMode: "demo",
     sessionStatus: "active",
     activeSegmentStartedAt: { $ne: null },
     lastBilledAt: { $lte: cutoff },
@@ -455,19 +517,29 @@ export const settleInactiveChatSessions = async () => {
       await stopTimedChatUsage(chat, { endedAt: session.lastBilledAt });
       settled += 1;
     } catch (error) {
-      console.error(`Inactive chat settlement failed for ${session._id}:`, error.message);
+      console.error(
+        `Inactive chat settlement failed for ${session._id}:`,
+        error.message
+      );
     }
   }
   return settled;
 };
 
-export const refundPaidSession = async (chat, reason = "request_not_accepted") => {
+export const refundPaidSession = async (
+  chat,
+  reason = "request_not_accepted"
+) => {
   if (!isPaidSessionsEnabled() || !chat?.paidSessionId) {
     return null;
   }
 
   const session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.paymentStatus === "refunded") {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.paymentStatus === "refunded"
+  ) {
     return session;
   }
 
@@ -479,7 +551,9 @@ export const refundPaidSession = async (chat, reason = "request_not_accepted") =
   const user = await User.findById(session.userId);
   if (user) {
     if (refundAmount > 0) {
-      user.walletBalance = Number(((user.walletBalance || 0) + refundAmount).toFixed(2));
+      user.demoWalletBalance = Number(
+        ((user.demoWalletBalance || 0) + refundAmount).toFixed(2)
+      );
       await user.save();
     }
   }
@@ -501,9 +575,10 @@ export const refundPaidSession = async (chat, reason = "request_not_accepted") =
       sessionId: session._id,
       relatedTransactionId: holdTransaction?._id,
       amount: session.amount,
-      status: "completed",
+      paymentMode: "demo",
+      status: "demo_completed",
       type: "refund",
-      description: `Refund for ${session.sessionType} session`,
+      description: `Demo: Refund for ${session.sessionType} session`,
       metadata: { reason },
     });
   }
@@ -529,55 +604,75 @@ export const chargeCallByDuration = async ({
   durationSeconds,
 }) => {
   if (!isPaidSessionsEnabled()) return null;
+  const account = await User.findById(userId);
+  if (account?.demoPaymentsEnabled !== true) return { transaction: null, amount: 0, walletBalance: 0, paymentMode: "free" };
   const callType = sessionType === "voice" ? "voice" : "video";
   const rate = getSessionAmount(callType);
   const rateDurationMinutes = getPaidSessionConfig().durationMinutes;
   const billedSeconds = Math.min(
     Math.max(0, Math.floor(Number(durationSeconds) || 0)),
-    rateDurationMinutes * 60,
+    rateDurationMinutes * 60
   );
-  const amount = calculateCallCharge({ durationSeconds, rate, rateDurationMinutes });
+  const amount = calculateCallCharge({
+    durationSeconds,
+    rate,
+    rateDurationMinutes,
+  });
   const existing = await Transaction.findOne({
     "metadata.callId": callId,
     type: "debit",
-    status: "completed",
+    paymentMode: "demo",
+    status: "demo_completed",
   });
   if (existing) {
-    const user = await User.findById(userId).select("walletBalance");
-    return { transaction: existing, amount: existing.amount, walletBalance: user?.walletBalance || 0 };
+    const user = await User.findById(userId).select("demoWalletBalance demoPaymentsEnabled");
+    return {
+      transaction: existing,
+      amount: existing.amount,
+      walletBalance: user?.demoWalletBalance || 0,
+    };
   }
 
   if (amount <= 0) {
-    const user = await User.findById(userId).select("walletBalance");
-    return { transaction: null, amount: 0, walletBalance: user?.walletBalance || 0 };
+    const user = await User.findById(userId).select("demoWalletBalance demoPaymentsEnabled");
+    return {
+      transaction: null,
+      amount: 0,
+      walletBalance: user?.demoWalletBalance || 0,
+    };
   }
 
   const [user, counselor] = await Promise.all([
     User.findById(userId),
-    User.findById(counselorId).select("fullName"),
+    User.findById(counselorId).select("fullName demoPaymentsEnabled"),
   ]);
   if (!user) {
     const error = new Error("User not found");
     error.statusCode = 404;
     throw error;
   }
-  if ((user.walletBalance || 0) < amount) {
+  if ((user.demoWalletBalance || 0) < amount) {
     const error = new Error("Insufficient wallet balance");
     error.statusCode = 402;
     error.requiredAmount = amount;
-    error.walletBalance = user.walletBalance || 0;
+    error.walletBalance = user.demoWalletBalance || 0;
     throw error;
   }
 
-  user.walletBalance = Number(((user.walletBalance || 0) - amount).toFixed(2));
+  user.demoWalletBalance = Number(
+    ((user.demoWalletBalance || 0) - amount).toFixed(2)
+  );
   await user.save();
   const transaction = await Transaction.create({
     userId,
     counselorId,
     amount,
-    status: "completed",
+    paymentMode: "demo",
+    status: "demo_completed",
     type: "debit",
-    description: `${callType === "voice" ? "Voice" : "Video"} call with ${counselor?.fullName || "Counselor"} (${Number((billedSeconds / 60).toFixed(2))} min)`,
+    description: `Demo: ${callType === "voice" ? "Voice" : "Video"} call with ${
+      counselor?.fullName || "Counselor"
+    } (${Number((billedSeconds / 60).toFixed(2))} min)`,
     metadata: {
       callId,
       sessionType: callType,
@@ -589,9 +684,10 @@ export const chargeCallByDuration = async ({
     },
   });
   const earning = Number(
-    (amount * (1 - getPaidSessionConfig().commissionRate / 100)).toFixed(2),
+    (amount * (1 - getPaidSessionConfig().commissionRate / 100)).toFixed(2)
   );
   const commission = Number((amount - earning).toFixed(2));
+  if (counselor?.demoPaymentsEnabled === true) {
   await CounselorEarning.findOneAndUpdate(
     { transactionId: transaction._id },
     {
@@ -607,31 +703,45 @@ export const chargeCallByDuration = async ({
         totalAmount: amount,
         commission,
         earningAmount: earning,
-        earningStatus: "completed",
-        payoutStatus: "pending",
+        paymentMode: "demo",
+        earningStatus: "demo_completed",
+        payoutStatus: "demo_unavailable",
       },
     },
-    { upsert: true, new: true },
+    { upsert: true, new: true }
   );
   await User.findByIdAndUpdate(counselorId, {
-    $inc: { walletBalance: earning, totalSessions: 1 },
+    $inc: { demoWalletBalance: earning, totalSessions: 1 },
   });
+  }
   await Promise.all([
     createNotificationSafely({
       recipientId: userId,
       actorId: counselorId,
       type: "payment",
-      title: `${callType === "voice" ? "Voice" : "Video"} call payment deducted`,
-      message: `₹${amount.toFixed(2)} was deducted from your wallet.`,
-      data: { transactionId: transaction._id, callId, sessionType: callType, amount, billedSeconds },
+      title: `Demo: ${
+        callType === "voice" ? "Voice" : "Video"
+      } call payment deducted`,
+      message: `Demo amount ₹${amount.toFixed(
+        2
+      )} was deducted from your wallet.`,
+      data: {
+        transactionId: transaction._id,
+        callId,
+        sessionType: callType,
+        amount,
+        billedSeconds,
+      },
       actionUrl: "/wallet",
     }),
-    createNotificationSafely({
+    counselor?.demoPaymentsEnabled === true ? createNotificationSafely({
       recipientId: counselorId,
       actorId: userId,
       type: "payment",
-      title: `New ${callType} call earning`,
-      message: `You earned ₹${earning.toFixed(2)} after ${getPaidSessionConfig().commissionRate}% platform commission.`,
+      title: `Demo: New ${callType} call earning`,
+      message: `Simulated earnings: ₹${earning.toFixed(2)} after ${
+        getPaidSessionConfig().commissionRate
+      }% platform commission.`,
       data: {
         transactionId: transaction._id,
         callId,
@@ -641,9 +751,9 @@ export const chargeCallByDuration = async ({
         earningAmount: earning,
       },
       actionUrl: "/counselor/earnings",
-    }),
+    }) : Promise.resolve(null),
   ]);
-  return { transaction, amount, walletBalance: user.walletBalance };
+  return { transaction, amount, walletBalance: user.demoWalletBalance };
 };
 
 export const completePaidSession = async (chat) => {
@@ -652,7 +762,11 @@ export const completePaidSession = async (chat) => {
   }
 
   let session = await ChatSession.findById(chat.paidSessionId);
-  if (!session || session.sessionStatus === "completed") {
+  if (
+    !session ||
+    session.paymentMode !== "demo" ||
+    session.sessionStatus === "completed"
+  ) {
     return session;
   }
 
@@ -689,12 +803,15 @@ export const completePaidSession = async (chat) => {
   }
 
   const commissionAmount = Number(
-    ((session.amount * session.commissionRate) / 100).toFixed(2),
+    ((session.amount * session.commissionRate) / 100).toFixed(2)
   );
-  const counselorEarning = Number((session.amount - commissionAmount).toFixed(2));
+  const counselorEarning = Number(
+    (session.amount - commissionAmount).toFixed(2)
+  );
 
   let earning = await CounselorEarning.findOne({ sessionId: session._id });
-  if (!earning) {
+  const earningOwner = await User.findById(session.counselorId).select("demoPaymentsEnabled");
+  if (!earning && earningOwner?.demoPaymentsEnabled === true) {
     earning = await CounselorEarning.create({
       counselorId: session.counselorId,
       userId: session.userId,
@@ -704,12 +821,13 @@ export const completePaidSession = async (chat) => {
       totalAmount: session.amount,
       commission: commissionAmount,
       earningAmount: counselorEarning,
-      earningStatus: "completed",
-      payoutStatus: "pending",
+      paymentMode: "demo",
+      earningStatus: "demo_completed",
+      payoutStatus: "demo_unavailable",
     });
 
     await User.findByIdAndUpdate(session.counselorId, {
-      $inc: { walletBalance: counselorEarning, totalSessions: 1 },
+      $inc: { demoWalletBalance: counselorEarning, totalSessions: 1 },
     });
   }
 
@@ -717,7 +835,7 @@ export const completePaidSession = async (chat) => {
   session.paymentStatus = "released";
   session.commissionAmount = commissionAmount;
   session.counselorEarning = counselorEarning;
-  session.earningId = earning._id;
+  session.earningId = earning?._id || null;
   session.endedAt = new Date();
   await session.save();
 

@@ -1567,10 +1567,12 @@ export const videoCallController = {
           duration: duration,
           isActive: false,
           endedBy: endedBy.id,
+          paymentMode: billing?.transaction ? "demo" : "free",
+          demoStatus: billing?.transaction ? "simulation_only" : "not_applicable",
           paymentTransactionId: billing?.transaction?._id || null,
           paymentAmount: billing?.amount || 0,
-          paymentStatus: billing?.transaction
-            ? "paid"
+          paymentStatus: billing?.paymentMode === "free" ? "not_required" : billing?.transaction
+            ? "demo_completed"
             : billingError
               ? "failed"
               : "unpaid",
