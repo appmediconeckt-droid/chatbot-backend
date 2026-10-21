@@ -663,7 +663,7 @@ export const acceptChat = async (req, res) => {
 
     // Get populated chat details
     const populatedChat = await Chat.findById(chat._id)
-      .populate("userId", "fullName email profilePhoto isActive")
+      .populate("userId", "fullName email profilePhoto anonymous isActive isOnline lastSeen")
       .populate(
         "counselorId",
         "fullName specialization profilePhoto rating isActive",
@@ -734,14 +734,7 @@ export const acceptChat = async (req, res) => {
         acceptedAt: populatedChat.acceptedAt,
         paymentStatus: populatedChat.paymentStatus,
         amount: populatedChat.amount,
-        user: {
-          id: populatedChat.userId._id,
-          name: populatedChat.userId.anonymous || ANONYMOUS_USER_NAME,
-          anonymous: populatedChat.userId.anonymous,
-          email: "",
-          avatar: null,
-          isOnline: populatedChat.userId.isActive,
-        },
+        user: sanitizeUserForCounselor(populatedChat.userId),
         counselor: {
           id: populatedChat.counselorId._id,
           name: populatedChat.counselorId.fullName,
@@ -918,13 +911,7 @@ export const getPendingRequests = async (req, res) => {
       return {
         id: chat._id,
         chatId: chat.chatId,
-        user: {
-          id: user._id || null,
-          name: user.anonymous || ANONYMOUS_USER_NAME,
-          anonymous: user.anonymous || "",
-          email: "",
-          Image: null,
-        },
+        user: sanitizeUserForCounselor(user),
         requestMessage: messageMap[chat._id.toString()] || "No message",
         requestedAt: chat.startedAt,
         expiresAt: chat.expiresAt,

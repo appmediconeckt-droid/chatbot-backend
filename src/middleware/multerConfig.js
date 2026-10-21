@@ -158,6 +158,7 @@ const upload = multer({
   storage: isCloudinaryConfigured() ? dynamicStorage : localStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
+    fieldSize: 6 * 1024 * 1024, // Generated avatars are submitted once as a data URI.
   },
   fileFilter: fileFilter,
 });

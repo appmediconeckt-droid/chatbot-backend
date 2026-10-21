@@ -4164,7 +4164,7 @@ export const registerCounsellor = async (req, res) => {
 export const getAlluser = async (req, res) => {
   try {
     const relatedIds = await Chat.distinct("userId", { counselorId: req.user._id });
-    const records = await User.find({ _id: { $in: relatedIds }, role: "user" }).select("anonymous age gender isActive isOnline lastSeen");
+    const records = await User.find({ _id: { $in: relatedIds }, role: "user" }).select("anonymous profilePhoto age gender isActive isOnline lastSeen");
     const users = records.map(sanitizeUserForCounselor);
     return res.status(200).json({
       message: "Got all users",
