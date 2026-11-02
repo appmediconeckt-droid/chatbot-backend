@@ -1,0 +1,49 @@
+{
+  "at": "2026-10-21T11:35:45.635Z",
+  "accounts": [
+    {
+      "email": "demo.user1@humaeli.com",
+      "existingLegacyFixedOtp": 400,
+      "legacyIssue": 200,
+      "issuedFixedOtpValidation": 400,
+      "issuedWrongOtpValidation": 400,
+      "passwordLogin": 200,
+      "returnedRole": "user",
+      "sessionProfile": 200,
+      "ownSessionLogout": 200
+    },
+    {
+      "email": "appstore.user@humaeli.com",
+      "existingLegacyFixedOtp": 400,
+      "legacyIssue": 200,
+      "issuedFixedOtpValidation": 400,
+      "issuedWrongOtpValidation": 400,
+      "passwordLogin": 200,
+      "returnedRole": "user",
+      "sessionProfile": 200,
+      "ownSessionLogout": 200
+    },
+    {
+      "email": "demo.counsellor1@humaeli.com",
+      "existingLegacyFixedOtp": 400,
+      "legacyIssue": 200,
+      "issuedFixedOtpValidation": 400,
+      "issuedWrongOtpValidation": 400,
+      "passwordLogin": 200,
+      "returnedRole": "counsellor",
+      "sessionProfile": 200,
+      "ownSessionLogout": 200
+    },
+    {
+      "email": "appstore.counsellor@humaeli.com",
+      "existingLegacyFixedOtp": 400,
+      "legacyIssue": 200,
+      "issuedFixedOtpValidation": 400,
+      "issuedWrongOtpValidation": 400,
+      "passwordLogin": 200,
+      "returnedRole": "counsellor",
+      "sessionProfile": 200,
+      "ownSessionLogout": 200
+    }
+  ]
+}

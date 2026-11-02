@@ -1,0 +1,11 @@
+      $set: { otp: "123456", enabled: true },
+    }, { upsert: true, runValidators: true });
+    const config = await DemoOtpConfig.findOne({ email: account.email }).lean();
+    if (!config.enabled || config.otp !== "123456") {
+      throw new Error(`Verification failed for ${account.email}`);
+    }
+    const passwordMatches = Boolean(account.password && await bcrypt.compare(password, account.password));
+    console.log(`Verified ${account.role}: ${account.email} — fixed OTP configured; supplied password matches: ${passwordMatches}`);
+  }
+} catch (error) {
+  console.error(error.message);

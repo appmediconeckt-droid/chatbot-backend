@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { getAnonymousUserName } from "../utils/anonymousUser.js";
+import { getAnonymousUserName, getUserAvatarForCounselor } from "../utils/anonymousUser.js";
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/userModel.js";
 import Call from "../models/Call.js";
@@ -267,7 +267,7 @@ export const videoCallController = {
         anonymous: user.anonymous || false,
         email: "",
         type: user.role,
-        profilePhoto: user.role === "user" ? null : user.profilePhoto?.url || null,
+        profilePhoto: user.role === "user" ? getUserAvatarForCounselor(user) : user.profilePhoto?.url || null,
         specialization: user.specialization || [],
         rating: user.rating || 0,
         experience: user.experience || 0,
@@ -2092,7 +2092,8 @@ getCallHistory: async (req, res) => {
     };
 
     const getAvatar = (user, fallbackAvatar = null) => {
-      if (!user || user.role === "user") return null;
+      if (!user) return null;
+      if (user.role === "user") return getUserAvatarForCounselor(user);
 
       return (
         user.profilePhoto?.url ||

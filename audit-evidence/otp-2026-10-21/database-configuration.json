@@ -1,0 +1,46 @@
+{
+  "checkedAt": "2026-10-21T11:16:23.770Z",
+  "source": "local configured database; Railway database identity not independently established",
+  "accounts": [
+    {
+      "email": "demo.user1@humaeli.com",
+      "exists": true,
+      "role": "user",
+      "active": true,
+      "activeSessions": 0,
+      "legacyFixedCodeEnabled": true,
+      "legacyConfigExpiresAt": null,
+      "legacyConfigPassesExpiry": false
+    },
+    {
+      "email": "appstore.user@humaeli.com",
+      "exists": true,
+      "role": "user",
+      "active": true,
+      "activeSessions": 1,
+      "legacyFixedCodeEnabled": true,
+      "legacyConfigExpiresAt": null,
+      "legacyConfigPassesExpiry": false
+    },
+    {
+      "email": "demo.counsellor1@humaeli.com",
+      "exists": true,
+      "role": "counsellor",
+      "active": true,
+      "activeSessions": 0,
+      "legacyFixedCodeEnabled": true,
+      "legacyConfigExpiresAt": null,
+      "legacyConfigPassesExpiry": false
+    },
+    {
+      "email": "appstore.counsellor@humaeli.com",
+      "exists": true,
+      "role": "counsellor",
+      "active": true,
+      "activeSessions": 0,
+      "legacyFixedCodeEnabled": true,
+      "legacyConfigExpiresAt": null,
+      "legacyConfigPassesExpiry": false
+    }
+  ]
+}

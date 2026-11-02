@@ -1,0 +1,23 @@
+  async getDemoOTP(email) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!DEMO_ACCOUNT_EMAILS.includes(normalizedEmail)) return null;
+    const config = await DemoOtpConfig.findOne({ email: normalizedEmail, enabled: true }).lean();
+    return config?.otp === "123456" && new Date(config.expiresAt || 0).getTime() > Date.now() ? config.otp : null;
+  }
+
+  async generateOTPForAccount(email = "") {
+    return (await this.getDemoOTP(email)) || this.generateOTP(email);
+  }
+
+  isPlayReviewEmail(email) {
+    return Boolean(reviewOTP()) && getReviewEmailSet().has(String(email || "").trim().toLowerCase());
+  }
+
+  generateOTP(email = "") {
+    if (this.isPlayReviewEmail(email)) {
+      return reviewOTP();
+    }
+
+    return crypto.randomInt(100000, 999999).toString();
+  }
+

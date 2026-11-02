@@ -4,12 +4,42 @@ import express from "express";
 import request from "supertest";
 import User from "../src/models/userModel.js";
 import Chat from "../src/models/Chat.js";
+import Appointment from "../src/models/appointmentModel.js";
 import { handleUserUpload } from "../src/middleware/multerConfig.js";
-import { getAlluser, updateUserById } from "../src/controllers/authController.js";
+import { getAlluser, getUser, updateUserById } from "../src/controllers/authController.js";
 import { sanitizeUserForCounselor } from "../src/utils/anonymousUser.js";
 
 describe("Generated profile avatar synchronization", () => {
   afterEach(() => sinon.restore());
+
+  for (const relationship of ["chat", "appointment", "unrelated"]) {
+    it(`checks ${relationship} access when a counselor requests the latest user profile`, async () => {
+      const url = "https://api.dicebear.com/7.x/lorelei/png?seed=latest";
+      const user = {
+        _id: "507f1f77bcf86cd799439011", role: "user", anonymous: "Quiet River",
+        fullName: "Private Name", email: "private@example.com", profilePhoto: { url },
+      };
+      sinon.stub(User, "findById").resolves(user);
+      sinon.stub(Chat, "exists").resolves(relationship === "chat" ? { _id: "chat" } : null);
+      sinon.stub(Appointment, "exists").resolves(relationship === "appointment" ? { _id: "appointment" } : null);
+      const res = { status: sinon.stub().returnsThis(), json: sinon.spy() };
+      await getUser({
+        params: { userId: user._id },
+        user: { _id: "507f1f77bcf86cd799439012", role: "counsellor" },
+      }, res);
+      if (relationship === "unrelated") {
+        expect(res.status.calledWith(403)).to.equal(true);
+        expect(res.json.firstCall.args[0]).not.to.have.property("user");
+      } else {
+        expect(res.status.calledWith(200)).to.equal(true);
+        const profile = res.json.firstCall.args[0].user;
+        expect(profile.avatarUrl).to.equal(url);
+        expect(profile.name).to.equal(user.anonymous);
+        expect(profile.fullName).to.equal("");
+        expect(profile.email).to.equal("");
+      }
+    });
+  }
 
   it("includes the saved avatar when loading the consultant's related patients", async () => {
     const url = "https://api.dicebear.com/7.x/lorelei/png?seed=selected";

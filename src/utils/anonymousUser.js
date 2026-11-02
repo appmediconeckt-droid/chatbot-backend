@@ -11,12 +11,17 @@ export const getAnonymousUserName = (
   return anonymous || fallback;
 };
 
-// Patient avatars are stored in profilePhoto by the profile update endpoint.
-// Legacy real photos must remain private when returning counselor-facing data.
+// Return the same saved picture used by User Profile. Keep the public
+// identity anonymous; do not derive an image from the patient's real name.
 export const getUserAvatarForCounselor = (user) => {
   const photo = user?.profilePhoto;
-  const url = asTrimmedString(typeof photo === "string" ? photo : photo?.url);
-  return /^https:\/\/api\.dicebear\.com\//i.test(url) || /^data:image\//i.test(url)
+  const url = asTrimmedString(
+    typeof photo === "string" ? photo : photo?.url || photo?.secure_url || photo?.uri,
+  );
+  // Device-local paths cannot be displayed on the counselor's device.
+  return /^https?:\/\//i.test(url) ||
+    /^data:image\//i.test(url) ||
+    /^\/?(?:uploads|upload|images|avatars|storage|files|api\/files|public\/uploads)\//i.test(url)
     ? url
     : null;
 };

@@ -33,9 +33,10 @@ describe("Chat participant images", () => {
     expect(person.name).to.equal("SelectedUser");
   });
 
-  it("keeps legacy patient photos private", async () => {
+  it("returns the same saved patient picture while keeping the anonymous name", async () => {
     const person = await loadChat("counsellor", { url: "https://example.com/private.jpg" }, null);
-    expect(person.avatar).to.equal(null);
+    expect(person.avatar).to.equal("https://example.com/private.jpg");
+    expect(person.name).to.equal("SelectedUser");
   });
 
   for (const photo of ["https://example.com/consultant.jpg", { url: "https://example.com/consultant.jpg" }]) {

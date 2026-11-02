@@ -37,7 +37,7 @@ describe("anonymousUser privacy helpers", function () {
     expect(safeUser.fullName).to.equal("");
     expect(safeUser.email).to.equal("");
     expect(safeUser.profilePhoto).to.equal(null);
-    expect(safeUser.avatar).to.equal(null);
+    expect(safeUser.avatar).to.equal("https://example.com/patient.jpg");
     expect(safeUser.gender).to.equal("female");
     expect(safeUser.age).to.equal(28);
   });
@@ -60,4 +60,29 @@ describe("anonymousUser privacy helpers", function () {
       expect(safeUser.email).to.equal("");
     }
   });
+  it("shares the same saved profile picture for CDN and uploaded image URLs", function () {
+    for (const photo of [
+      "https://cdn.example.com/selected-avatar.png",
+      "/uploads/selected-avatar.png",
+      { url: "https://res.cloudinary.com/example/image/upload/avatar.png" },
+      { secure_url: "https://cdn.example.com/saved-avatar.png" },
+    ]) {
+      const expected = typeof photo === "string" ? photo : photo.url || photo.secure_url;
+      const safe = sanitizeUserForCounselor({
+        _id: "patient-1", anonymous: "Quiet River", profilePhoto: photo,
+        fullName: "Private Name", email: "private@example.com",
+      });
+      expect(safe.avatarUrl).to.equal(expected);
+      expect(safe.anonymousAvatarUrl).to.equal(expected);
+      expect(safe.name).to.equal("Quiet River");
+      expect(safe.fullName).to.equal("");
+      expect(safe.email).to.equal("");
+    }
+  });
+  it("does not share device-only paths or invent a missing picture", function () {
+    for (const photo of [null, {}, "file:///private/avatar.png", "content://avatar/1"]) {
+      expect(sanitizeUserForCounselor({ profilePhoto: photo }).avatarUrl).to.equal(null);
+    }
+  });
+
 });

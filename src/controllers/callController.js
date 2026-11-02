@@ -1,5 +1,5 @@
 import Call from '../models/Call.js';
-import { getAnonymousUserName } from '../utils/anonymousUser.js';
+import { getAnonymousUserName, getUserAvatarForCounselor } from '../utils/anonymousUser.js';
 import Chat from '../models/Chat.js';
 import User from '../models/userModel.js';
 import Message from '../models/Message.js';
@@ -11,7 +11,9 @@ const callPerson = (call, side, viewerRole) => {
   const privateIdentity = viewerRole === 'counsellor' && patient;
   return {
     name: privateIdentity ? 'Anonymous User' : call[`${side}Name`],
-    avatar: privateIdentity ? null : call[`${side}Avatar`],
+    avatar: privateIdentity
+      ? getUserAvatarForCounselor({ profilePhoto: call[`${side}Avatar`] })
+      : call[`${side}Avatar`],
     location: null,
     locationData: null,
   };
@@ -87,8 +89,8 @@ export const initiateCall = async (req, res) => {
       receiverType: receiver.role,
       callerName: caller.role === 'user' ? getAnonymousUserName(caller) : caller.fullName,
       receiverName: receiver.role === 'user' ? getAnonymousUserName(receiver) : receiver.fullName,
-      callerAvatar: caller.role === 'user' ? null : caller.profilePhoto?.url || null,
-      receiverAvatar: receiver.role === 'user' ? null : receiver.profilePhoto?.url || null,
+      callerAvatar: caller.role === 'user' ? getUserAvatarForCounselor(caller) : caller.profilePhoto?.url || null,
+      receiverAvatar: receiver.role === 'user' ? getUserAvatarForCounselor(receiver) : receiver.profilePhoto?.url || null,
       callerLocation: callerLoc.locationText,
       receiverLocation: receiverLoc.locationText,
       callerLocationData: callerLoc.locationData || undefined,
