@@ -1,3 +1,4 @@
+import { authorizeChatUpload } from "../services/privateAssets.js";
 
 // export default router;
 import express from "express";
@@ -53,6 +54,7 @@ router.post(
   "/chat/:chatId/message",
   authenticateToken,
   requireUnblockedInteraction,
+  authorizeChatUpload,
   uploadChatAttachment,
   sendMessage,
 );

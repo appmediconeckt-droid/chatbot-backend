@@ -53,7 +53,7 @@ export const createNotification = async ({
 
   try {
     const recipient = await User.findById(recipientId)
-      .select("fcmToken role")
+      .select("fcmToken role devicePlatform")
       .lean();
 
     if (recipient?.fcmToken) {
@@ -69,6 +69,7 @@ export const createNotification = async ({
 
       await sendPushNotification({
         token: recipient.fcmToken,
+        platform: recipient.devicePlatform,
         title,
         body: message,
         data: pushData,

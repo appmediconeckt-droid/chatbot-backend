@@ -1,3 +1,5 @@
+import { bookingIndexesReady } from "../services/appointmentIndexes.js";
+import { createHash } from "node:crypto";
 // mindCrawller/src/controllers/appointmentController.js
 import Transaction from "../models/transactionModel.js";
 import mongoose from "mongoose";
@@ -71,6 +73,7 @@ export const book = async (req, res) => {
         .json({ message: "counselorId and date are required" });
     }
 
+    if (!mongoose.isValidObjectId(counselorId)) return res.status(400).json({ message: "Invalid counselor ID" });
     const appointmentDate = new Date(date);
     if (Number.isNaN(appointmentDate.getTime())) {
       return res.status(400).json({ message: "Invalid appointment date" });
@@ -110,34 +113,43 @@ export const book = async (req, res) => {
       return res.status(403).json({ code: "DEMO_SIMULATION_DISABLED", message: "Demo simulation is not enabled for this account" });
     }
     const simulation = req.user.demoPaymentsEnabled === true && req.body.paymentMode === "demo";
-    const transaction = simulation ? await Transaction.create({
-      userId: req.user._id,
-      counselorId,
-      appointmentId,
-      amount: demoAmount,
-      paymentMode: "demo",
-      status: "demo_completed",
-      type: "debit",
-      description:
-        "Demo appointment payment — no charge or monetary entitlement",
-      metadata: { simulationOnly: true, redeemable: false },
-    }) : null;
+    const requestKey = req.get?.("Idempotency-Key") || req.body.requestId;
+    if (requestKey && !/^[a-zA-Z0-9_-]{8,128}$/.test(requestKey)) return res.status(400).json({ message: "Invalid booking request key" });
+    const requestHash = createHash("sha256").update(JSON.stringify([String(counselorId), appointmentDate.toISOString(), notes || "", simulation, simulation ? demoAmount : 0])).digest("hex");
+    // Never claim concurrency protection if the rollout indexes are missing.
+    const indexes = await Appointment.collection.indexes();
+    if (!bookingIndexesReady(indexes)) return res.status(503).json({ code: "BOOKING_SETUP_REQUIRED", message: "Booking setup needs verification. Please contact support." });
+    if (requestKey) {
+      const existing = await Appointment.findOne({ patient: req.user._id, requestKey });
+      if (existing) return existing.requestHash === requestHash ? res.status(200).json(existing) : res.status(409).json({ code: "IDEMPOTENCY_CONFLICT", message: "This request key was used for another booking" });
+    }
     let appointment;
+    const session = await mongoose.startSession();
     try {
-      appointment = await Appointment.create({
-        _id: appointmentId,
-        paymentMode: simulation ? "demo" : "free",
-        paymentStatus: simulation ? "demo_completed" : "not_required",
-        paymentTransactionId: transaction?._id || null,
-        patient: req.user._id, // `auth` middleware puts the logged‑in user on req.user
-        counselor: counselorId,
-        date: appointmentDate,
-        notes,
+      await session.withTransaction(async () => {
+        // Reset on transaction callback retries; MongoDB may rerun this closure.
+        const transaction = simulation ? (await Transaction.create([{
+          userId: req.user._id, counselorId, appointmentId, amount: demoAmount,
+          paymentMode: "demo", status: "demo_completed", type: "debit",
+          description: "Demo appointment payment — no charge or monetary entitlement",
+          metadata: { simulationOnly: true, redeemable: false },
+        }], { session }))[0] : null;
+        appointment = (await Appointment.create([{
+          _id: appointmentId, paymentMode: simulation ? "demo" : "free",
+          paymentStatus: simulation ? "demo_completed" : "not_required",
+          paymentTransactionId: transaction?._id || null, patient: req.user._id,
+          counselor: counselorId, date: appointmentDate, notes,
+          ...(requestKey ? { requestKey, requestHash } : {}),
+        }], { session }))[0];
       });
     } catch (error) {
-      if (transaction) await Transaction.deleteOne({ _id: transaction._id });
+      if (error.code === 11000) {
+        const previous = requestKey ? await Appointment.findOne({ patient: req.user._id, requestKey }) : await Appointment.findOne({ patient: req.user._id, counselor: counselorId, date: appointmentDate, status: { $in: ["pending", "confirmed"] } });
+        if (previous && (!requestKey || previous.requestHash === requestHash)) return res.status(200).json(previous);
+        return res.status(409).json({ code: "SLOT_UNAVAILABLE", message: "This appointment time is no longer available" });
+      }
       throw error;
-    }
+    } finally { await session.endSession(); }
 
     // Notify the counselor via socket if global.io exists
     if (global.io) {
@@ -171,8 +183,8 @@ export const book = async (req, res) => {
 
     return res.status(201).json(appointment);
   } catch (err) {
-    console.error("❌ book appointment error", err);
-    return res.status(500).json({ message: "Server error" });
+    console.error("Booking could not be committed");
+    return res.status(503).json({ message: "Booking could not be confirmed. Retry with the same request key." });
   }
 };
 
@@ -280,8 +292,9 @@ export const updateStatus = async (req, res) => {
       });
     }
 
-    appointment.status = status;
-    await appointment.save();
+    const updated = await Appointment.findOneAndUpdate({ _id: appointment._id, status: appointment.status }, { $set: { status } }, { returnDocument: "after", runValidators: true });
+    if (!updated) return res.status(409).json({ message: "Appointment changed. Refresh before trying again." });
+    appointment.status = updated.status;
 
     await createNotificationSafely({
       recipientId: String(userId) === String(appointment.patient) ? appointment.counselor : appointment.patient,

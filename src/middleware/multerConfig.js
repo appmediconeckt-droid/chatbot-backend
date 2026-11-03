@@ -1,13 +1,6 @@
+import { storePrivateAsset, validateUploadContent } from "../services/privateAssets.js";
+import { uploadToCloudinary } from "../utils/uploadHelper.js";
 import multer from "multer";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
-import cloudinary from "../config/cloudinary.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadsRoot = path.resolve(__dirname, "../../uploads");
 
 const isCloudinaryConfigured = () =>
   Boolean(
@@ -15,96 +8,6 @@ const isCloudinaryConfigured = () =>
       process.env.CLOUDINARY_API_KEY &&
       process.env.CLOUDINARY_API_SECRET,
   );
-
-const getUploadFolder = (file) => {
-  if (file.fieldname === "profilePhoto") return "profile-photos";
-  if (file.fieldname === "prescriptionSignature") return "prescription-assets";
-  if (file.fieldname === "prescriptionSeal") return "prescription-assets";
-  return "certifications";
-};
-
-const localStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const folder = getUploadFolder(file);
-    const destination = path.join(uploadsRoot, folder);
-    fs.mkdirSync(destination, { recursive: true });
-    cb(null, destination);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "");
-    const base = path
-      .basename(file.originalname || "upload", ext)
-      .replace(/[^a-z0-9_-]/gi, "-")
-      .replace(/-+/g, "-")
-      .slice(0, 80);
-    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${base}${ext}`);
-  },
-});
-
-// Storage for profile photos
-const profileStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "profile-photos",
-    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
-    transformation: [{ width: 500, height: 500, crop: "limit" }],
-  },
-});
-
-// Storage for certification documents
-const certificationStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "certifications",
-    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "pdf"],
-    transformation: [{ width: 1000, height: 1000, crop: "limit" }],
-  },
-});
-
-// Dynamic storage based on field name
-// Dynamic storage based on field name
-const dynamicStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: (req, file) => {
-    console.log("Processing file:", file.fieldname, file.originalname);
-
-    // Check if it's a profile photo
-    if (file.fieldname === "profilePhoto") {
-      return {
-        folder: "profile-photos",
-        allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
-        transformation: [{ width: 500, height: 500, crop: "limit" }],
-      };
-    }
-    if (file.fieldname === "prescriptionSignature" || file.fieldname === "prescriptionSeal") {
-      return {
-        folder: "prescription-assets",
-        allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
-        transformation: [{ width: 1000, height: 500, crop: "limit" }],
-      };
-    }
-    // Check if it's a certification document (matches certifications[0][document], etc.)
-    else if (
-      file.fieldname.includes("certifications") &&
-      file.fieldname.includes("document")
-    ) {
-      return {
-        folder: "certifications",
-        allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "pdf"],
-        transformation: [{ width: 1000, height: 1000, crop: "limit" }],
-      };
-    }
-    // Check if it's certificationDocuments field
-    else if (file.fieldname === "certificationDocuments") {
-      return {
-        folder: "certifications",
-        allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "pdf"],
-        transformation: [{ width: 1000, height: 1000, crop: "limit" }],
-      };
-    }
-    return {};
-  },
-});
 
 // File filter for uploaded files
 // File filter for uploaded files
@@ -155,35 +58,15 @@ const fileFilter = (req, file, cb) => {
 // Create multer instance that accepts any fields
 // Create multer instance that accepts any fields
 const upload = multer({
-  storage: isCloudinaryConfigured() ? dynamicStorage : localStorage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
+    files: 8,
+    fields: 100,
+    parts: 108,
     fieldSize: 6 * 1024 * 1024, // Generated avatars are submitted once as a data URI.
   },
   fileFilter: fileFilter,
-});
-
-const chatAttachmentStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "chat-attachments",
-    resource_type: "auto",
-    allowed_formats: [
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "webp",
-      "pdf",
-      "doc",
-      "docx",
-      "txt",
-      "mp3",
-      "wav",
-      "mp4",
-      "mov",
-    ],
-  },
 });
 
 const chatAttachmentFilter = (req, file, cb) => {
@@ -215,9 +98,10 @@ const chatAttachmentFilter = (req, file, cb) => {
 };
 
 const chatAttachmentUpload = multer({
-  storage: isCloudinaryConfigured() ? chatAttachmentStorage : localStorage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024,
+    files: 1, fields: 20, parts: 21,
   },
   fileFilter: chatAttachmentFilter,
 });
@@ -232,7 +116,7 @@ export const handleUserUpload = (req, res, next) => {
   }
 
   // Use .any() to accept all fields (both files and text)
-  upload.any()(req, res, (err) => {
+  upload.any()(req, res, async (err) => {
     if (err) {
       console.error("Multer Error:", err);
       return res.status(400).json({
@@ -241,19 +125,22 @@ export const handleUserUpload = (req, res, next) => {
       });
     }
 
-    if (!isCloudinaryConfigured() && req.files?.length > 0) {
-      const origin = `${req.protocol}://${req.get("host")}`;
-      req.files = req.files.map((file) => {
-        const relativePath = path
-          .relative(uploadsRoot, file.path)
-          .replace(/\\/g, "/");
-        return {
-          ...file,
-          path: `${origin}/uploads/${relativePath}`,
-          localPath: file.path,
-        };
-      });
-    }
+    try {
+      // Ownership must be established before any storage side effect.
+      if (req.params.userId && String(req.params.userId) !== String(req.user?._id)) return res.status(403).json({ error: "Access denied" });
+      for (const file of req.files || []) validateUploadContent(file);
+      const converted = [];
+      for (const file of req.files || []) {
+        if (file.fieldname === "profilePhoto") {
+          if (!isCloudinaryConfigured()) throw new Error("Profile photo storage is unavailable");
+          const result = await uploadToCloudinary(file.buffer, { folder: "profile-photos" });
+          converted.push({ ...file, path: result.url, filename: result.publicId });
+        } else {
+          converted.push(await storePrivateAsset(req, file, file.fieldname.startsWith("prescription") ? "prescription" : "certification"));
+        }
+      }
+      req.files = converted;
+    } catch (error) { return res.status(400).json({ error: error.message }); }
 
     // Organize files by field name
     if (req.files && req.files.length > 0) {
@@ -287,7 +174,7 @@ export const uploadChatAttachment = (req, res, next) => {
     return;
   }
 
-  chatAttachmentUpload.single("attachment")(req, res, (err) => {
+  chatAttachmentUpload.single("attachment")(req, res, async (err) => {
     if (err) {
       return res.status(400).json({
         success: false,
@@ -295,17 +182,9 @@ export const uploadChatAttachment = (req, res, next) => {
       });
     }
 
-    if (!isCloudinaryConfigured() && req.file?.path) {
-      const origin = `${req.protocol}://${req.get("host")}`;
-      const relativePath = path
-        .relative(uploadsRoot, req.file.path)
-        .replace(/\\/g, "/");
-      req.file = {
-        ...req.file,
-        path: `${origin}/uploads/${relativePath}`,
-        localPath: req.file.path,
-      };
-    }
+    try {
+      if (req.file) req.file = await storePrivateAsset(req, req.file, "chat");
+    } catch (error) { return res.status(400).json({ error: error.message }); }
 
     next();
   });

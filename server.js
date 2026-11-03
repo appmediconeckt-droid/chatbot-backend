@@ -1,3 +1,4 @@
+import { startAccountDeletionWorker } from "./src/services/accountDeletionService.js";
 // import app from "./src/app.js";
 // import server from "./src/app.js"; 
 // import mongoose from "mongoose";
@@ -113,6 +114,7 @@ async function connectWithRetry() {
 // Connect to MongoDB using cached connection
 connectWithRetry()
   .then(() => {
+    startAccountDeletionWorker();
     server.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`📡 API URL: http://localhost:${PORT}`);

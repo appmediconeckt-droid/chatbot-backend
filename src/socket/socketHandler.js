@@ -1,3 +1,4 @@
+import { installSocketSessionValidation } from "../services/socketSession.js";
 import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import User from "../models/userModel.js";
@@ -212,12 +213,13 @@ class SocketHandler {
 
       // Get user details
       const user = await User.findById(socket.userId);
-      if (!user) {
+      if (!user?.isActive) {
         console.log(`User not found: ${socket.userId}`);
         socket.disconnect();
         return;
       }
 
+      installSocketSessionValidation(socket);
       await this.markUserOnline(socket);
 
       // Join the role-specific room and a stable fallback room so
@@ -270,6 +272,10 @@ class SocketHandler {
               return;
           }
 
+          if (!call || call.status !== "active" || !call.acceptedAt || !call.isActive) {
+            socket.emit("error", { message: "Call must be active and accepted" });
+            return;
+          }
           socket.join(callRoom);
 
           // Notify existing participant(s) that the peer has joined.
@@ -397,6 +403,8 @@ class SocketHandler {
           chatId: chat._id,
           senderRole: socket.userRole === "user" ? "counsellor" : "user",
           isRead: false,
+          moderationHidden: { $ne: true },
+          deletedFor: { $ne: socket.userId },
         },
         {
           isRead: true,
@@ -617,16 +625,19 @@ class SocketHandler {
     }
   }
 
-  async handleMarkRead(socket, { chatId }) {
+  async handleMarkRead(socket, { chatId } = {}) {
     try {
       const chat = await this.findChatByIdentifier(chatId);
-      if (!chat) return;
+      if (!chat || ![chat.userId, chat.counselorId].some(id => String(id) === String(socket.userId))) return;
+      if (await interactionIsBlocked(chat.userId, chat.counselorId)) return;
 
       const updateResult = await Message.updateMany(
         {
           chatId: chat._id,
           senderRole: socket.userRole === "user" ? "counsellor" : "user",
           isRead: false,
+          moderationHidden: { $ne: true },
+          deletedFor: { $ne: socket.userId },
         },
         {
           isRead: true,
@@ -687,7 +698,7 @@ class SocketHandler {
       socket.to(callRoom).emit("offer", {
         callId: callIdParam,
         offer,
-        userId: senderUserId || socket.userId,
+        userId: socket.userId,
         from: socket.userId,
       });
     };
@@ -715,7 +726,7 @@ class SocketHandler {
       socket.to(callRoom).emit("answer", {
         callId: callIdParam,
         answer,
-        userId: senderUserId || socket.userId,
+        userId: socket.userId,
         from: socket.userId,
       });
     };
@@ -797,7 +808,15 @@ class SocketHandler {
 
     // Register all handlers
     for (const [event, handler] of Object.entries(handlers)) {
-      socket.on(event, handler);
+      handlers[event] = async (payload = {}) => {
+        try {
+          if (payload.callId !== callId || !socket.rooms.has(callRoom)) return;
+          const current = await Call.findOne({ callId, status: "active", isActive: true, acceptedAt: { $ne: null } });
+          if (!current || ![current.callerId, current.receiverId].some(id => String(id) === String(socket.userId)) || await interactionIsBlocked(current.callerId, current.receiverId)) return;
+          handler(payload);
+        } catch { socket.emit("error", { message: "Call authorization unavailable" }); }
+      };
+      socket.on(event, handlers[event]);
     }
 
     // Store on socket so teardown can remove them

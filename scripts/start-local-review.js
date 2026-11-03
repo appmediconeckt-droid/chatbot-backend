@@ -2,10 +2,25 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-dotenv.config({ quiet: true });
+import { createInterface } from 'node:readline';
+import { Writable } from 'node:stream';
+// Never load production credentials into this disposable environment.
+if (!process.env.AUDIT_ISOLATED_ENV) {
+  throw new Error('Use npm run review:local with the isolated preload.');
+}
+const localPort = Number(process.env.LOCAL_REVIEW_PORT || 5005);
+if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65535) throw new Error('Invalid local review port');
+let localPassword = process.env.LOCAL_REVIEW_PASSWORD;
+if (process.argv.includes('--password-stdin')) {
+  const muted = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const input = createInterface({ input: process.stdin, output: muted, terminal: Boolean(process.stdin.isTTY) });
+  for await (const line of input) { localPassword = line; input.close(); break; }
+}
+if (!localPassword || localPassword.length < 8) {
+  throw new Error('Supply LOCAL_REVIEW_PASSWORD or --password-stdin (minimum 8 characters).');
+}
 const mongo = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1', dbName: 'humaeli_local_review' } });
 process.env.MONGO_URI = mongo.getUri();
 process.env.NODE_ENV = 'development';
@@ -19,7 +34,7 @@ process.env.APP_REVIEW_EXPIRES_AT = new Date(Date.now() + 4 * 3600000).toISOStri
 const { default: User } = await import('../src/models/userModel.js');
 const { default: DemoOtpConfig } = await import('../src/models/demoOtpConfigModel.js');
 await mongoose.connect(process.env.MONGO_URI);
-const password = await bcrypt.hash('AuditLocal!2026Only', 10);
+const password = await bcrypt.hash(localPassword, 10);
 const account = (email, role, demo = false) => ({
   email, role, password, fullName: role === 'user' ? 'Local Audit User' : 'Local Audit Consultant',
   anonymous: 'Local Audit', hasPassword: true, authProvider: 'local',
@@ -62,7 +77,27 @@ globalThis.fetch = async (url, options) => {
   return response;
 };
 const { default: server } = await import('../src/app.js');
-server.listen(5006, '127.0.0.1', () => console.log('Local disposable review API ready at http://127.0.0.1:5006 (no production records)'));
+server.prependListener('request', (_req, res) => res.setHeader('X-Humaeli-Environment', 'disposable-local'));
+server.listen(localPort, '127.0.0.1', async () => {
+  if (process.argv.includes('--verify-login')) {
+    const response = await fetch(`http://127.0.0.1:${localPort}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'appstore.user@humaeli.com', password: localPassword, role: 'user' }),
+    });
+    const payload = await response.json();
+    let logoutStatus;
+    if (payload.accessToken) {
+      const logout = await fetch(`http://127.0.0.1:${localPort}/api/auth/logout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${payload.accessToken}` },
+        body: JSON.stringify({ refreshToken: payload.refreshToken }),
+      });
+      logoutStatus = logout.status;
+    }
+    console.log(JSON.stringify({ localLoginStatus: response.status, role: payload.role, tokenIssued: Boolean(payload.accessToken), logoutStatus }));
+  }
+  localPassword = undefined;
+  console.log(`Local disposable review API ready at http://127.0.0.1:${localPort} (no production records)`);
+});
 const stop = async () => {
   server.close();
   await mongoose.disconnect();

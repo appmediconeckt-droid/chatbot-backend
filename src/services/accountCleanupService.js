@@ -1,3 +1,4 @@
+import { prescriptionAccountOwnershipFilter } from "./accountDeletionOwnership.js";
 import AIConsent from "../models/AIConsent.js";
 import UserBlock from "../models/UserBlock.js";
 import AbuseReport from "../models/AbuseReport.js";
@@ -60,14 +61,7 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
     OTP.deleteMany({ userId: objectId }),
     LoginOTP.deleteMany({ userId: objectId }),
     AIChat.deleteMany({ userId: idFilter }),
-    Prescription.deleteMany({
-      $or: [
-        { patientId: objectId },
-        { psychiatristId: objectId },
-        { "identityVerification.reviewedBy": objectId },
-        ...(chatObjectIds.length ? [{ chatId: { $in: chatObjectIds } }] : []),
-      ],
-    }),
+    Prescription.deleteMany(prescriptionAccountOwnershipFilter(objectId, chatObjectIds)),
     Conversation.deleteMany({
       $or: [
         { "participants.user": objectId },

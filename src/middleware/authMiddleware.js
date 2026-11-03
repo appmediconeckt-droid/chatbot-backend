@@ -1,3 +1,4 @@
+import { accountDeletionPending } from "../services/accountDeletionService.js";
 // middleware/authMiddleware.js
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
@@ -13,7 +14,7 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
     // 1. Verify refresh token
     let decoded;
     try {
-      decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET);
+      decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET, { algorithms: ["HS256"] });
     } catch (err) {
       return res.status(401).json({
         success: false,
@@ -32,7 +33,7 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
 
     // 2. Find the session
     const session = await Session.findById(decoded.sessionId);
-    if (!session || !session.isActive) {
+    if (!session || !session.isActive || String(session.userId) !== String(decoded.userId)) {
       return res.status(401).json({
         success: false,
         error: "Session expired. Please log in again.",
@@ -51,7 +52,7 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
 
     // 4. Load user
     const user = await User.findById(decoded.userId);
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || await accountDeletionPending(user._id)) {
       return res.status(401).json({
         success: false,
         error: "User not found or deactivated.",
@@ -137,7 +138,7 @@ export const authMiddleware = async (req, res, next) => {
     // ── 3. Verify access token ──
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+      decoded = jwt.verify(token, process.env.ACCESS_SECRET, { algorithms: ["HS256"] });
     } catch (error) {
       if (error.name === "TokenExpiredError" && refreshToken) {
         // Access token expired – silently refresh using refresh token
@@ -203,7 +204,7 @@ export const authMiddleware = async (req, res, next) => {
         code: "USER_NOT_FOUND",
       });
     }
-    if (!user.isActive) {
+    if (!user.isActive || await accountDeletionPending(user._id)) {
       return res.status(401).json({
         success: false,
         error: "Account is deactivated",
@@ -252,14 +253,17 @@ export const optionalAuth = async (req, res, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.ACCESS_SECRET);
+      decoded = jwt.verify(token, process.env.ACCESS_SECRET, { algorithms: ["HS256"] });
     } catch (error) {
       // If token is invalid/expired, we just treat them as a guest instead of erroring
       return next();
     }
 
+    if (!mongoose.isValidObjectId(decoded.sessionId)) return next();
+    const session = await Session.exists({ _id: decoded.sessionId, userId: decoded.userId || decoded._id, isActive: true });
+    if (!session) return next();
     const user = await User.findById(decoded.userId || decoded._id);
-    if (user && user.isActive) {
+    if (user && user.isActive && !await accountDeletionPending(user._id)) {
       req.user = user;
       req.userId = user._id;
       req.userRole = user.role;

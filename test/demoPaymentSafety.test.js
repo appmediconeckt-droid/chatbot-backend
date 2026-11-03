@@ -1,3 +1,4 @@
+import { REQUIRED_BOOKING_INDEXES } from "../src/services/appointmentIndexes.js";
 import { expect } from "chai";
 import sinon from "sinon";
 import http from "node:http";
@@ -185,14 +186,16 @@ describe("Demo payment isolation", () => {
     sandbox
       .stub(Notification, "create")
       .callsFake(async (value) => ({ toObject: () => value }));
+    sandbox.stub(Appointment.collection, "indexes").resolves(REQUIRED_BOOKING_INDEXES);
+    sandbox.stub(mongoose, "startSession").resolves({ withTransaction: async fn => fn(), endSession: async () => {} });
     let saved;
     sandbox.stub(Transaction, "create").callsFake(async (value) => {
-      saved = value;
-      return { ...value, _id: new mongoose.Types.ObjectId() };
+      saved = value[0];
+      return [{ ...saved, _id: new mongoose.Types.ObjectId() }];
     });
     sandbox
       .stub(Appointment, "create")
-      .callsFake(async (value) => ({ ...value, status: "pending" }));
+      .callsFake(async (value) => [{ ...value[0], status: "pending" }]);
     const res = response();
     await book(
       {

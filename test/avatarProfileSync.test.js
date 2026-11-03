@@ -66,7 +66,7 @@ describe("Generated profile avatar synchronization", () => {
       },
     }));
     const app = express();
-    app.patch("/profile/:userId", handleUserUpload, updateUserById);
+    app.patch("/profile/:userId", (req, _res, next) => { req.user = user; next(); }, handleUserUpload, updateUserById);
     // Image bytes are not modified by the profile save flow.
     const avatar = `data:image/png;base64,${Buffer.alloc(900000, 1).toString("base64")}`;
     const res = await request(app).patch("/profile/user-1").field("avatarUrl", avatar);
@@ -84,7 +84,7 @@ describe("Generated profile avatar synchronization", () => {
       select: async () => { savedUser = { ...user, ...update.$set }; return savedUser; },
     }));
     const app = express();
-    app.patch("/profile/:userId", handleUserUpload, updateUserById);
+    app.patch("/profile/:userId", (req, _res, next) => { req.user = user; next(); }, handleUserUpload, updateUserById);
     const res = await request(app).patch("/profile/user-1").field("avatarUrl", url);
     expect(res.status).to.equal(200);
     expect(res.body.user.profilePhoto.url).to.equal(url);

@@ -1,32 +1,18 @@
-import {
-  createStreamUserToken,
-  ensureStreamUser,
-} from "../services/streamService.js";
+import Call from "../models/Call.js";
+import { createStreamCallToken, ensureStreamUser } from "../services/streamService.js";
+import { interactionIsBlocked } from "../services/interactionSafety.js";
 
 export const getStreamToken = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: "Unauthorized",
-      });
+    const filter = { $or: [{ callerId: req.user._id }, { receiverId: req.user._id }], status: "active", isActive: true, acceptedAt: { $ne: null } };
+    if (req.query.callId) filter.callId = String(req.query.callId);
+    const calls = await Call.find(filter).limit(20);
+    const allowed = [];
+    for (const call of calls) {
+      if (!await interactionIsBlocked(call.callerId, call.receiverId)) allowed.push(call.callId.replace(/^(default|room|call):/i, "").trim());
     }
-
+    if (!allowed.length) return res.status(403).json({ success: false, error: "An accepted authorized call is required" });
     const userId = await ensureStreamUser(req.user);
-    const token = createStreamUserToken(userId);
-
-    return res.status(200).json({
-      success: true,
-      token,
-      userId,
-      apiKey: process.env.STREAM_API_KEY || process.env.STEAM_API_KEY,
-    });
-  } catch (error) {
-    console.error("Error generating Stream token:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to generate Stream token",
-      details: error.message,
-    });
-  }
+    res.set("Cache-Control", "no-store").json({ success: true, token: createStreamCallToken(userId, allowed), userId, apiKey: process.env.STREAM_API_KEY || process.env.STEAM_API_KEY });
+  } catch { res.status(503).json({ success: false, error: "Unable to authorize calling. Please retry." }); }
 };

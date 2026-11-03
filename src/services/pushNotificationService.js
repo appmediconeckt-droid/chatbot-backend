@@ -1,3 +1,4 @@
+import { privatePushContent } from "./pushPrivacy.js";
 import { messaging } from "../config/firebaseAdmin.js";
 
 const isCallPush = (data = {}) => {
@@ -20,16 +21,18 @@ export const sendPushNotification = async ({
   title,
   body,
   data = {},
+  platform,
 }) => {
   try {
     if (!token) {
       throw new Error('FCM token is required');
     }
 
+    const content = privatePushContent({ platform, title, body, data });
     const safeData = {};
 
-    Object.keys(data).forEach((key) => {
-      safeData[key] = String(data[key]);
+    Object.keys(content.data).forEach((key) => {
+      safeData[key] = String(content.data[key]);
     });
 
     const callPush = isCallPush(safeData);
@@ -59,19 +62,18 @@ export const sendPushNotification = async ({
 
     if (!callPush) {
       message.notification = {
-        title,
-        body,
+        title: content.title,
+        body: content.body,
       };
     }
 
     const response = await messaging.send(message);
 
-    console.log('✅ Push notification sent successfully:');
-    console.log(response);
+    console.log('Push notification sent');
 
     return response;
   } catch (error) {
-    console.error('❌ Push notification error:', error);
+    console.error('Push notification delivery failed');
     throw error;
   }
 };

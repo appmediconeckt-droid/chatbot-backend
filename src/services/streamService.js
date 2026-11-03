@@ -1,3 +1,4 @@
+import jwt from "jsonwebtoken";
 import { StreamChat } from "stream-chat";
 
 let streamClient = null;
@@ -69,5 +70,14 @@ export const ensureStreamUser = async (user) => {
 
 export const createStreamUserToken = (userId) => {
   const client = getStreamClient();
-  return client.createToken(String(userId));
+  const issuedAt = Math.floor(Date.now() / 1000);
+  return client.createToken(String(userId), issuedAt + 3600, issuedAt);
+};
+
+// Call tokens grant membership; provider role permissions must ALSO prevent
+// nonmembers creating/joining calls. Do not treat this claim as a deny policy.
+export const createStreamCallToken = (userId, callIds) => {
+  const { apiSecret } = resolveStreamCredentials();
+  if (!apiSecret || !callIds.length) throw new Error("Authorized call is required");
+  return jwt.sign({ user_id: String(userId), call_cids: callIds.map(id => `default:${id}`) }, apiSecret, { algorithm: "HS256", expiresIn: 300 });
 };

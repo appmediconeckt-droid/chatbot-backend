@@ -15,7 +15,7 @@ const local = /^mongodb:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(process.env.MON
  let user, counselor;
  before(async () => {
   await mongoose.connect(process.env.MONGO_URI);
-  await Transaction.init();
+  await Promise.all([Transaction.init(), Appointment.init()]);
  });
  beforeEach(async () => {
   const fixture = role => ({ fullName: 'Demo payment fixture', email: `demo-${new mongoose.Types.ObjectId()}@example.test`, googleId: String(new mongoose.Types.ObjectId()), authProvider: 'google', role, profileCompleted: true, isActive: true, walletBalance: 900, demoWalletBalance: 0, demoPaymentsEnabled: true, locationData: { current: { type: 'Point', coordinates: [77, 12] } } });

@@ -1,3 +1,4 @@
+import { deletionRequestAuth } from "../middleware/deletionRequestAuth.js";
 import { authRateLimit } from "../middleware/authRateLimit.js";
 import express from "express";
 import {
@@ -136,7 +137,7 @@ authRoutes.post(
   verifyProfileChangeOTP,
 );
 
-authRoutes.delete("/delete", authMiddleware, deleteUser);
+authRoutes.delete("/delete", deletionRequestAuth, deleteUser);
 
 // PASSWORD RESET ROUTES
 authRoutes.post(

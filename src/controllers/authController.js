@@ -1,3 +1,5 @@
+import { validateUploadContent } from "../services/privateAssets.js";
+import { requestAccountDeletion, accountDeletionPending } from "../services/accountDeletionService.js";
 import { issueLoginChallenge, consumeLoginChallenge, discardLoginChallenge } from "../services/loginChallengeService.js";
 import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import mongoose from "mongoose";
@@ -12,7 +14,7 @@ import { formatCertifications } from "../utils/certificationFormatter.js";
 import Session from "../models/sessionModel.js";
 import { publicCounselorProfile } from "../utils/publicProfile.js";
 import { sanitizeUserForCounselor } from "../utils/anonymousUser.js";
-import { appleTokenStorageConfigured, exchangeAppleCode, revokeAppleAuthorization } from "../services/appleTokenService.js";
+import { appleTokenStorageConfigured, exchangeAppleCode } from "../services/appleTokenService.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
@@ -24,7 +26,6 @@ import {
   uploadToCloudinary,
   deleteFromCloudinary,
 } from "../utils/uploadHelper.js";
-import { cleanupAccountData } from "../services/accountCleanupService.js";
 // import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
@@ -304,7 +305,7 @@ const isCounsellorProfileComplete = (data) => {
 };
 // Fixed review codes are accepted only alongside the account password.
 const validLoginOtpAccount = async (user, body) => {
-  if (!user?.isActive) return false;
+  if (!user?.isActive || await accountDeletionPending(user._id)) return false;
   if (body.role && normalizeRole(body.role) !== normalizeRole(user.role)) return false;
   if (!DEMO_ACCOUNT_EMAILS.includes(user.email)) return true;
   const expectedRole = user.email.includes("counsellor") ? "counsellor" : "user";
@@ -506,6 +507,7 @@ setInterval(
 export const updateUserById = async (req, res) => {
   try {
     const { userId } = req.params;
+    if (String(req.user?._id) !== String(userId)) return res.status(403).json({ success: false, message: "Access denied" });
 
     // Removed verbose console logs for production
 
@@ -2158,6 +2160,12 @@ export const completeRegistration = async (req, res) => {
     //
     // Photo is allowed for BOTH roles — patients can add one too if the UI
     // collects it; we just don't require it.
+    if (req.file?.buffer) {
+      validateUploadContent(req.file);
+      const uploaded = await uploadToCloudinary(req.file.buffer, { folder: "profile-photos" });
+      req.file.path = uploaded.url;
+      req.file.filename = uploaded.publicId;
+    }
     if (req.file && req.file.path) {
       userData.profilePhoto = {
         url: req.file.path,
@@ -2300,7 +2308,7 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    if (!user.isActive) {
+    if (!user.isActive || await accountDeletionPending(user._id)) {
       return res
         .status(401)
         .json({ message: "Account is deactivated", success: false });
@@ -2541,7 +2549,7 @@ export const googleAuth = async (req, res) => {
         await user.save();
       }
 
-      if (!user.isActive) {
+      if (!user.isActive || await accountDeletionPending(user._id)) {
         return res
           .status(401)
           .json({ message: "Account is deactivated", success: false });
@@ -2757,7 +2765,7 @@ export const appleLogin = async (req, res) => {
 
       await user.save();
 
-      if (!user.isActive) {
+      if (!user.isActive || await accountDeletionPending(user._id)) {
         return res
           .status(401)
           .json({ message: "Account is deactivated", success: false });
@@ -3244,7 +3252,7 @@ export const refreshAccessToken = async (req, res) => {
     // Find session using sessionId from refresh token
     const session = await Session.findById(decoded.sessionId);
 
-    if (!session || !session.isActive) {
+    if (!session || !session.isActive || String(session.userId) !== String(decoded.userId)) {
       return res.status(401).json({ message: "Session expired" });
     }
 
@@ -3253,7 +3261,7 @@ export const refreshAccessToken = async (req, res) => {
     }
 
     const user = await User.findById(decoded.userId);
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || await accountDeletionPending(user._id)) {
       return res.status(401).json({ message: "User not found" });
     }
 
@@ -4206,46 +4214,15 @@ export const deleteUser = async (req, res) => {
         .status(404)
         .json({ message: "User not found", success: false });
 
-    // Confirm revocation before removing local data; failures remain retryable.
-    await revokeAppleAuthorization(user);
-    const profilePhotoPublicId = user.profilePhoto?.publicId;
-    const certificationPublicIds = (user.certifications || [])
-      .map((certification) => certification?.documentPublicId)
-      .filter(Boolean);
-    const cleanup = await cleanupAccountData({ userId: id, email: user.email });
-
-    if (profilePhotoPublicId) {
-      try {
-        await deleteFromCloudinary(profilePhotoPublicId);
-      } catch (photoError) {
-        console.error(
-          "Account deletion profile photo cleanup failed:",
-          photoError?.message || photoError,
-        );
-      }
-    }
-
-    await Promise.allSettled(
-      certificationPublicIds.map(async (publicId) => {
-        try {
-          await deleteFromCloudinary(publicId);
-        } catch (certificationError) {
-          console.error(
-            "Account deletion certification cleanup failed:",
-            certificationError?.message || certificationError,
-          );
-        }
-      }),
-    );
-
-    await User.findByIdAndDelete(id);
-    return res
-      .status(200)
-      .json({
-        message: "User deleted successfully",
-        success: true,
-        cleanup,
-      });
+    const job = await requestAccountDeletion(user);
+    return res.status(202).json({
+      success: false,
+      accepted: true,
+      code: "ACCOUNT_DELETION_PENDING",
+      status: job.status,
+      requestId: String(job._id),
+      message: "Your deletion request is recorded and account access is disabled. Cleanup is pending. Clinical, financial and related records are preserved until retention requirements are approved. Contact support@humaeli.com for request status.",
+    });
   } catch (error) {
     console.error("deleteUser error:", error);
     if (String(error.code || "").startsWith("APPLE_")) return res.status(error.status || 503).json({ success: false, code: error.code, message: error.message });

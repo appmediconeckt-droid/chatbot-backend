@@ -1,3 +1,4 @@
+import { accountDeletionPending } from "../services/accountDeletionService.js";
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
 import Session from "../models/sessionModel.js";
@@ -13,7 +14,7 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     const secret = process.env.ACCESS_SECRET || process.env.JWT_SECRET;
-    const decoded = jwt.verify(token, secret);
+    const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
 
     const userId = decoded.userId || decoded.id;
     const sessionId = decoded.sessionId;
@@ -38,7 +39,7 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     const account = await User.findById(userId);
-    if (!account || !account.isActive) {
+    if (!account || !account.isActive || await accountDeletionPending(userId)) {
       return res.status(401).json({ code: "ACCOUNT_DEACTIVATED", error: "Account is unavailable" });
     }
     if (account.role !== role) {
@@ -51,6 +52,9 @@ export const authenticateToken = async (req, res, next) => {
       role,
       sessionId,
       demoPaymentsEnabled: account.demoPaymentsEnabled === true,
+      certifications: account.certifications,
+      prescriptionSignature: account.prescriptionSignature,
+      prescriptionSeal: account.prescriptionSeal,
     };
 
     next();
@@ -94,7 +98,7 @@ export const authenticateSocket = async (socket, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, secret);
+      decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
     } catch (jwtErr) {
       const isExpired = jwtErr?.name === "TokenExpiredError";
       const err = new Error(isExpired ? "AUTH_TOKEN_EXPIRED" : "AUTH_TOKEN_INVALID");
@@ -103,14 +107,14 @@ export const authenticateSocket = async (socket, next) => {
     }
 
     const userId = decoded.userId || decoded.id;
-    if (!userId) {
+    if (!mongoose.isValidObjectId(userId) || !Number.isFinite(decoded.exp)) {
       const err = new Error("AUTH_TOKEN_INVALID");
       err.data = { code: "AUTH_TOKEN_INVALID" };
       return next(err);
     }
 
     const sessionId = decoded.sessionId;
-    if (!sessionId) {
+    if (!mongoose.isValidObjectId(sessionId)) {
       const err = new Error("AUTH_TOKEN_INVALID");
       err.data = { code: "AUTH_TOKEN_INVALID" };
       return next(err);
@@ -129,13 +133,15 @@ export const authenticateSocket = async (socket, next) => {
     }
 
     User.findById(userId)
-      .then((user) => {
-        if (!user || !user.isActive) {
+      .then(async (user) => {
+        if (!user || !user.isActive || await accountDeletionPending(userId)) {
           const err = new Error("AUTH_USER_INACTIVE");
           err.data = { code: "AUTH_USER_INACTIVE" };
           return next(err);
         }
         socket.userId = user._id.toString();
+        socket.sessionId = sessionId;
+        socket.tokenExpiresAt = decoded.exp;
         socket.userRole = user.role;
         return next();
       })

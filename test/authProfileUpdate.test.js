@@ -27,6 +27,7 @@ describe("Counsellor profile update certification validation", function () {
     });
 
     const req = {
+      user: currentUser,
       params: { userId: "user123" },
       body: {
         fullName: "Test Counselor",
@@ -61,6 +62,7 @@ describe("Counsellor profile update certification validation", function () {
     });
 
     const req = {
+      user: currentUser,
       params: { userId: "user123" },
       body: {
         fullName: "Test Counselor",
@@ -112,6 +114,7 @@ describe("Counsellor profile update certification validation", function () {
     });
 
     const req = {
+      user: currentUser,
       params: { userId: "user123" },
       body: {
         phoneNumber: "56555555455",

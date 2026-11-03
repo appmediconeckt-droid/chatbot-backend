@@ -1,3 +1,5 @@
+import privateFiles from "./routes/privateFiles.js";
+import legacyPrivateFiles from "./routes/legacyPrivateFiles.js";
 import privacyRoutes from "./routes/privacyRoutes.js";
 import aiConsentRoutes from "./routes/aiConsentRoutes.js";
 // // // // src/app.js
@@ -418,7 +420,11 @@ app.use(cookieParser());
 // 3. Static files
 // ---------------------------
 
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+app.use("/api/private-files", privateFiles);
+// Only directory photos are intentionally public. Legacy sensitive local files
+// require authenticated ownership; unknown/unreferenced paths fail closed.
+app.use("/uploads/profile-photos", express.static(path.join(__dirname, "../uploads/profile-photos"), { dotfiles: "deny", index: false }));
+app.use("/uploads", legacyPrivateFiles);
 
 // Serve password reset HTML page
 app.get("/reset-password/:token", (req, res) => {
