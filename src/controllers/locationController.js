@@ -14,8 +14,12 @@ const getClientIp = (req) =>
 // ──────────────────────────────────────────────────────────────
 export const updateLocation = async (req, res) => {
   try {
-    const { latitude, longitude, event = "manual" } = req.body;
+    const { latitude, longitude, event = "manual" } = req.body || {};
 
+    const validInput = value => (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value));
+    if (!validInput(latitude) || !validInput(longitude) || event !== "manual") {
+      return res.status(400).json({ success: false, message: "Valid coordinates and an explicit manual update are required" });
+    }
     const lat = Number(latitude);
     const lng = Number(longitude);
 
@@ -98,8 +102,8 @@ export const updateLocation = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("updateLocation error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    console.error("Location update failed");
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };
 
@@ -168,7 +172,7 @@ export const getChatLocations = async (req, res) => {
     });
   } catch (err) {
     console.error("getChatLocations error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };
 
@@ -220,7 +224,7 @@ export const adminAllLocations = async (req, res) => {
     });
   } catch (err) {
     console.error("adminAllLocations error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };
 
@@ -247,7 +251,7 @@ export const adminPendingCounsellors = async (req, res) => {
     });
   } catch (err) {
     console.error("adminPendingCounsellors error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };
 
@@ -288,7 +292,7 @@ export const adminGetLocationHistory = async (req, res) => {
     });
   } catch (err) {
     console.error("adminGetLocationHistory error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };
 
@@ -299,7 +303,7 @@ export const adminGetLocationHistory = async (req, res) => {
 export const adminVerifyLocation = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { approve, notes = "" } = req.body;
+    const { approve, notes = "" } = req.body || {};
 
     if (typeof approve !== "boolean") {
       return res.status(400).json({
@@ -338,6 +342,6 @@ export const adminVerifyLocation = async (req, res) => {
     });
   } catch (err) {
     console.error("adminVerifyLocation error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: "Unable to process location request" });
   }
 };

@@ -3,7 +3,7 @@ import express from "express";
 import { videoCallController } from "../controllers/videoCallController.js";
 import { getStreamToken } from "../controllers/streamController.js";
 import { authenticateToken } from "../middleware/auth.js";
-import { requireUnblockedInteraction } from "../services/interactionSafety.js";
+import { requireUnblockedInteraction, requireUnblockedCallInteraction } from "../services/interactionSafety.js";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -22,12 +22,12 @@ router.get("/stream/token", authenticateToken, getStreamToken);
 // Call Request Management
 router.post("/calls/initiate", authenticateToken, requireUnblockedInteraction, videoCallController.initiateCall);
 router.get("/calls/pending/:userId", ownAccount, videoCallController.getPendingRequests);
-router.put("/calls/:callId/accept", authenticateToken, videoCallController.acceptCall);
+router.put("/calls/:callId/accept", authenticateToken, requireUnblockedCallInteraction, videoCallController.acceptCall);
 router.put("/calls/:callId/reject", authenticateToken, videoCallController.rejectCall);
-router.post("/calls/:callId/resend", authenticateToken, videoCallController.resendCallRequest);
+router.post("/calls/:callId/resend", authenticateToken, requireUnblockedCallInteraction, videoCallController.resendCallRequest);
 
 // Call Management
-router.post("/calls/:callId/join", authenticateToken, videoCallController.joinCall);
+router.post("/calls/:callId/join", authenticateToken, requireUnblockedCallInteraction, videoCallController.joinCall);
 router.put("/calls/:callId/end", authenticateToken, videoCallController.endCall);
 
 // History & Status

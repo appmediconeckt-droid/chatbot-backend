@@ -250,8 +250,8 @@ export const videoCallController = {
         "fullName email role profilePhoto specialization rating experience location qualification languages aboutMe isActive anonymous",
       );
 
-      if (!user) {
-        console.log(`User not found with ID: ${userId}`);
+      if (!user || !user.isActive) {
+        console.log("Call participant unavailable");
         return null;
       }
 

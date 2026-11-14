@@ -38,15 +38,15 @@ const local = /^mongodb:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(process.env.MON
   expect(records).to.have.length(1); expect(records[0].status).to.equal('demo_completed');
   expect(records[0].razorpayPaymentId).to.equal(undefined);
  });
- it('stores the appointment simulation and keeps confirmation pending', async () => {
+ it('books legacy demo appointment requests for free without a ledger or earning', async () => {
   const response = res();
-  await book({ user, body: { counselorId: counselor._id, date: new Date(Date.now() + 86400000).toISOString(), paymentMode: "demo", demoAmount: 1155 } }, response);
+  await book({ user, body: { counselorId: counselor._id, date: new Date(Date.now()+86400000).toISOString(), paymentMode: 'demo', demoAmount: 1155 } }, response);
   expect(response.statusCode).to.equal(201);
   const appointment = await Appointment.findById(response.body._id);
-  expect(appointment.status).to.equal('pending'); expect(appointment.paymentMode).to.equal('demo');
-  const transaction = await Transaction.findById(appointment.paymentTransactionId);
-  expect(transaction.status).to.equal('demo_completed'); expect(transaction.redeemable).to.equal(false);
-  expect(String(transaction.appointmentId)).to.equal(String(appointment._id));
+  expect(appointment.status).to.equal('pending'); expect(appointment.paymentMode).to.equal('free');
+  expect(appointment.paymentStatus).to.equal('not_required'); expect(appointment.paymentTransactionId).to.equal(null);
+  expect(await Transaction.countDocuments({ userId: user._id })).to.equal(0);
+  expect(await CounselorEarning.countDocuments({ counselorId: counselor._id })).to.equal(0);
   expect((await User.findById(user._id)).walletBalance).to.equal(900);
  });
  it('cannot redeem demo funds or create a withdrawal record', async () => {
@@ -79,8 +79,10 @@ const local = /^mongodb:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(process.env.MON
   expect(billing).to.include({ paymentMode: 'free', amount: 0, transaction: null });
   expect(await Transaction.countDocuments({ userId: user._id })).to.equal(0);
   const spoofed = res();
-  await book({ user, body: { counselorId: counselor._id, date: new Date(Date.now() + 86400000).toISOString(), paymentMode: 'demo' } }, spoofed);
-  expect(spoofed.statusCode).to.equal(403);
+  await book({ user, body: { counselorId: counselor._id, date: new Date(Date.now() + 172800000).toISOString(), paymentMode: 'demo', demoAmount: 100000 } }, spoofed);
+  expect(spoofed.statusCode).to.equal(201);
+  expect(spoofed.body.paymentMode).to.equal('free');
+  expect(await Transaction.countDocuments({ userId: user._id })).to.equal(0);
  });
  it('review simulations cannot accrue earnings for a real consultant account', async () => {
   counselor.demoPaymentsEnabled = false; await counselor.save();

@@ -32,6 +32,8 @@ const appointmentSchema = new mongoose.Schema(
     },
     // optional extra fields
     notes: { type: String },
+    // Consultant notes are private and excluded from ordinary patient responses.
+    sessionNote: { type: String, maxlength: 5000, select: false },
     status: {
       type: String,
       enum: ["pending", "confirmed", "canceled", "rejected"],

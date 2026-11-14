@@ -18,7 +18,6 @@ import { appleTokenStorageConfigured, exchangeAppleCode } from "../services/appl
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 // import { saveLocalFile, deleteLocalFile } from "../utils/uploadHelper.js";
 import otpService from "../services/otpService.js";
-import { reverseGeocode } from "../services/geocodingService.js";
 import { validationResult } from "express-validator";
 import { sendResetPasswordEmail } from "../utils/emailService.js";
 import cloudinary from "../config/cloudinary.js";
@@ -71,7 +70,7 @@ export const getLandingStats = async (_req, res) => {
       },
     });
   } catch (error) {
-    console.error("Landing stats error:", error);
+    console.error("Landing stats error:");
     return res.status(500).json({
       success: false,
       message: "Unable to load landing statistics",
@@ -325,11 +324,7 @@ setInterval(() => {
   }
 }, 60 * 1000).unref?.();
 
-const MAX_LOCATION_HISTORY = 20;
 const MAX_COUNSELLOR_DOCUMENTS = 5;
-
-const getClientIp = (req) =>
-  (req.headers["x-forwarded-for"]?.split(",")[0] || req.socket?.remoteAddress || "").trim();
 
 const markUserOnline = async (userOrId) => {
   const userId = userOrId?._id || userOrId;
@@ -356,57 +351,7 @@ const markUserOfflineIfNoActiveSessions = async (userId) => {
   if (activeSessionCount > 0) return;
 
   await User.findByIdAndUpdate(userId, {
-    $set: { isOnline: false, lastSeen: new Date() },
-  });
-};
-
-const saveLoginLocationIfProvided = async ({ req, userId }) => {
-  const lat = Number(req.body?.latitude);
-  const lng = Number(req.body?.longitude);
-
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
-
-  let geo = { address: "", city: "", state: "", country: "" };
-  try {
-    geo = await reverseGeocode(lat, lng);
-  } catch (err) {
-    // keep empty address; coords still saved
-  }
-
-  const now = new Date();
-  const ip = getClientIp(req);
-
-  const current = {
-    type: "Point",
-    coordinates: [lng, lat], // GeoJSON [lng, lat]
-    address: geo.address,
-    city: geo.city,
-    state: geo.state,
-    country: geo.country,
-    capturedAt: now,
-    ipAddress: ip,
-  };
-
-  const historyEntry = {
-    coordinates: [lng, lat],
-    address: geo.address,
-    capturedAt: now,
-    event: "login",
-    ipAddress: ip,
-  };
-
-  await User.findByIdAndUpdate(userId, {
-    $set: {
-      "locationData.current": current,
-      locationConsent: true,
-    },
-    $push: {
-      "locationData.history": {
-        $each: [historyEntry],
-        $slice: -MAX_LOCATION_HISTORY,
-      },
-    },
+    $set: { isOnline: false, lastSeen: new Date(), fcmToken: null },
   });
 };
 
@@ -446,7 +391,6 @@ const createLoginSession = async ({ req, res, user }) => {
     lastActivityAt: new Date(),
   });
   await markUserOnline(user);
-  await saveLoginLocationIfProvided({ req, userId: user._id });
   setAuthCookies(res, accessToken, refreshToken);
 
   return { accessToken, refreshToken };
@@ -544,7 +488,7 @@ export const updateUserById = async (req, res) => {
           try {
             await cloudinary.uploader.destroy(profileFile.filename);
           } catch (err) {
-            console.error("Error deleting rejected user profile photo:", err);
+            console.error("Error deleting rejected user profile photo:");
           }
         }
         return res.status(400).json({
@@ -571,7 +515,7 @@ export const updateUserById = async (req, res) => {
           await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
           console.log("Deleted old profile photo");
         } catch (err) {
-          console.error("Error deleting old photo:", err);
+          console.error("Error deleting old photo:");
         }
       }
 
@@ -603,7 +547,7 @@ export const updateUserById = async (req, res) => {
         try {
           await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
         } catch (err) {
-          console.error("Error deleting old photo on avatar switch:", err);
+          console.error("Error deleting old photo on avatar switch:");
         }
       }
       updates.profilePhoto = { url: String(req.body.avatarUrl).trim(), publicId: null };
@@ -618,7 +562,7 @@ export const updateUserById = async (req, res) => {
         try {
           await cloudinary.uploader.destroy(currentUser.profilePhoto.publicId);
         } catch (err) {
-          console.error("Error deleting photo on remove:", err);
+          console.error("Error deleting photo on remove:");
         }
       }
       updates.profilePhoto = null;
@@ -989,7 +933,7 @@ export const updateUserById = async (req, res) => {
         //   `Added ${processedCertifications.length} certifications to update`,
         // );
       } catch (error) {
-        console.error("Error processing certifications:", error);
+        console.error("Error processing certifications:");
       }
     } else if (
       req.body.certifications === null ||
@@ -1373,7 +1317,7 @@ export const updateUserById = async (req, res) => {
       user: formattedUser,
     });
   } catch (error) {
-    console.error("Update user error:", error);
+    console.error("Update user error:");
 
     // A concurrent update can still win between the duplicate check above
     // and MongoDB's write. Convert that unique-index error into the same
@@ -1416,7 +1360,6 @@ export const updateUserById = async (req, res) => {
     return res.status(500).json({
       message: "Error updating user",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -1465,18 +1408,17 @@ export const sendEmailOTP = async (req, res) => {
         deliveryProvider: delivery?.provider || "unknown",
       });
     } catch (sendError) {
-      console.error("OTP sending error:", sendError);
+      console.error("OTP sending error:");
       return res.status(500).json({
-        message: sendError?.message || "Failed to send OTP. Please try again.",
+        message: "Failed to send OTP. Please try again.",
         success: false,
       });
     }
   } catch (error) {
-    console.error("Send email OTP error:", error);
+    console.error("Send email OTP error:");
     return res.status(500).json({
       message: "Error sending OTP",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -1579,11 +1521,10 @@ export const verifyEmailOTP = async (req, res) => {
       nextStep: "complete_registration",
     });
   } catch (error) {
-    console.error("Verify email OTP error:", error);
+    console.error("Verify email OTP error:");
     return res.status(500).json({
       message: "Error verifying OTP",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -1752,11 +1693,10 @@ export const sendPhoneOTP = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Send phone OTP error:", error);
+    console.error("Send phone OTP error:");
     return res.status(500).json({
       message: "Error sending phone OTP",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -1820,7 +1760,7 @@ export const sendPhoneOTP = async (req, res) => {
 //         });
 
 //     } catch (error) {
-//         console.error("Verify phone OTP error:", error);
+//         console.error("Verify phone OTP error:");
 //         return res.status(500).json({ message: "Error verifying phone OTP", success: false, error: error.message });
 //     }
 // };
@@ -1921,11 +1861,10 @@ export const verifyPhoneOTP = async (req, res) => {
       nextStep: "complete_registration",
     });
   } catch (error) {
-    console.error("Verify phone OTP error:", error);
+    console.error("Verify phone OTP error:");
     return res.status(500).json({
       message: "Error verifying phone OTP",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -1992,10 +1931,6 @@ export const completeRegistration = async (req, res) => {
       });
     }
 
-    // DEBUG: Check what's in verifiedUsersStore
-    console.log(`🔍 Checking verification for email: ${email}`);
-    // console.log(`All verified users:`, Array.from(verifiedUsersStore.keys()));
-
     const userVerification = verifiedUsersStore.get(normalizedEmail);
     let hasVerifiedEmailToken = false;
 
@@ -2011,19 +1946,6 @@ export const completeRegistration = async (req, res) => {
       } catch (_error) {
         hasVerifiedEmailToken = false;
       }
-    }
-
-    // DEBUG: Log verification status
-    if (userVerification) {
-      console.log(`Verification data for ${email}:`, {
-        isEmailVerified: userVerification.isEmailVerified,
-        isPhoneVerified: userVerification.isPhoneVerified,
-        expiresAt: new Date(userVerification.expiresAt),
-        now: new Date(),
-        isExpired: Date.now() > userVerification.expiresAt,
-      });
-    } else {
-      console.log(`❌ No verification data found for ${email}`);
     }
 
     // Check if verification exists and is complete
@@ -2076,10 +1998,19 @@ export const completeRegistration = async (req, res) => {
       });
     }
 
-    // Auto-detect role based on counsellor fields
-    const hasCounsellorFields =
-      qualification && specialization && experience;
-    const role = hasCounsellorFields ? "counsellor" : "user";
+    // Honor the selected role; numeric zero is valid professional experience.
+    // Keep field inference for older clients which do not send a role.
+    const hasCounsellorFields = qualification && specialization &&
+      experience !== undefined && experience !== null && experience !== "";
+    const role = normalizeRole(req.body.role || req.body.accountRole) ||
+      (hasCounsellorFields ? "counsellor" : "user");
+    if (!["user", "counsellor"].includes(role) ||
+      (role === "counsellor" && (!hasCounsellorFields ||
+        !Number.isFinite(Number(experience)) || Number(experience) < 0 ||
+        typeof location !== "string" || !location.trim()))) {
+      return res.status(400).json({ success: false,
+        message: "Select a valid role and complete the consultant professional details." });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const dob = getAgeFromDateOfBirth(dateOfBirth);
@@ -2216,7 +2147,7 @@ export const completeRegistration = async (req, res) => {
       requiresLogin: true,
     });
   } catch (error) {
-    console.error("Complete registration error:", error);
+    console.error("Registration failed");
 
     if (error?.code === 11000) {
       const duplicateField = error?.keyPattern?.phoneNumber
@@ -2229,21 +2160,20 @@ export const completeRegistration = async (req, res) => {
     }
 
     // Rollback: Delete uploaded photo from Cloudinary if registration fails
-    if (req.file && profilePhotoData && profilePhotoData.publicId) {
+    if (req.file?.filename) {
       try {
-        await deleteFromCloudinary(profilePhotoData.publicId);
+        await deleteFromCloudinary(req.file.filename);
         console.log(
-          `Rollback: Deleted uploaded photo ${profilePhotoData.publicId}`,
+          "Registration photo rollback completed",
         );
       } catch (deleteError) {
-        console.error("Error rolling back photo upload:", deleteError);
+        console.error("Error rolling back photo upload:");
       }
     }
 
     return res.status(500).json({
       message: "Error completing registration",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -2275,10 +2205,12 @@ const expireStaleLoginSessions = async (userId) => {
 export const loginUser = async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
-    const { password } = req.body;
+    const { password } = req.body || {};
     const role = normalizeRole(req.body?.role);
 
-    if (!email || !password || !role) {
+    if (typeof req.body?.email !== "string" || !email ||
+      typeof password !== "string" || !password ||
+      !["user", "counsellor"].includes(role)) {
       return res.status(400).json({
         message: "Email, password and role are required",
         success: false,
@@ -2363,9 +2295,6 @@ export const loginUser = async (req, res) => {
     });
     await markUserOnline(user);
 
-    // Optional: if client sends GPS on login, store it (and append history event=login)
-    await saveLoginLocationIfProvided({ req, userId: user._id });
-
     // Set cookies (keep your existing options)
     res.cookie("accessToken", accessToken, {
       httpOnly: true,
@@ -2393,7 +2322,6 @@ export const loginUser = async (req, res) => {
     return res.status(500).json({
       message: "Error in login",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -2409,7 +2337,7 @@ export const googleAuth = async (req, res) => {
   try {
     const { idToken, role } = req.body;
 
-    if (!idToken) {
+    if (typeof idToken !== "string" || !idToken.trim()) {
       return res.status(400).json({
         message: "Google idToken is required",
         success: false,
@@ -2417,7 +2345,13 @@ export const googleAuth = async (req, res) => {
     }
 
     // Default role to "user" if not provided. Frontend should send "user" or "counsellor".
-    const requestedRole = role === "counsellor" ? "counsellor" : "user";
+    const requestedRole = role == null ? "user" : normalizeRole(role);
+    if (!["user", "counsellor"].includes(requestedRole)) {
+      return res.status(400).json({ success: false, message: "Invalid account role" });
+    }
+    if (!process.env.GOOGLE_CLIENT_ID?.trim()) {
+      return res.status(503).json({ success: false, message: "Google sign-in is temporarily unavailable" });
+    }
 
     // 1. Verify the Google ID token
     let payload;
@@ -2428,14 +2362,15 @@ export const googleAuth = async (req, res) => {
       });
       payload = ticket.getPayload();
     } catch (verifyErr) {
-      console.error("Google token verify failed:", verifyErr.message);
+      console.error("Google token verification failed");
       return res.status(401).json({
         message: "Invalid Google token",
         success: false,
       });
     }
 
-    if (!payload || !payload.email) {
+    if (!payload || typeof payload.email !== "string" || !payload.email ||
+      typeof payload.sub !== "string" || !payload.sub) {
       return res.status(401).json({
         message: "Google token did not contain email",
         success: false,
@@ -2568,7 +2503,7 @@ export const googleAuth = async (req, res) => {
         profileCompleted: false, // user still needs to add phone, age, etc.
         // The geo index rejects a Point subdoc without coordinates, but the
         // schema sets type="Point" by default. Initialize with [0,0] so insert
-        // succeeds; real coordinates land here when the client sends GPS.
+        // succeeds. Explicit location updates use the separate location endpoint.
         locationData: {
           current: { type: "Point", coordinates: [0, 0] },
           history: [],
@@ -2621,8 +2556,6 @@ export const googleAuth = async (req, res) => {
     });
     await markUserOnline(user);
 
-    // Optional: capture login location if GPS sent in body
-    await saveLoginLocationIfProvided({ req, userId: user._id });
 
     // 6. Cookies (same options as /login)
     res.cookie("accessToken", accessToken, {
@@ -2651,11 +2584,13 @@ export const googleAuth = async (req, res) => {
       isNewUser: !user.profileCompleted,
     });
   } catch (error) {
-    console.error("Google auth error:", error);
+    console.error("Google authentication failed");
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: "An account with these sign-in details already exists. Please sign in again." });
+    }
     return res.status(500).json({
       message: "Error during Google authentication",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -2665,14 +2600,17 @@ export const appleLogin = async (req, res) => {
   try {
     const { identityToken, authorizationCode, role, fullName } = req.body;
 
-    if (!identityToken) {
+    if (typeof identityToken !== "string" || !identityToken.trim()) {
       return res.status(400).json({
         message: "Apple identityToken is required",
         success: false,
       });
     }
 
-    const requestedRole = normalizeRole(role) === "counsellor" ? "counsellor" : "user";
+    const requestedRole = role == null ? "user" : normalizeRole(role);
+    if (!["user", "counsellor"].includes(requestedRole)) {
+      return res.status(400).json({ success: false, message: "Invalid account role" });
+    }
 
     let payload;
     try {
@@ -2823,11 +2761,13 @@ export const appleLogin = async (req, res) => {
       isNewUser: !user.profileCompleted,
     });
   } catch (error) {
-    console.error("Apple auth error:", error?.message || error);
+    console.error("Apple authentication failed");
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: "An account with these sign-in details already exists. Please sign in again." });
+    }
     return res.status(500).json({
       message: "Error during Apple authentication",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -2845,11 +2785,15 @@ export const relinkGoogleAccount = async (req, res) => {
     }
 
     const { idToken } = req.body;
-    if (!idToken) {
+    if (typeof idToken !== "string" || !idToken.trim()) {
       return res.status(400).json({
         success: false,
         message: "Google idToken is required",
       });
+    }
+
+    if (!process.env.GOOGLE_CLIENT_ID?.trim()) {
+      return res.status(503).json({ success: false, message: "Google sign-in is temporarily unavailable" });
     }
 
     let payload;
@@ -2860,7 +2804,7 @@ export const relinkGoogleAccount = async (req, res) => {
       });
       payload = ticket.getPayload();
     } catch (verifyErr) {
-      console.error("Google token verify failed (relink):", verifyErr.message);
+      console.error("Google relink token verification failed");
       return res.status(401).json({
         success: false,
         message: "Invalid Google token",
@@ -2939,11 +2883,10 @@ export const relinkGoogleAccount = async (req, res) => {
       user: user.toJSON(),
     });
   } catch (error) {
-    console.error("relinkGoogleAccount error:", error);
+    console.error("relinkGoogleAccount error:");
     return res.status(500).json({
       success: false,
       message: "Error linking Google account",
-      error: error.message,
     });
   }
 };
@@ -3013,7 +2956,7 @@ export const sendUnlinkGoogleOtp = async (req, res) => {
       ...devOtp,
     });
   } catch (err) {
-    console.error("sendUnlinkGoogleOtp error:", err);
+    console.error("sendUnlinkGoogleOtp error:");
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -3090,7 +3033,7 @@ export const unlinkGoogleAccount = async (req, res) => {
       user: user.toJSON(),
     });
   } catch (err) {
-    console.error("unlinkGoogleAccount error:", err);
+    console.error("unlinkGoogleAccount error:");
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -3122,7 +3065,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
 
     try {
       await otpService.sendLoginOTP(email, otp);
-      console.log(`✅ OTP email sent successfully to ${email}`);
+      console.log("Login verification email delivered");
     } catch (emailError) {
       await discardLoginChallenge(challenge);
       console.error("Login OTP delivery failed");
@@ -3196,9 +3139,6 @@ export const verifyLoginOTP = async (req, res) => {
 
     // The atomic consume above prevents concurrent reuse across instances.
 
-    // Optional: if client sends GPS on OTP-login, store it (and append history event=login)
-    await saveLoginLocationIfProvided({ req, userId: user._id });
-
     // Set cookies (same options you use elsewhere)
     res.cookie("accessToken", accessToken, {
       httpOnly: true,
@@ -3240,7 +3180,7 @@ export const refreshAccessToken = async (req, res) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET);
+      decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_SECRET, { algorithms: ["HS256"] });
     } catch (err) {
       return res.status(401).json({ message: "Invalid refresh token" });
     }
@@ -3269,9 +3209,13 @@ export const refreshAccessToken = async (req, res) => {
     const newAccessToken = generateAccessToken(user._id, session._id, user.role);
     const newRefreshToken = generateRefreshToken(user._id, session._id, user.role);
 
-    // Update session with new refresh token
-    session.refreshToken = newRefreshToken;
-    await session.save();
+    // Compare-and-set prevents concurrent reuse of the same refresh token.
+    const rotated = await Session.findOneAndUpdate(
+      { _id: session._id, userId: user._id, isActive: true, refreshToken: incomingRefreshToken },
+      { $set: { refreshToken: newRefreshToken } },
+      { returnDocument: "after" },
+    );
+    if (!rotated) return res.status(401).json({ message: "Token mismatch" });
     await markUserOnline(user);
 
     // Set cookies (for browser clients)
@@ -3328,7 +3272,7 @@ export const sessionHeartbeat = async (req, res) => {
 
     return res.status(204).send();
   } catch (error) {
-    console.error("Session heartbeat error:", error);
+    console.error("Session heartbeat error:");
     return res.status(500).json({
       success: false,
       message: "Could not update session heartbeat",
@@ -3415,7 +3359,7 @@ export const logout = async (req, res) => {
       success: true,
     });
   } catch (error) {
-    console.error("Logout error:", error);
+    console.error("Logout error:");
 
     // Even on error, try to clear cookies
     try {
@@ -3428,7 +3372,6 @@ export const logout = async (req, res) => {
     return res.status(500).json({
       message: "Error in logout",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -3467,7 +3410,7 @@ export const logoutAllDevices = async (req, res) => {
       .status(200)
       .json({ message: "Logged out from all devices", success: true });
   } catch (error) {
-    console.error("Logout all error:", error);
+    console.error("Logout all error:");
     return res
       .status(500)
       .json({ success: false, message: "Error logging out" });
@@ -3493,7 +3436,7 @@ export const getMySessions = async (req, res) => {
       .status(200)
       .json({ success: true, sessions, count: sessions.length });
   } catch (error) {
-    console.error("Get sessions error:", error);
+    console.error("Get sessions error:");
     return res
       .status(500)
       .json({ success: false, message: "Error fetching sessions" });
@@ -3796,12 +3739,11 @@ export const uploadProfilePhoto = async (req, res) => {
       user: updatedUser.toJSON(),
     });
   } catch (error) {
-    console.error("Photo upload error:", error);
+    console.error("Photo upload error:");
     if (req.file) deleteLocalFile(saveLocalFile(req.file));
     return res.status(500).json({
       message: "Error uploading photo",
       success: false,
-      error: error.message,
     });
   }
 };
@@ -3849,7 +3791,7 @@ export const forgotPassword = async (req, res) => {
       message: "Password reset instructions sent to your email",
     });
   } catch (error) {
-    console.error("Forgot password error:", error);
+    console.error("Forgot password error:");
     res
       .status(500)
       .json({ success: false, message: "Error processing request" });
@@ -3913,7 +3855,7 @@ export const resetPassword = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Password reset successful" });
   } catch (error) {
-    console.error("Reset password error:", error);
+    console.error("Reset password error:");
     res
       .status(500)
       .json({ success: false, message: "Error resetting password" });
@@ -3948,7 +3890,7 @@ export const setPassword = async (req, res) => {
 
     return res.status(200).json({ success: true, message: "Password set successfully" });
   } catch (error) {
-    console.error("setPassword error:", error);
+    console.error("setPassword error:");
     return res.status(500).json({ success: false, message: "Error setting password" });
   }
 };
@@ -3991,7 +3933,7 @@ export const verifyPasswordOtp = async (req, res) => {
       message: "OTP verified successfully",
     });
   } catch (error) {
-    console.error("verifyPasswordOtp error:", error);
+    console.error("verifyPasswordOtp error:");
     return res.status(500).json({
       success: false,
       message: "Error verifying OTP",
@@ -4038,7 +3980,7 @@ export const changePassword = async (req, res) => {
 
     return res.status(200).json({ success: true, message: "Password changed successfully. Please log in again." });
   } catch (error) {
-    console.error("changePassword error:", error);
+    console.error("changePassword error:");
     return res.status(500).json({ success: false, message: "Error changing password" });
   }
 };
@@ -4117,7 +4059,7 @@ export const setPasswordByOtp = async (req, res) => {
         : "Password set successfully. Please log in.",
     });
   } catch (error) {
-    console.error("setPasswordByOtp error:", error);
+    console.error("setPasswordByOtp error:");
     return res.status(500).json({ success: false, message: "Error setting password" });
   }
 };
@@ -4221,10 +4163,12 @@ export const deleteUser = async (req, res) => {
       code: "ACCOUNT_DELETION_PENDING",
       status: job.status,
       requestId: String(job._id),
-      message: "Your deletion request is recorded and account access is disabled. Cleanup is pending. Clinical, financial and related records are preserved until retention requirements are approved. Contact support@humaeli.com for request status.",
+      retentionUntil: job.retentionUntil,
+      retentionDays: 90,
+      message: "Your deletion request is recorded and account access is disabled. Cleanup is pending. Clinical, financial and related account records are retained for 90 days from your deletion request, then scheduled for cleanup, subject to legal holds and verified provider/backup cleanup. Contact support@humaeli.com for request status.",
     });
   } catch (error) {
-    console.error("deleteUser error:", error);
+    console.error("deleteUser error:");
     if (String(error.code || "").startsWith("APPLE_")) return res.status(error.status || 503).json({ success: false, code: error.code, message: error.message });
     return res
       .status(500)
@@ -4533,7 +4477,7 @@ export const sendProfileChangeOTP = async (req, res) => {
       });
     }
   } catch (err) {
-    console.error("sendProfileChangeOTP error:", err);
+    console.error("sendProfileChangeOTP error:");
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -4604,7 +4548,7 @@ export const verifyProfileChangeOTP = async (req, res) => {
       message: `${field === "email" ? "Email" : "Phone"} verified. Hit Save within 15 minutes to apply.`,
     });
   } catch (err) {
-    console.error("verifyProfileChangeOTP error:", err);
+    console.error("verifyProfileChangeOTP error:");
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };

@@ -179,47 +179,26 @@ describe("Demo payment isolation", () => {
     }
     expect(db.called).to.equal(false);
   });
-  it("books an appointment with a linked demo transaction and no wallet debit", async () => {
+  it("books legacy demo requests free without sessions, charges or wallet mutations", async () => {
     sandbox.stub(User, "findOne").returns(chain({ _id: cid }));
     sandbox.stub(User, "findById").returns(chain(null));
     const db = sandbox.stub(User, "updateOne");
-    sandbox
-      .stub(Notification, "create")
-      .callsFake(async (value) => ({ toObject: () => value }));
+    sandbox.stub(Notification, "create").callsFake(async value => ({ toObject: () => value }));
     sandbox.stub(Appointment.collection, "indexes").resolves(REQUIRED_BOOKING_INDEXES);
-    sandbox.stub(mongoose, "startSession").resolves({ withTransaction: async fn => fn(), endSession: async () => {} });
-    let saved;
-    sandbox.stub(Transaction, "create").callsFake(async (value) => {
-      saved = value[0];
-      return [{ ...saved, _id: new mongoose.Types.ObjectId() }];
-    });
-    sandbox
-      .stub(Appointment, "create")
-      .callsFake(async (value) => [{ ...value[0], status: "pending" }]);
+    const session = sandbox.stub(mongoose, "startSession").rejects(new Error("Transactions unavailable"));
+    const ledger = sandbox.stub(Transaction, "create");
+    const earnings = sandbox.stub(CounselorEarning, "create");
+    sandbox.stub(Appointment, "create").callsFake(async value => ({ ...value, status: "pending" }));
     const res = response();
-    await book(
-      {
-        user: { demoPaymentsEnabled: true, _id: uid, anonymous: "Demo User" },
-        body: {
-          counselorId: cid,
-          date: new Date(Date.now() + 86400000).toISOString(),
-          paymentMode: "demo", demoAmount: 1155,
-        },
-      },
-      res
-    );
+    await book({
+      user: { demoPaymentsEnabled: true, _id: uid, anonymous: "Demo User" },
+      body: { counselorId: cid, date: new Date(Date.now() + 86400000).toISOString(), paymentMode: "demo", demoAmount: 1155 },
+    }, res);
     expect(res.statusCode).to.equal(201);
-    expect(res.body).to.include({
-      paymentMode: "demo",
-      paymentStatus: "demo_completed",
-      status: "pending",
-    });
-    expect(saved).to.include({
-      amount: 1155,
-      paymentMode: "demo",
-      status: "demo_completed",
-    });
-    expect(String(saved.appointmentId)).to.equal(String(res.body._id));
+    expect(res.body).to.include({ paymentMode: "free", paymentStatus: "not_required", paymentTransactionId: null, status: "pending" });
+    expect(session.called).to.equal(false);
+    expect(ledger.called).to.equal(false);
+    expect(earnings.called).to.equal(false);
     expect(db.called).to.equal(false);
   });
   it("exposes only demo earnings, no bank details and no withdrawable entitlement", async () => {

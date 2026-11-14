@@ -29,7 +29,14 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
 (local ? describe : describe.skip)("Release gates (disposable local database only)", function () {
   this.timeout(30000);
   let db, appointments;
-  before(async () => { await mongoose.connect(process.env.MONGO_URI); db = mongoose.connection.db; });
+  before(async () => {
+    await mongoose.connect(process.env.MONGO_URI);
+    // Finish startup index creation before the per-test database reset. These
+    // migration fixtures deliberately start without indexes and may contain
+    // duplicates; an outstanding model initializer must not race their inserts.
+    await Promise.all(Object.values(mongoose.models).map(model => model.init()));
+    db = mongoose.connection.db;
+  });
   afterEach(() => sinon.restore());
   after(async () => mongoose.disconnect());
   beforeEach(async () => {
@@ -158,9 +165,9 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
       const auth = req => req.set("Authorization", `Bearer ${token}`);
       const first = await auth(request(app).delete("/delete")).send({ userId: new ObjectId().toString() });
       expect(first.status).to.equal(202); expect(first.body.success).to.equal(false); expect(first.body.requestId).to.equal(String(id));
-      expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+      expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
       for (let n = 0; n < 3; n += 1) {
-        const retry = await auth(request(app).delete("/delete")); expect(retry.status).to.equal(202); expect(retry.body.status).to.equal("blocked_retention"); expect(retry.body.success).to.equal(false);
+        const retry = await auth(request(app).delete("/delete")); expect(retry.status).to.equal(202); expect(retry.body.status).to.equal("waiting_retention"); expect(retry.body.success).to.equal(false);
       }
       expect((await auth(request(app).get("/protected"))).status).to.equal(401);
       expect(await db.collection("prescriptions").findOne({ _id: clinical._id })).to.deep.equal(clinical);
@@ -175,12 +182,13 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     const id = new mongoose.Types.ObjectId();
     await User.collection.insertOne({ _id: id, email: `${id}@example.test`, role: "user", isActive: true });
     await AccountDeletionJob.collection.insertOne({ _id: id, status: "pending", attempts: 0, nextAttemptAt: new Date(0) });
-    expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
     const persisted = await AccountDeletionJob.collection.findOne({ _id: id });
     expect(persisted.cleanupTracking.legalHolds).to.equal("unreviewed");
     expect(persisted.cleanupTracking.backups).to.equal("not_verified");
     expect(persisted.cleanupTracking.aiConsent).to.equal("revoked");
-    expect(persisted.blockers).to.include.members(["LEGAL_HOLD_REVIEW_REQUIRED", "BACKUP_CLEANUP_VERIFICATION_REQUIRED", "EXTERNAL_PROVIDER_CLEANUP_VERIFICATION_REQUIRED"]);
+    expect(persisted.blockers).to.deep.equal(["RETENTION_PERIOD_ACTIVE"]);
+    expect(persisted.retentionUntil).to.be.instanceOf(Date);
   });
   it("synthetic attachment cutover preserves bytes/ownership and refuses stale pointer updates", async () => {
     const owner = new mongoose.Types.ObjectId(), counselor = new mongoose.Types.ObjectId(), outsider = new mongoose.Types.ObjectId();

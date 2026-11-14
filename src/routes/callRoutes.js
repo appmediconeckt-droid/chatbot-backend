@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { requireUnblockedInteraction } from '../services/interactionSafety.js';
+import { requireUnblockedInteraction, requireUnblockedCallInteraction } from '../services/interactionSafety.js';
 import {
   initiateCall,
   getCallDetails,
@@ -39,7 +39,7 @@ router.get('/:callId', authenticateToken, getCallDetails);
  * @desc    Accept an incoming call
  * @access  Private (only receiver)
  */
-router.post('/:callId/accept', authenticateToken, acceptCall);
+router.post('/:callId/accept', authenticateToken, requireUnblockedCallInteraction, acceptCall);
 
 /**
  * @route   POST /api/call/:callId/reject
@@ -67,7 +67,7 @@ router.post('/:callId/miss', authenticateToken, missCall);
  * @desc    Mark call as ringing
  * @access  Private
  */
-router.post('/:callId/ring', authenticateToken, ringCall);
+router.post('/:callId/ring', authenticateToken, requireUnblockedCallInteraction, ringCall);
 
 /**
  * @route   PATCH /api/call/:callId/status

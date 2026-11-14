@@ -1,3 +1,4 @@
+import { accountDeletionPending } from "./accountDeletionService.js";
 import Notification from "../models/Notification.js";
 import User from "../models/userModel.js";
 import { sendPushNotification } from "./pushNotificationService.js";
@@ -30,6 +31,11 @@ export const createNotification = async ({
   if (!recipientId) return null;
   if (!enabledNotificationTypes.has(type)) return null;
 
+  const recipient = await User.findById(recipientId)
+    .select("fcmToken role devicePlatform isActive")
+    .lean();
+  if (!recipient || recipient.isActive === false || await accountDeletionPending(recipientId)) return null;
+
   const notification = await Notification.create({
     recipientId,
     actorId,
@@ -52,10 +58,6 @@ export const createNotification = async ({
   }
 
   try {
-    const recipient = await User.findById(recipientId)
-      .select("fcmToken role devicePlatform")
-      .lean();
-
     if (recipient?.fcmToken) {
       const pushData = {
         type: data?.type || notificationTypeToPushType[type] || String(type).toUpperCase(),
@@ -76,7 +78,7 @@ export const createNotification = async ({
       });
     }
   } catch (error) {
-    console.error("Push delivery failed:", error.message);
+    console.error("Push delivery failed");
   }
 
   return notification;
@@ -87,7 +89,7 @@ export const createNotificationSafely = async (payload) => {
   try {
     return await createNotification(payload);
   } catch (error) {
-    console.error("Notification creation failed:", error.message);
+    console.error("Notification creation failed");
     return null;
   }
 };

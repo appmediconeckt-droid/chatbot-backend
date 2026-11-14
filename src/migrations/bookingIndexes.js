@@ -1,7 +1,6 @@
 import { REQUIRED_BOOKING_INDEXES, bookingIndexesReady } from "../services/appointmentIndexes.js";
 
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const matches = (actual, expected) => actual?.unique === true && same(actual.key, expected.key) && same(actual.partialFilterExpression, expected.partialFilterExpression);
+const matches = (actual, expected) => bookingIndexesReady([actual], [expected]);
 const active = { status: { $in: ["pending", "confirmed"] } };
 
 async function duplicateGroups(collection, match, fields) {
@@ -16,12 +15,10 @@ async function duplicateGroups(collection, match, fields) {
 // Read-only preflight: no record repair, normalization, collection creation,
 // index replacement or implicit choice of which appointment should win.
 export async function inspectBookingMigration(db) {
-  const hello = await db.admin().command({ hello: 1 });
   const collection = db.collection("appointments");
   const exists = await db.listCollections({ name: "appointments" }, { nameOnly: true }).hasNext();
   const indexes = exists ? await collection.indexes() : [];
   const blockers = [];
-  if (!hello.setName && hello.msg !== "isdbgrid") blockers.push("TRANSACTION_CAPABLE_DATABASE_REQUIRED");
   const duplicates = exists ? {
     counselorStarts: await duplicateGroups(collection, active, ["counselor", "date"]),
     patientStarts: await duplicateGroups(collection, active, ["patient", "date"]),

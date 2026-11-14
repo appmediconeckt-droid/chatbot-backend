@@ -6,7 +6,11 @@ const visibleNotificationTypes = ["appointment", "payment", "message", "call", "
 
 export const saveFCMToken = async (req, res) => {
   try {
-    const userId = req.body?.userId || req.user?._id || req.user?.userId;
+    const userId = req.user?._id || req.user?.userId;
+    if (!userId) return res.status(401).json({ success: false, message: "Authentication required" });
+    if (req.body?.userId !== undefined && String(req.body.userId) !== String(userId)) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
     const fcmToken = req.body?.fcmToken || req.body?.token;
     const { platform } = req.body || {};
 
@@ -18,20 +22,25 @@ export const saveFCMToken = async (req, res) => {
     }
 
     const normalizedToken = typeof fcmToken === "string" ? fcmToken.trim() : "";
-    if (!normalizedToken) {
+    if (!normalizedToken || normalizedToken.length > 4096) {
       return res.status(400).json({
         success: false,
         message: "fcmToken is required",
       });
     }
 
+    if (platform !== undefined && !["ios", "android"].includes(platform)) {
+      return res.status(400).json({ success: false, message: "Invalid device platform" });
+    }
     const updateData = { fcmToken: normalizedToken };
     if (platform !== undefined) {
       updateData.devicePlatform = platform || null;
     }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
+    // A device token must not remain attached to a previous signed-in account.
+    await User.updateMany({ _id: { $ne: userId }, fcmToken: normalizedToken }, { $set: { fcmToken: null } });
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, isActive: true },
       { $set: updateData },
       { new: true },
     );
@@ -48,7 +57,7 @@ export const saveFCMToken = async (req, res) => {
       message: "FCM token saved successfully",
     });
   } catch (error) {
-    console.error("FCM token save error:", error);
+    console.error("FCM token save failed");
 
     return res.status(500).json({
       success: false,

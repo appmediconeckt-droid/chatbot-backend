@@ -74,8 +74,14 @@ const tryRefreshAndContinue = async (req, res, next, incomingRefreshToken) => {
     const newRefreshToken = generateRefreshToken(user._id, session._id, user.role);
 
     // 6. Persist new refresh token
-    session.refreshToken = newRefreshToken;
-    await session.save();
+    const rotated = await Session.findOneAndUpdate(
+      { _id: session._id, userId: user._id, isActive: true, refreshToken: incomingRefreshToken },
+      { $set: { refreshToken: newRefreshToken } },
+      { returnDocument: "after" },
+    );
+    if (!rotated) return res.status(401).json({
+      success: false, error: "Token mismatch. Please log in again.", code: "TOKEN_MISMATCH",
+    });
 
     // 7. Set new cookies
     const cookieBase = {

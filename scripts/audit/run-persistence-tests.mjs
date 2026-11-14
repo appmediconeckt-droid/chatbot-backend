@@ -8,7 +8,10 @@ import { MongoClient } from 'mongodb';
 const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
 Object.assign(env, { NODE_ENV: 'test', ACCESS_SECRET: 'isolated-persistence-access-fixture', REFRESH_SECRET: 'isolated-persistence-refresh-fixture', ACCESS_TOKEN_SECRET: 'isolated-persistence-access-fixture', REFRESH_TOKEN_SECRET: 'isolated-persistence-refresh-fixture' });
 let failed = false;
-for (const file of ['chatExpiry', 'googleAuthChatFlow', 'demoPaymentPersistence', 'loginChallengeIntegration', 'securityPersistence', 'releaseGateVerification']) {
+const suites = ['chatExpiry', 'googleAuthChatFlow', 'demoPaymentPersistence', 'loginChallengeIntegration', 'securityPersistence', 'releaseGateVerification', 'build21OtpPersistence', 'build21RestoredIntegration'];
+const selected = process.argv.slice(2);
+if (selected.some(file => !suites.includes(file))) throw new Error('Unknown isolated persistence suite');
+for (const file of selected.length ? selected : suites) {
   const mongo = await MongoMemoryReplSet.create({ replSet: { count: 1, ip: '127.0.0.1' } });
   try {
     const uri = mongo.getUri(`audit_${file}`);

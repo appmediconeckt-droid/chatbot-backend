@@ -1,5 +1,6 @@
 import { logoutOtherDevicesAndSendOTP } from "../controllers/authController.js";
 import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
+import { accountDeletionPending } from "../services/accountDeletionService.js";
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
 import otpService from "../services/otpService.js";
@@ -7,9 +8,9 @@ import otpService from "../services/otpService.js";
 // ================= RESEND OTP =================
 export const resendOtp = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
 
-    if (!email) {
+    if (typeof email !== "string" || !email.trim()) {
       return res.status(400).json({ message: "Email is required", success: false });
     }
 
@@ -24,6 +25,10 @@ export const resendOtp = async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: "User not found", success: false });
+    }
+
+    if (!user.isActive || await accountDeletionPending(user._id)) {
+      return res.status(401).json({ message: "Account is unavailable", success: false });
     }
 
     const otp = await otpService.generateOTPForAccount(normalizedEmail);
@@ -41,7 +46,7 @@ export const resendOtp = async (req, res) => {
     return res.status(200).json({ message: "OTP resent successfully", success: true });
 
   } catch (error) {
-    console.error("resendOtp error:", error);
+    console.error("OTP resend failed");
     return res.status(500).json({ message: "Error resending OTP. Please try again.", success: false });
   }
 };

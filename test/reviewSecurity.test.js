@@ -113,6 +113,12 @@ describe("App review account security", () => {
         save: sinon.stub().resolves(),
       };
       sinon.stub(Session, "findById").resolves(session);
+      sinon.stub(Session, "findOneAndUpdate").callsFake(async (query, update) => {
+        expect(query.refreshToken).to.equal(session.refreshToken);
+        expect(query.isActive).to.equal(true);
+        session.refreshToken = update.$set.refreshToken;
+        return session;
+      });
       sinon.stub(Session, "findOne").resolves(session);
       sinon
         .stub(User, "findById")

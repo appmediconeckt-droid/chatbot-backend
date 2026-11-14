@@ -1,5 +1,7 @@
 // Preload before application imports. Never load repository .env credentials.
 process.env.AUDIT_ISOLATED_ENV = 'true';
+// Non-secret audience fixture; provider verification remains mocked in tests.
+process.env.GOOGLE_CLIENT_ID = 'isolated-audit.apps.googleusercontent.com';
 const dotenv = require('dotenv');
 dotenv.config = () => ({ parsed: {} });
 const { generateKeyPairSync } = require('node:crypto');

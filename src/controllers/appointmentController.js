@@ -1,7 +1,6 @@
-import { bookingIndexesReady } from "../services/appointmentIndexes.js";
+import { ensureBookingIndexes } from "../services/ensureBookingIndexes.js";
 import { createHash } from "node:crypto";
 // mindCrawller/src/controllers/appointmentController.js
-import Transaction from "../models/transactionModel.js";
 import mongoose from "mongoose";
 import Appointment from "../models/appointmentModel.js";
 import User from "../models/userModel.js";
@@ -64,7 +63,7 @@ const getEndOfDayIST = (date) => {
 
 export const book = async (req, res) => {
   try {
-    const { counselorId, date, notes } = req.body;
+    const { counselorId, date, notes } = req.body || {};
 
     // Basic validation
     if (!counselorId || !date) {
@@ -97,50 +96,33 @@ export const book = async (req, res) => {
       });
     }
 
-    const demoAmount = Number(req.body.demoAmount || 0);
-    if (
-      !Number.isFinite(demoAmount) ||
-      demoAmount < 0 ||
-      demoAmount > 100000 ||
-      Math.abs(demoAmount * 100 - Math.round(demoAmount * 100)) > 0.000001
-    ) {
-      return res
-        .status(400)
-        .json({ message: "Invalid simulated appointment amount" });
-    }
+    // All appointment bookings are free, including legacy/demo clients.
+    // Supplied amounts/payment flags never create a charge or ledger record.
     const appointmentId = new mongoose.Types.ObjectId();
-    if (req.body.paymentMode === "demo" && req.user.demoPaymentsEnabled !== true) {
-      return res.status(403).json({ code: "DEMO_SIMULATION_DISABLED", message: "Demo simulation is not enabled for this account" });
-    }
-    const simulation = req.user.demoPaymentsEnabled === true && req.body.paymentMode === "demo";
     const requestKey = req.get?.("Idempotency-Key") || req.body.requestId;
     if (requestKey && !/^[a-zA-Z0-9_-]{8,128}$/.test(requestKey)) return res.status(400).json({ message: "Invalid booking request key" });
-    const requestHash = createHash("sha256").update(JSON.stringify([String(counselorId), appointmentDate.toISOString(), notes || "", simulation, simulation ? demoAmount : 0])).digest("hex");
-    // Never claim concurrency protection if the rollout indexes are missing.
-    const indexes = await Appointment.collection.indexes();
-    if (!bookingIndexesReady(indexes)) return res.status(503).json({ code: "BOOKING_SETUP_REQUIRED", message: "Booking setup needs verification. Please contact support." });
+    const requestHash = createHash("sha256").update(JSON.stringify([String(counselorId), appointmentDate.toISOString(), notes || "", false, 0])).digest("hex");
+    // Production disables Mongoose autoIndex. Build missing constraints before
+    // accepting a write; never drop conflicting indexes or repair patient data.
+    try {
+      await ensureBookingIndexes(Appointment.collection);
+    } catch (error) {
+      console.warn("Appointment index setup unavailable", { code: error.code || "INDEX_SETUP_FAILED", blockers: error.blockers });
+      return res.status(503).json({ code: "BOOKING_SETUP_REQUIRED", message: "Booking is temporarily unavailable. Please try again shortly." });
+    }
     if (requestKey) {
       const existing = await Appointment.findOne({ patient: req.user._id, requestKey });
       if (existing) return existing.requestHash === requestHash ? res.status(200).json(existing) : res.status(409).json({ code: "IDEMPOTENCY_CONFLICT", message: "This request key was used for another booking" });
     }
     let appointment;
-    const session = await mongoose.startSession();
     try {
-      await session.withTransaction(async () => {
-        // Reset on transaction callback retries; MongoDB may rerun this closure.
-        const transaction = simulation ? (await Transaction.create([{
-          userId: req.user._id, counselorId, appointmentId, amount: demoAmount,
-          paymentMode: "demo", status: "demo_completed", type: "debit",
-          description: "Demo appointment payment — no charge or monetary entitlement",
-          metadata: { simulationOnly: true, redeemable: false },
-        }], { session }))[0] : null;
-        appointment = (await Appointment.create([{
-          _id: appointmentId, paymentMode: simulation ? "demo" : "free",
-          paymentStatus: simulation ? "demo_completed" : "not_required",
-          paymentTransactionId: transaction?._id || null, patient: req.user._id,
-          counselor: counselorId, date: appointmentDate, notes,
-          ...(requestKey ? { requestKey, requestHash } : {}),
-        }], { session }))[0];
+      // A free booking changes one document. Unique indexes provide atomic
+      // reservation/idempotency protection without requiring replica-set transactions.
+      appointment = await Appointment.create({
+        _id: appointmentId, paymentMode: "free", paymentStatus: "not_required",
+        paymentTransactionId: null, patient: req.user._id,
+        counselor: counselorId, date: appointmentDate, notes,
+        ...(requestKey ? { requestKey, requestHash } : {}),
       });
     } catch (error) {
       if (error.code === 11000) {
@@ -149,7 +131,7 @@ export const book = async (req, res) => {
         return res.status(409).json({ code: "SLOT_UNAVAILABLE", message: "This appointment time is no longer available" });
       }
       throw error;
-    } finally { await session.endSession(); }
+    }
 
     // Notify the counselor via socket if global.io exists
     if (global.io) {
@@ -226,10 +208,12 @@ export const getAppointments = async (req, res) => {
       };
     }
 
-    const appointments = await Appointment.find({
+    const query = Appointment.find({
       $or: [{ patient: userId }, { counselor: userId }],
       ...dateFilter,
-    })
+    });
+    if (req.user.role === "counsellor") query.select("+sessionNote");
+    const appointments = await query
       .populate("patient", "fullName profilePhoto anonymous")
       .populate("counselor", "fullName profilePhoto anonymous")
       .sort({ date: -1 })
@@ -239,6 +223,8 @@ export const getAppointments = async (req, res) => {
       return res.json(
         appointments.map((appointment) => ({
           ...appointment,
+          sessionNote: String(appointment.counselor?._id || appointment.counselor) === String(userId)
+            ? appointment.sessionNote : undefined,
           patient: sanitizeUserForCounselor(
             appointment.patient,
             appointment.patient?._id || appointment.patient
@@ -251,6 +237,26 @@ export const getAppointments = async (req, res) => {
   } catch (err) {
     console.error("❌ get appointments error", err);
     return res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const updateSessionNote = async (req, res) => {
+  if (req.user?.role !== "counsellor") return res.status(403).json({ message: "Only consultants can save session notes" });
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid appointment ID" });
+  const note = req.body?.sessionNote;
+  if (typeof note !== "string" || !note.trim() || note.length > 5000) {
+    return res.status(400).json({ message: "Enter a session note between 1 and 5000 characters" });
+  }
+  try {
+    const appointment = await Appointment.findOneAndUpdate(
+      { _id: req.params.id, counselor: req.user._id },
+      { $set: { sessionNote: note.trim() } },
+      { returnDocument: "after", runValidators: true },
+    ).select("_id +sessionNote");
+    if (!appointment) return res.status(404).json({ message: "Appointment not found" });
+    return res.json({ appointment: { _id: appointment._id, sessionNote: appointment.sessionNote } });
+  } catch {
+    return res.status(500).json({ message: "Unable to save session notes. Please try again." });
   }
 };
 

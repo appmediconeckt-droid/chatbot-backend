@@ -6,7 +6,11 @@ import RefreshToken from "../models/refreshTokenModel.js";
 import { revokeAppleAuthorization, appleTokenStorageConfigured } from "./appleTokenService.js";
 import { revokeConsent } from "./aiConsent.js";
 
-export const RETENTION_BLOCKER = "RETENTION_POLICY_APPROVAL_REQUIRED";
+import deletionNotification from "./deletionNotification.js";
+import Chat from "../models/Chat.js";
+import { cleanupAccountData } from "./accountCleanupService.js";
+import { deletionDueAt, deletionCleanupBlockers, RETENTION_DAYS, RETENTION_POLICY_VERSION } from "./deletionRetentionPolicy.js";
+export const RETENTION_BLOCKER = "RETENTION_PERIOD_ACTIVE";
 
 export async function requestAccountDeletion(user) {
   // Validate prerequisites while the caller can still reauthenticate with Apple.
@@ -16,7 +20,7 @@ export async function requestAccountDeletion(user) {
     if (!appleTokenStorageConfigured()) throw Object.assign(new Error("Apple deletion configuration is required. Contact support@humaeli.com."), { code: "APPLE_REVOCATION_SETUP_REQUIRED", status: 503 });
   }
   const job = await AccountDeletionJob.findOneAndUpdate({ _id: user._id }, {
-    $setOnInsert: { status: "pending", nextAttemptAt: new Date() },
+    $setOnInsert: { status: "pending", nextAttemptAt: new Date(), retentionUntil: deletionDueAt(new Date()), policyVersion: RETENTION_POLICY_VERSION },
   }, { upsert: true, returnDocument: "after" });
   // The durable request itself is also an auth barrier. A crash between these
   // writes cannot restore access; middleware checks the job as well as isActive.
@@ -29,16 +33,15 @@ export async function requestAccountDeletion(user) {
 
 export const accountDeletionPending = async userId => Boolean(await AccountDeletionJob.exists({ _id: userId }));
 
-// All effects before the retention gate are safe to repeat. No service,
-// clinical, financial, attachment or identity record is erased without an
-// approved retention policy. There is deliberately no env-var bypass.
+// Access is revoked immediately; records wait 90 days from the request.
+// Provider/backup verification and legal holds prevent a false completion.
 export async function processAccountDeletionJob(now = new Date()) {
   const leaseOwner = randomUUID();
   const job = await AccountDeletionJob.findOneAndUpdate({
-    status: { $in: ["pending", "processing", "retry"] },
+    status: { $in: ["pending", "processing", "retry", "waiting_retention", "blocked_retention", "blocked_cleanup"] },
     nextAttemptAt: { $lte: now },
     $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: now } }],
-  }, { $set: { status: "processing", leaseOwner, leaseUntil: new Date(now.getTime() + 120000) }, $inc: { attempts: 1 } }, { returnDocument: "after", sort: { nextAttemptAt: 1 } });
+  }, { $set: { status: "processing", leaseOwner, leaseUntil: new Date(now.getTime() + 120000) }, $inc: { attempts: 1 } }, { returnDocument: "after", sort: { nextAttemptAt: 1 } }).select("+completionEmail");
   if (!job) return null;
   const fence = { _id: job._id, leaseOwner };
   try {
@@ -46,7 +49,14 @@ export async function processAccountDeletionJob(now = new Date()) {
     // never interpreted as no legal hold, no backup or provider erasure.
     await AccountDeletionJob.updateOne({ ...fence, cleanupTracking: { $exists: false } }, { $set: { cleanupTracking: initialDeletionTracking() } });
     const user = await User.findById(job._id).select("+appleTokenCiphertext");
-    if (!user) throw Object.assign(new Error("Missing account requires operator reconciliation"), { code: "ACCOUNT_RECONCILIATION_REQUIRED" });
+    if (!user) {
+      if (job.cleanupContext && !deletionCleanupBlockers(job.cleanupTracking).length && now >= (job.retentionUntil || deletionDueAt(job.createdAt || now))) {
+        await deletionNotification.send(job.completionEmail);
+        await AccountDeletionJob.updateOne(fence, { $set: { status: "completed", completedAt: now, completionNoticeSentAt: now, blockers: [], "cleanupTracking.retainedRecords": "verified_erased" }, $unset: { leaseUntil: 1, leaseOwner: 1, cleanupContext: 1, completionEmail: 1 } });
+        return { id: String(job._id), status: "completed" };
+      }
+      throw Object.assign(new Error("Missing account requires operator reconciliation"), { code: "ACCOUNT_RECONCILIATION_REQUIRED" });
+    }
     await User.updateOne({ _id: job._id }, { $set: { isActive: false, isOnline: false, fcmToken: null } });
     await Session.updateMany({ userId: job._id }, { $set: { isActive: false } });
     await RefreshToken.deleteMany({ userId: job._id });
@@ -58,11 +68,40 @@ export async function processAccountDeletionJob(now = new Date()) {
     await AccountDeletionJob.updateOne(fence, { $set: { "cleanupTracking.appleAuthorization": user.appleId ? "revoked" : "not_applicable" } });
     await revokeConsent(job._id);
     await AccountDeletionJob.updateOne(fence, { $set: { "cleanupTracking.aiConsent": "revoked" } });
+    const retentionUntil = job.retentionUntil || deletionDueAt(job.createdAt || now);
+    if (now < retentionUntil) {
+      await AccountDeletionJob.updateOne(fence, {
+        $set: { status: "waiting_retention", retentionUntil, policyVersion: RETENTION_POLICY_VERSION, nextAttemptAt: retentionUntil, blockers: [RETENTION_BLOCKER] },
+        $unset: { leaseUntil: 1, leaseOwner: 1, lastErrorCode: 1 },
+      });
+      return { id: String(job._id), status: "waiting_retention", retentionUntil, retentionDays: RETENTION_DAYS };
+    }
+    const blockers = deletionCleanupBlockers(job.cleanupTracking);
+    if (blockers.length) {
+      await AccountDeletionJob.updateOne(fence, {
+        $set: { status: "blocked_cleanup", retentionUntil, blockers, nextAttemptAt: new Date(now.getTime() + 3600000) },
+        $unset: { leaseUntil: 1, leaseOwner: 1 },
+      });
+      return { id: String(job._id), status: "blocked_cleanup" };
+    }
+    // Persist the relationship inventory before any purge so retries cannot
+    // orphan messages/assets if an earlier attempt already removed a chat.
+    let cleanupContext = job.cleanupContext;
+    if (!cleanupContext) {
+      const chats = await Chat.find({ $or: [{ userId: job._id }, { counselorId: job._id }] }).select("_id chatId paidSessionId");
+      cleanupContext = { chats: chats.map(c => ({ _id: c._id, chatId: c.chatId, paidSessionId: c.paidSessionId })) };
+      await AccountDeletionJob.updateOne(fence, { $set: { cleanupContext } });
+    }
+    await AccountDeletionJob.updateOne(fence, { $set: { completionEmail: user.email } });
+    const result = await cleanupAccountData({ userId: job._id, email: user.email, cleanupContext, eraseFinancial: true });
+    if (!result.acknowledged) throw new Error("Cleanup not acknowledged");
+    await User.deleteOne({ _id: job._id });
+    await deletionNotification.send(user.email);
     await AccountDeletionJob.updateOne(fence, {
-      $set: { status: "blocked_retention", blockers: [RETENTION_BLOCKER, "LEGAL_HOLD_REVIEW_REQUIRED", "BACKUP_CLEANUP_VERIFICATION_REQUIRED", "EXTERNAL_PROVIDER_CLEANUP_VERIFICATION_REQUIRED"] },
-      $unset: { leaseUntil: 1, leaseOwner: 1, lastErrorCode: 1 },
+      $set: { status: "completed", completedAt: now, completionNoticeSentAt: now, blockers: [], "cleanupTracking.retainedRecords": "verified_erased" },
+      $unset: { leaseUntil: 1, leaseOwner: 1, cleanupContext: 1, completionEmail: 1, lastErrorCode: 1 },
     });
-    return { id: String(job._id), status: "blocked_retention" };
+    return { id: String(job._id), status: "completed" };
   } catch (error) {
     // Persist only a controlled code, never provider bodies, tokens or PII.
     const code = /^APPLE_[A-Z_]+$/.test(error.code || "") ? error.code : "CLEANUP_RETRY_REQUIRED";

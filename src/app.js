@@ -385,9 +385,11 @@ const isAllowedOrigin = (origin) => {
     (allowedOrigin) => normalizeOrigin(allowedOrigin) === normalized,
   );
 
-  return (
-    exactMatch || isDevTunnelOrigin(normalized) || isLocalOrigin(normalized)
-  );
+  if (process.env.NODE_ENV === "production") {
+    return exactMatch && normalized.startsWith("https://") &&
+      normalized !== "https://your-frontend-domain.com";
+  }
+  return exactMatch || isDevTunnelOrigin(normalized) || isLocalOrigin(normalized);
 };
 
 const corsOptions = {
@@ -406,6 +408,7 @@ const corsOptions = {
     "Accept",
   ],
   optionsSuccessStatus: 204,
+  exposedHeaders: ["X-New-Access-Token"],
 };
 
 app.use(cors(corsOptions));

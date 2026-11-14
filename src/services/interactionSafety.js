@@ -1,3 +1,4 @@
+import Call from "../models/Call.js";
 import mongoose from "mongoose";
 import UserBlock from "../models/UserBlock.js";
 import Chat from "../models/Chat.js";
@@ -51,5 +52,23 @@ export const requireUnblockedInteraction = async (req, res, next) => {
     res
       .status(503)
       .json({ error: "Unable to check safety settings. Please retry." });
+  }
+};
+
+// Starting/resuming media remains subject to current participant and block checks.
+// End/reject actions intentionally remain available for cleanup after a block.
+export const requireUnblockedCallInteraction = async (req, res, next) => {
+  try {
+    const call = await Call.findOne({ callId: req.params.callId });
+    if (!call) return res.status(404).json({ error: "Call not found" });
+    if (![call.callerId, call.receiverId].some(id => String(id) === String(req.user._id))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (await interactionIsBlocked(call.callerId, call.receiverId)) {
+      return res.status(403).json({ error: "This interaction is blocked", code: "INTERACTION_BLOCKED" });
+    }
+    next();
+  } catch {
+    res.status(503).json({ error: "Unable to check call authorization" });
   }
 };

@@ -22,12 +22,17 @@ import RefreshToken from "../models/refreshTokenModel.js";
 import Session from "../models/sessionModel.js";
 import AIChat from "../models/chatModel.js";
 
+import PrivateAsset from "../models/PrivateAsset.js";
+import LoginChallenge from "../models/loginChallengeModel.js";
+import Transaction from "../models/transactionModel.js";
+import CounselorEarning from "../models/CounselorEarning.js";
+
 const toObjectId = (value) => {
   if (!mongoose.Types.ObjectId.isValid(value)) return null;
   return new mongoose.Types.ObjectId(value);
 };
 
-export const cleanupAccountData = async ({ userId, email } = {}) => {
+export const cleanupAccountData = async ({ userId, email, cleanupContext, eraseFinancial = false } = {}) => {
   const objectId = toObjectId(userId);
   if (!objectId) {
     throw new Error("A valid userId is required for account cleanup");
@@ -38,7 +43,7 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
   await AbuseReport.deleteMany({ $or: [{ reporterId: objectId }, { reportedId: objectId }] });
 
   const idFilter = { $in: [objectId, String(objectId)] };
-  const chats = await Chat.find({
+  const chats = cleanupContext?.chats || await Chat.find({
     $or: [{ userId: objectId }, { counselorId: objectId }],
   }).select("_id chatId paidSessionId");
   const chatObjectIds = chats.map((chat) => chat._id);
@@ -49,6 +54,8 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const cleanupTasks = [
     AIConsent.deleteMany({ userId: objectId }),
+    PrivateAsset.deleteMany({ $or: [{ ownerId: objectId }, { chatId: { $in: chatObjectIds } }] }),
+    LoginChallenge.deleteMany({ _id: objectId }),
     Appointment.deleteMany({ $or: [{ patient: objectId }, { counselor: objectId }] }),
     Call.deleteMany({
       $or: [{ callerId: objectId }, { receiverId: objectId }, { endedBy: objectId }],
@@ -101,6 +108,10 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
     );
   }
 
+  if (eraseFinancial) cleanupTasks.push(
+    Transaction.deleteMany({ $or: [{ userId: objectId }, { counselorId: objectId }] }),
+    CounselorEarning.deleteMany({ $or: [{ userId: objectId }, { counselorId: objectId }] }),
+  );
   const results = await Promise.all(cleanupTasks);
   const summary = results.reduce((acc, result, index) => {
     acc.operations += 1;
@@ -119,7 +130,7 @@ export const cleanupAccountData = async ({ userId, email } = {}) => {
   return {
     ...summary,
     chatCount: chatObjectIds.length,
-    paymentHistoryPreserved: true,
+    paymentHistoryPreserved: !eraseFinancial,
   };
 };
 

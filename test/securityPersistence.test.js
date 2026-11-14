@@ -17,6 +17,7 @@ import Chat from "../src/models/Chat.js";
 import Message from "../src/models/Message.js";
 import PrivateAsset from "../src/models/PrivateAsset.js";
 import { requestAccountDeletion, processAccountDeletionJob } from "../src/services/accountDeletionService.js";
+import deletionNotification from "../src/services/deletionNotification.js";
 import { encryptAppleToken } from "../src/services/appleTokenService.js";
 import { authenticateToken, authenticateSocket } from "../src/middleware/auth.js";
 import { deletionRequestAuth } from "../src/middleware/deletionRequestAuth.js";
@@ -70,11 +71,11 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
         expect(retry.status).to.equal(202); expect(retry.body.success).to.equal(false);
         expect(retry.body.requestId).to.equal(String(user._id));
       }
-      expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+      expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
       expect(await processAccountDeletionJob()).to.equal(null);
       expect(await Appointment.countDocuments()).to.equal(1);
       expect(await User.findById(user._id)).not.to.equal(null);
-      expect((await AccountDeletionJob.findById(user._id)).blockers).to.include("RETENTION_POLICY_APPROVAL_REQUIRED");
+      expect((await AccountDeletionJob.findById(user._id)).blockers).to.include("RETENTION_PERIOD_ACTIVE");
     });
   }
   it("a crash after job creation still blocks access; a later worker repairs session revocation", async () => {
@@ -84,7 +85,7 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     // Model a crash before the account flag write as well.
     await User.updateOne({ _id: patient._id }, { $set: { isActive: true } });
     expect((await auth(request(app).get("/protected"))).status).to.equal(401);
-    expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
     expect((await Session.findById(session._id)).isActive).to.equal(false);
   });
   it("Apple network failure is durable and retryable; success is checkpointed without deleting records", async () => {
@@ -101,7 +102,7 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     expect(job.lastErrorCode).to.equal("APPLE_UNAVAILABLE"); expect(job.appleRevokedAt).to.equal(undefined);
     expect(await processAccountDeletionJob()).to.equal(null);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
-    expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
     job = await AccountDeletionJob.findById(patient._id);
     expect(job.appleRevokedAt).to.be.instanceOf(Date);
     expect(provider.secondCall.args[1].body.get("token")).to.equal("synthetic-apple-refresh");
@@ -127,18 +128,72 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     expect((await processAccountDeletionJob()).status).to.equal("retry");
     expect((await AccountDeletionJob.findById(patient._id)).appleRevokedAt).to.be.instanceOf(Date);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
-    expect((await processAccountDeletionJob()).status).to.equal("blocked_retention");
+    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
     expect(provider.getCalls().filter(call => call.args[0].includes("appleid.apple.com"))).to.have.length(1);
     expect((await AIConsent.findOne({ userId: patient._id })).activeCalls).to.have.length(0);
   });
+  it("retains records through day 89, then blocks unverified external cleanup at day 90", async () => {
+    const job = await requestAccountDeletion(patient);
+    await processAccountDeletionJob();
+    const due = new Date(job.retentionUntil);
+    expect(await processAccountDeletionJob(new Date(due.getTime() - 1))).to.equal(null);
+    expect((await processAccountDeletionJob(due)).status).to.equal("blocked_cleanup");
+    expect(await User.findById(patient._id)).not.to.equal(null);
+    expect((await AccountDeletionJob.findById(patient._id)).blockers).to.include("BACKUP_CLEANUP_VERIFICATION_REQUIRED");
+  });
+  it("erases local account, private files and financial records after 90 days and verified cleanup", async () => {
+    const confirmation = sinon.stub(deletionNotification, "send").resolves();
+    await PrivateAsset.create({ ownerId: patient._id, purpose: "certification", name: "synthetic.txt", mimeType: "text/plain", data: Buffer.from("synthetic"), size: 9 });
+    await Transaction.create({ userId: patient._id, amount: 1 });
+    await Appointment.create({ patient: patient._id, counselor: consultant._id, date: new Date(Date.now() + 86400000) });
+    const job = await requestAccountDeletion(patient);
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
+      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified",
+      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
+      "cleanupTracking.manualReviewReference": "synthetic-only-review"
+    } });
+    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("completed");
+    expect(await User.findById(patient._id)).to.equal(null);
+    expect(confirmation.calledOnceWithExactly(patient.email)).to.equal(true);
+    expect((await AccountDeletionJob.findById(patient._id).select("+completionEmail")).completionEmail).to.equal(undefined);
+    expect(await User.findById(consultant._id)).not.to.equal(null);
+    expect(await PrivateAsset.countDocuments({ ownerId: patient._id })).to.equal(0);
+    expect(await Transaction.countDocuments({ userId: patient._id })).to.equal(0);
+    expect(await Appointment.countDocuments({ patient: patient._id })).to.equal(0);
+  });
+  it("retries completion confirmation after erasure without recreating an account", async () => {
+    const confirmation = sinon.stub(deletionNotification, "send");
+    confirmation.onFirstCall().rejects(new Error("synthetic delivery outage"));
+    confirmation.onSecondCall().resolves();
+    const job = await requestAccountDeletion(patient);
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
+      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified",
+      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
+      "cleanupTracking.manualReviewReference": "synthetic-only-review"
+    } });
+    const due = new Date(job.retentionUntil);
+    expect((await processAccountDeletionJob(due)).status).to.equal("retry");
+    expect(await User.findById(patient._id)).to.equal(null);
+    expect((await processAccountDeletionJob(new Date(due.getTime() + 60000))).status).to.equal("completed");
+    expect(confirmation.callCount).to.equal(2);
+    const result = await AccountDeletionJob.findById(patient._id).select("+completionEmail");
+    expect(result.completionNoticeSentAt).to.be.instanceOf(Date);
+    expect(result.completionEmail).to.equal(undefined);
+  });
+  it("an active legal hold prevents erasure even after 90 days", async () => {
+    const job = await requestAccountDeletion(patient);
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { "cleanupTracking.legalHolds": "active" } });
+    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("blocked_cleanup");
+    expect(await User.findById(patient._id)).not.to.equal(null);
+  });
   const booking = (who, date, key, mode = "free") => ({ user: who, body: { counselorId: String(consultant._id), date, requestId: key, paymentMode: mode, demoAmount: 200 } });
-  it("concurrent identical booking retries commit one appointment and one simulation ledger record", async () => {
+  it("concurrent identical free booking retries commit one appointment without a ledger record", async () => {
     const req = booking(patient, new Date(Date.now() + 86400000).toISOString(), "same-request-001", "demo");
     const responses = Array.from({ length: 6 }, response);
     await Promise.all(responses.map(res => book(req, res)));
     expect(responses.map(res => res.statusCode)).to.satisfy(values => values.every(value => [200, 201].includes(value)));
     expect(new Set(responses.map(res => String(res.body._id))).size).to.equal(1);
-    expect(await Appointment.countDocuments()).to.equal(1); expect(await Transaction.countDocuments()).to.equal(1);
+    expect(await Appointment.countDocuments()).to.equal(1); expect(await Transaction.countDocuments()).to.equal(0);
     const changed = response(); await book({ ...req, body: { ...req.body, notes: "different" } }, changed);
     expect(changed.statusCode).to.equal(409);
   });
@@ -147,7 +202,7 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     const a = response(), b = response();
     await Promise.all([book(booking(patient, date, "patient-request-001", "demo"), a), book(booking(stranger, date, "patient-request-002", "demo"), b)]);
     expect([a.statusCode, b.statusCode].sort()).to.deep.equal([201, 409]);
-    expect(await Appointment.countDocuments()).to.equal(1); expect(await Transaction.countDocuments()).to.equal(1);
+    expect(await Appointment.countDocuments()).to.equal(1); expect(await Transaction.countDocuments()).to.equal(0);
   });
   it("status transitions use compare-and-set, reject outsiders, and canceled slots can be rebooked", async () => {
     const date = new Date(Date.now() + 86400000).toISOString();
@@ -167,9 +222,9 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     await Promise.all([updateStatus({ user: consultant, params: { id: appointment._id }, body: { status: "confirmed" } }, a), updateStatus({ user: consultant, params: { id: appointment._id }, body: { status: "rejected" } }, b)]);
     expect([a.statusCode, b.statusCode].sort()).to.deep.equal([200, 409]);
   });
-  it("booking fails closed if a required index is absent or is not unique", async () => {
+  it("booking fails closed when index verification fails", async () => {
     expect(bookingIndexesReady(REQUIRED_BOOKING_INDEXES.map(index => ({ ...index, unique: false })))).to.equal(false);
-    const indexes = sinon.stub(Appointment.collection, "indexes").resolves([]);
+    const indexes = sinon.stub(Appointment.collection, "indexes").rejects(new Error("Index inspection unavailable"));
     const res = response(); await book(booking(patient, new Date(Date.now() + 86400000).toISOString(), "unconfigured-key"), res);
     expect(res.statusCode).to.equal(503); expect(await Appointment.countDocuments()).to.equal(0);
     indexes.restore();

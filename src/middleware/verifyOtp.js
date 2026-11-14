@@ -3,11 +3,17 @@ import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
 import Session from "../models/sessionModel.js";
+import { accountDeletionPending } from "../services/accountDeletionService.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 
 export const verifyOtp = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email: rawEmail, otp } = req.body || {};
+    if (typeof rawEmail !== "string" || !rawEmail.trim() ||
+      typeof otp !== "string" || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ message: "Valid email and six-digit OTP are required", success: false });
+    }
+    const email = rawEmail.trim().toLowerCase();
 
     // 1. Find user
     if (DEMO_ACCOUNT_EMAILS.includes(String(email || "").trim().toLowerCase())) {
@@ -20,14 +26,16 @@ export const verifyOtp = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found", success: false });
     }
+    if (!user.isActive || await accountDeletionPending(user._id)) {
+      return res.status(401).json({ message: "Account is unavailable", success: false });
+    }
 
     // 2. Find valid OTP
-    const otpDoc = await OTP.findOne({ userId: user._id, otp });
+    // Consume atomically with expiry in the query. Concurrent replays cannot
+    // create multiple sessions, and MongoDB TTL cleanup timing is irrelevant.
+    const otpDoc = await OTP.findOneAndDelete({ userId: user._id, otp, expiresAt: { $gt: new Date() } });
     if (!otpDoc) {
-      return res.status(400).json({ message: "Invalid OTP", success: false });
-    }
-    if (otpDoc.expiresAt < Date.now()) {
-      return res.status(400).json({ message: "OTP expired", success: false });
+      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
     // Multi-device policy: keep prior sessions active; just create one for this device.
@@ -48,8 +56,7 @@ export const verifyOtp = async (req, res) => {
     newSession.refreshToken = refreshToken;
     await newSession.save();
 
-    // 7. Delete used OTPs
-    await OTP.deleteMany({ userId: user._id });
+    // The accepted OTP was consumed above; do not delete a newer resend.
 
     // 8. Set cookies (works for both development and production)
     const isProduction = process.env.NODE_ENV === "production";
@@ -80,11 +87,10 @@ export const verifyOtp = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("OTP verification error:", error);
+    console.error("OTP verification failed");
     return res.status(500).json({
       message: "OTP verification failed",
       success: false,
-      error: error.message,
     });
   }
 };

@@ -1,14 +1,15 @@
 import { logoutOtherDevicesAndSendOTP } from "../controllers/authController.js";
 import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
+import { accountDeletionPending } from "../services/accountDeletionService.js";
 import OTP from "../models/otpModel.js";
 import User from "../models/userModel.js";
 import otpService from "../services/otpService.js";
 
 export const generateOtp = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
 
-    if (!email) {
+    if (typeof email !== "string" || !email.trim()) {
       return res.status(400).json({ message: "Email is required", success: false });
     }
 
@@ -23,6 +24,10 @@ export const generateOtp = async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: "User not found", success: false });
+    }
+
+    if (!user.isActive || await accountDeletionPending(user._id)) {
+      return res.status(401).json({ message: "Account is unavailable", success: false });
     }
 
     const otp = await otpService.generateOTPForAccount(normalizedEmail);
@@ -45,7 +50,7 @@ export const generateOtp = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("generateOtp error:", error);
+    console.error("OTP delivery failed");
     return res.status(500).json({
       message: "Error sending OTP. Please try again.",
       success: false,
