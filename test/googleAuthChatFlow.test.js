@@ -1,3 +1,4 @@
+import { approvedRegistration } from './fixtures/registrationConsent.js';
 // Integration test: brand-new user signs up via Google → sends chat request
 // → existing counsellor accepts within 30s. Verifies the full flow that the
 // user originally reported as broken.
@@ -133,7 +134,7 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
 
     // Step 2: User hits POST /api/auth/google with role=user
     const authReq = {
-      body: { idToken: "fake-google-id-token", role: "user" },
+      body: { ...approvedRegistration, idToken: "fake-google-id-token", role: "user" },
       headers: {},
     };
     const authRes = makeRes();
@@ -206,7 +207,7 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     });
 
     // First call — creates user
-    const firstReq = { body: { idToken: "tok1", role: "user" }, headers: {} };
+    const firstReq = { body: { ...approvedRegistration, idToken: "tok1", role: "user" }, headers: {} };
     const firstRes = makeRes();
     await googleAuth(firstReq, firstRes);
     expect(firstRes.statusCode).to.equal(200);
@@ -344,13 +345,10 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     const oldLoginRes = makeRes();
     await googleAuth(oldLoginReq, oldLoginRes);
 
-    expect([200, 409]).to.include(oldLoginRes.statusCode);
-    if (oldLoginRes.statusCode === 409) {
-      expect(oldLoginRes.body).to.have.property("code", "GOOGLE_ID_MISMATCH");
-    } else {
-      const oldLoggedInId = oldLoginRes.body.user._id || oldLoginRes.body.user.id;
-      expect(oldLoggedInId.toString()).to.not.equal(user._id.toString());
-    }
+    expect(oldLoginRes.statusCode).to.equal(400);
+    expect(oldLoginRes.body.code).to.equal("AGE_ELIGIBILITY_REQUIRED");
+    // A formerly linked identity is a new enrollment, never the old account.
+    expect(await User.countDocuments({ googleId: oldGoogleSub })).to.equal(0);
 
     // And login with the NEW Google identity works and reuses the same user.
     await Session.deleteMany({ userId: user._id });
@@ -437,7 +435,7 @@ describe("Google auth → chat request → counsellor accept (30s window)", func
     });
 
     const firstReq = {
-      body: { idToken: "tok-c", role: "counsellor" },
+      body: { ...approvedRegistration, idToken: "tok-c", role: "counsellor" },
       headers: {},
     };
     const firstRes = makeRes();

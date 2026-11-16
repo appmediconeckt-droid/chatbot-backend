@@ -9,10 +9,18 @@ export const deletionDueAt = requestedAt => {
 };
 export function deletionCleanupBlockers(tracking = {}) {
   const blockers = [];
+  if (!String(tracking.policyApprovalReference || "").trim()) blockers.push("RETENTION_POLICY_APPROVAL_REQUIRED");
   if (tracking.legalHolds !== "reviewed") blockers.push("LEGAL_HOLD_REVIEW_REQUIRED");
   if (tracking.backups !== "verified") blockers.push("BACKUP_CLEANUP_VERIFICATION_REQUIRED");
   if (!["verified", "not_applicable"].includes(tracking.cloudinaryCleanup)) blockers.push("CLOUDINARY_CLEANUP_VERIFICATION_REQUIRED");
   if (!["verified", "not_applicable"].includes(tracking.streamCleanup)) blockers.push("STREAM_CLEANUP_VERIFICATION_REQUIRED");
-  if (!tracking.manualReviewReference) blockers.push("CLEANUP_REVIEW_REFERENCE_REQUIRED");
+  if (!String(tracking.manualReviewReference || "").trim()) blockers.push("CLEANUP_REVIEW_REFERENCE_REQUIRED");
+  for (const [status, receipt, code] of [
+    ["backups", "backupCleanupReceipt", "BACKUP_CLEANUP_RECEIPT_REQUIRED"],
+    ["cloudinaryCleanup", "cloudinaryCleanupReceipt", "CLOUDINARY_CLEANUP_RECEIPT_REQUIRED"],
+    ["streamCleanup", "streamCleanupReceipt", "STREAM_CLEANUP_RECEIPT_REQUIRED"],
+  ]) {
+    if (tracking[status] === "verified" && !String(tracking[receipt] || "").trim()) blockers.push(code);
+  }
   return blockers;
 }

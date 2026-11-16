@@ -16,6 +16,9 @@ import Transaction from "../src/models/transactionModel.js";
 import Chat from "../src/models/Chat.js";
 import Message from "../src/models/Message.js";
 import PrivateAsset from "../src/models/PrivateAsset.js";
+import Prescription from "../src/models/Prescription.js";
+import { issuePrescription } from "../src/controllers/prescriptionController.js";
+import { resolveProfileAsset } from "../src/services/profileAssetReferences.js";
 import { requestAccountDeletion, processAccountDeletionJob } from "../src/services/accountDeletionService.js";
 import deletionNotification from "../src/services/deletionNotification.js";
 import { encryptAppleToken } from "../src/services/appleTokenService.js";
@@ -148,9 +151,10 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     await Appointment.create({ patient: patient._id, counselor: consultant._id, date: new Date(Date.now() + 86400000) });
     const job = await requestAccountDeletion(patient);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
-      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified",
+      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
       "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
-      "cleanupTracking.manualReviewReference": "synthetic-only-review"
+      "cleanupTracking.manualReviewReference": "synthetic-only-review",
+      "cleanupTracking.policyApprovalReference": "synthetic-only-policy-approval"
     } });
     expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("completed");
     expect(await User.findById(patient._id)).to.equal(null);
@@ -167,9 +171,10 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     confirmation.onSecondCall().resolves();
     const job = await requestAccountDeletion(patient);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
-      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified",
+      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
       "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
-      "cleanupTracking.manualReviewReference": "synthetic-only-review"
+      "cleanupTracking.manualReviewReference": "synthetic-only-review",
+      "cleanupTracking.policyApprovalReference": "synthetic-only-policy-approval"
     } });
     const due = new Date(job.retentionUntil);
     expect((await processAccountDeletionJob(due)).status).to.equal("retry");
@@ -179,6 +184,21 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     const result = await AccountDeletionJob.findById(patient._id).select("+completionEmail");
     expect(result.completionNoticeSentAt).to.be.instanceOf(Date);
     expect(result.completionEmail).to.equal(undefined);
+  });
+  it("requires policy approval before erasure even when all operational checks are cleared", async () => {
+    const confirmation = sinon.stub(deletionNotification, "send").resolves();
+    const job = await requestAccountDeletion(patient);
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
+      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
+      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
+      "cleanupTracking.manualReviewReference": "synthetic-only-review",
+      "cleanupTracking.policyApprovalReference": "   "
+    } });
+    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("blocked_cleanup");
+    const persisted = await AccountDeletionJob.findById(patient._id);
+    expect(persisted.blockers).to.include("RETENTION_POLICY_APPROVAL_REQUIRED");
+    expect(await User.findById(patient._id)).not.to.equal(null);
+    expect(confirmation.called).to.equal(false);
   });
   it("an active legal hold prevents erasure even after 90 days", async () => {
     const job = await requestAccountDeletion(patient);
@@ -318,5 +338,37 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     await Message.deleteOne({ _id: message._id });
     expect((await auth(request(app).get(file.path))).status).to.equal(404);
     expect((await auth(request(app).get(`${file.path}/link`))).status).to.equal(404);
+  });
+  it("profile asset lookup requires actual database ownership and purpose", async () => {
+    const asset = await PrivateAsset.create({ ownerId: consultant._id, purpose: "certification", name: "synthetic.pdf", mimeType: "application/pdf", data: Buffer.from("%PDF-1.7 synthetic"), size: 18 });
+    const path = `/api/private-files/${asset._id}`;
+    expect(await resolveProfileAsset(path, patient._id, "certification")).to.equal(null);
+    expect(await resolveProfileAsset(path, consultant._id, "prescription")).to.equal(null);
+    expect((await resolveProfileAsset(path, consultant._id, "certification")).publicId).to.equal(`private:${asset._id}`);
+  });
+  it("private prescription snapshots preserve patient verification, ownership and session revocation", async () => {
+    consultant.specialization = ["Psychiatry"];
+    const bytes = Buffer.from("89504e470d0a1a0a00000000", "hex");
+    const source = await PrivateAsset.create({ ownerId: consultant._id, purpose: "prescription", name: "synthetic.png", mimeType: "image/png", data: bytes, size: bytes.length });
+    consultant.prescriptionSignature = { url: `/api/private-files/${source._id}`, publicId: `private:${source._id}` };
+    await consultant.save();
+    const chat = await Chat.create({ userId: patient._id, counselorId: consultant._id, status: "active" });
+    const res = response();
+    await issuePrescription({ user: consultant, params: { chatId: String(chat._id) }, body: {
+      problem: "Synthetic", medicines: [{ name: "Synthetic", dosage: "Synthetic", timing: "Synthetic", timeOfDay: ["Morning"] }],
+    }, file: { mimetype: "application/pdf", originalname: "synthetic.pdf", buffer: Buffer.from("%PDF-1.7 synthetic"), size: 18 } }, res);
+    expect(res.statusCode).to.equal(201);
+    const record = await Prescription.findById(res.body.prescription.id);
+    const snapshotPath = record.psychiatristSnapshot.prescriptionSignature;
+    expect(snapshotPath).not.to.equal(consultant.prescriptionSignature.url);
+    expect((await auth(request(app).get(consultant.prescriptionSignature.url))).status).to.equal(404);
+    expect((await auth(request(app).get(snapshotPath))).status).to.equal(404);
+    await Prescription.updateOne({ _id: record._id }, { $set: { "identityVerification.status": "verified" } });
+    expect((await auth(request(app).get(snapshotPath))).status).to.equal(200);
+    const outsiderSession = await Session.create({ userId: stranger._id, refreshToken: "outsider-refresh" });
+    const outsiderToken = jwt.sign({ userId: stranger._id, sessionId: outsiderSession._id, role: "user" }, process.env.ACCESS_SECRET, { expiresIn: 600 });
+    expect((await request(app).get(snapshotPath).set("Authorization", `Bearer ${outsiderToken}`)).status).to.equal(404);
+    await Session.updateOne({ _id: session._id }, { $set: { isActive: false } });
+    expect((await auth(request(app).get(snapshotPath))).status).to.equal(401);
   });
 });

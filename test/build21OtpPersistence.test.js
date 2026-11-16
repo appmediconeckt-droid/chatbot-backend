@@ -1,3 +1,4 @@
+import { approvedRegistration } from './fixtures/registrationConsent.js';
 import { expect } from 'chai';
 import mongoose from 'mongoose';
 import express from 'express';
@@ -28,7 +29,7 @@ const response = () => ({ code: 200, body: null, status(code) { this.code = code
       const email = `signup-${role}@example.test`;
       const emailVerificationToken = jwt.sign({ email, purpose: 'registration_email_verified' }, process.env.ACCESS_SECRET, { expiresIn: '10m' });
       const res = await request(app).post('/api/auth/complete-registration').send({
-        fullName: 'Synthetic signup', email, phoneNumber: '+919876543210', password: 'StrongPassword42!',
+        ...approvedRegistration, fullName: 'Synthetic signup', email, phoneNumber: '+919876543210', password: 'StrongPassword42!',
         role, emailVerificationToken, latitude: 12, longitude: 77,
         ...(role === 'counsellor' ? { qualification: 'MSc', specialization: 'Wellness', experience: 0, location: 'Bengaluru, Karnataka' } : {}),
       });
@@ -98,13 +99,23 @@ const response = () => ({ code: 200, body: null, status(code) { this.code = code
       .setProtectedHeader({ alg: 'RS256', kid: 'build21-fixture' }).setIssuer('https://appleid.apple.com')
       .setAudience(audience).setSubject(`apple-fixture-${role}`).setIssuedAt().setExpirationTime(expires).sign(privateKey);
     for (const role of ['user', 'counsellor']) it(`${role}: verifies signature and creates an Apple session without GPS`, async () => {
-      const res = await request(app).post('/api/auth/apple-login').send({ role, identityToken: await token(role), latitude: 12, longitude: 77 });
+      const res = await request(app).post('/api/auth/apple-login').send({ ...approvedRegistration, role, identityToken: await token(role), latitude: 12, longitude: 77 });
       expect(res.status).to.equal(200); expect(res.body.success).to.equal(true);
       const user = await User.findOne({ appleId: `apple-fixture-${role}` });
       expect(user.role).to.equal(role); expect(user.locationData.history).to.have.length(0);
       expect(user.locationData.current.coordinates).to.deep.equal([0, 0]);
       expect(await Session.countDocuments({ userId: user._id, isActive: true })).to.equal(1);
     });
+    for (const role of ['user', 'counsellor']) {
+      for (const patch of [{ age: 17 }, { age: undefined }, { termsAccepted: false }, { termsVersion: 'old' }, { termsContentSha256: 'forged' }]) {
+        it(`${role}: verified Apple identity cannot bypass enrollment ${JSON.stringify(patch)}`, async () => {
+          const res = await request(app).post('/api/auth/apple-login').send({ ...approvedRegistration, ...patch, role, identityToken: await token(role) });
+          expect(res.status).to.equal(400);
+          expect(await User.countDocuments()).to.equal(0);
+          expect(await Session.countDocuments()).to.equal(0);
+        });
+      }
+    }
     it('rejects a validly signed token for another audience', async () => {
       const res = await request(app).post('/api/auth/apple-login').send({ role: 'user', identityToken: await token('user', 'other-app') });
       expect(res.status).to.equal(401); expect(await User.countDocuments({})).to.equal(0);

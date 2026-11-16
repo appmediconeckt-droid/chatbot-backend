@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { randomUUID } from "node:crypto";
 import AccountDeletionJob, { initialDeletionTracking } from "../models/AccountDeletionJob.js";
 import User from "../models/userModel.js";
@@ -11,6 +12,24 @@ import Chat from "../models/Chat.js";
 import { cleanupAccountData } from "./accountCleanupService.js";
 import { deletionDueAt, deletionCleanupBlockers, RETENTION_DAYS, RETENTION_POLICY_VERSION } from "./deletionRetentionPolicy.js";
 export const RETENTION_BLOCKER = "RETENTION_PERIOD_ACTIVE";
+
+async function eraseLocalWithReceipt(job, fence, email, cleanupContext) {
+  // Writing the leased job inside the same transaction fences the entire local
+  // purge. A concurrent claim/approval change conflicts and rolls it back.
+  await mongoose.connection.transaction(async mongoSession => {
+    const current = await AccountDeletionJob.findOne({ ...fence, status: "processing" }).session(mongoSession);
+    if (!current || deletionCleanupBlockers(current.cleanupTracking).length) throw new Error("Cleanup lease or approval changed");
+    const locked = await AccountDeletionJob.updateOne({ ...fence, status: "processing" }, { $set: { localCleanupStartedAt: new Date() } }, { session: mongoSession });
+    if (locked.matchedCount !== 1) throw new Error("Cleanup lease lost");
+    const receipt = await cleanupAccountData({ userId: job._id, email, cleanupContext, eraseFinancial: true, mongoSession });
+    if (!receipt.verified) throw new Error("Cleanup not verified");
+    const erased = await User.deleteOne({ _id: job._id }, { session: mongoSession });
+    if (erased.acknowledged !== true || await User.exists({ _id: job._id }).session(mongoSession)) throw new Error("Account erasure not verified");
+    const saved = await AccountDeletionJob.updateOne(fence, { $set: { localCleanupVerifiedAt: new Date(), localCleanupOperations: receipt.operations } }, { session: mongoSession });
+    if (saved.matchedCount !== 1) throw new Error("Cleanup receipt not saved");
+  });
+}
+
 
 export async function requestAccountDeletion(user) {
   // Validate prerequisites while the caller can still reauthenticate with Apple.
@@ -51,6 +70,8 @@ export async function processAccountDeletionJob(now = new Date()) {
     const user = await User.findById(job._id).select("+appleTokenCiphertext");
     if (!user) {
       if (job.cleanupContext && !deletionCleanupBlockers(job.cleanupTracking).length && now >= (job.retentionUntil || deletionDueAt(job.createdAt || now))) {
+        if (!job.completionEmail || !job.localCleanupVerifiedAt) throw new Error("Missing cleanup receipt");
+        await eraseLocalWithReceipt(job, fence, job.completionEmail, job.cleanupContext);
         await deletionNotification.send(job.completionEmail);
         await AccountDeletionJob.updateOne(fence, { $set: { status: "completed", completedAt: now, completionNoticeSentAt: now, blockers: [], "cleanupTracking.retainedRecords": "verified_erased" }, $unset: { leaseUntil: 1, leaseOwner: 1, cleanupContext: 1, completionEmail: 1 } });
         return { id: String(job._id), status: "completed" };
@@ -93,9 +114,7 @@ export async function processAccountDeletionJob(now = new Date()) {
       await AccountDeletionJob.updateOne(fence, { $set: { cleanupContext } });
     }
     await AccountDeletionJob.updateOne(fence, { $set: { completionEmail: user.email } });
-    const result = await cleanupAccountData({ userId: job._id, email: user.email, cleanupContext, eraseFinancial: true });
-    if (!result.acknowledged) throw new Error("Cleanup not acknowledged");
-    await User.deleteOne({ _id: job._id });
+    await eraseLocalWithReceipt(job, fence, user.email, cleanupContext);
     await deletionNotification.send(user.email);
     await AccountDeletionJob.updateOne(fence, {
       $set: { status: "completed", completedAt: now, completionNoticeSentAt: now, blockers: [], "cleanupTracking.retainedRecords": "verified_erased" },

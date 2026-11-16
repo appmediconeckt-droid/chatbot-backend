@@ -79,8 +79,22 @@ describe("anonymousUser privacy helpers", function () {
       expect(safe.email).to.equal("");
     }
   });
+  it("normalizes serialized saved photos without exposing identity fields", function () {
+    for (const key of ["url", "secure_url", "uri"]) {
+      const safe = sanitizeUserForCounselor({
+        profilePhoto: JSON.stringify({ [key]: "/uploads/avatar.png", fullName: "Private Name" }),
+        fullName: "Private Name", email: "private@example.com",
+      });
+      expect(safe.avatarUrl).to.equal("/uploads/avatar.png");
+      expect(safe.fullName).to.equal("");
+      expect(safe.email).to.equal("");
+      expect(safe.profilePhoto).to.equal(null);
+    }
+  });
   it("does not share device-only paths or invent a missing picture", function () {
-    for (const photo of [null, {}, "file:///private/avatar.png", "content://avatar/1"]) {
+    for (const photo of [null, {}, "file:///private/avatar.png", "content://avatar/1",
+      "{broken", JSON.stringify({ url: "file:///private/avatar.png" }),
+      JSON.stringify({ url: "javascript:alert(1)" }), JSON.stringify({ fullName: "Private Name" })]) {
       expect(sanitizeUserForCounselor({ profilePhoto: photo }).avatarUrl).to.equal(null);
     }
   });

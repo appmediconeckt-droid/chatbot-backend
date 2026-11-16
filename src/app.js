@@ -1,3 +1,4 @@
+import legalRoutes from './routes/legalRoutes.js';
 import privateFiles from "./routes/privateFiles.js";
 import legacyPrivateFiles from "./routes/legacyPrivateFiles.js";
 import privacyRoutes from "./routes/privacyRoutes.js";
@@ -296,6 +297,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+// Configure only operator-verified ingress addresses/CIDRs. Forwarded client IPs
+// remain untrusted by default, including for authentication rate limits.
+if (process.env.TRUSTED_PROXY_CIDRS) {
+  app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS.split(",").map(address => address.trim()).filter(Boolean));
+}
+app.use(helmet());
 
 // Use a tolerant JSON parser: accept text for application/json, keep raw body,
 // attempt strict JSON.parse, and retry after trimming a single trailing quote.
@@ -397,7 +404,7 @@ const corsOptions = {
     if (isAllowedOrigin(origin)) return callback(null, true);
 
     console.warn(`CORS blocked origin: ${origin}`);
-    callback(new Error("Not allowed by CORS"), false);
+    callback(Object.assign(new Error("Not allowed by CORS"), { status: 403 }), false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -415,7 +422,6 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.urlencoded({ extended: true }));
-app.use(helmet());
 app.use(compression());
 app.use(cookieParser());
 
@@ -492,6 +498,7 @@ app.use("/api/avatar", avatarRoutes); // <--- Avatar generation with OpenAI
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/translate', translateRoutes);
 app.use("/privacy", privacyRoutes);
+app.use("/api/legal", legalRoutes);
 app.use("/api/ai/consent", aiConsentRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/ai/realtime", aiRealtimeRoute);
@@ -596,6 +603,10 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // pass through
-  next(err);
+  if (res.headersSent) return next(err);
+  // Never serialize provider exceptions, Mongoose validation values or stacks.
+  const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  const message = status === 413 ? "Request body is too large" : status === 403 ? "Request origin is not allowed" : "Unable to process request";
+  console.error("Request failed", { status });
+  return res.status(status).json({ success: false, message });
 });

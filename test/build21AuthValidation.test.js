@@ -1,3 +1,4 @@
+import { approvedRegistration } from './fixtures/registrationConsent.js';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import jwt from 'jsonwebtoken';
@@ -20,7 +21,7 @@ describe('Build 21 authentication validation', () => {
     sinon.stub(RegistrationOTP, 'deleteMany').resolves({});
     sinon.stub(bcrypt, 'hash').resolves('hashed-fixture');
     const email = 'consultant@example.test';
-    const body = { email, fullName: 'Synthetic Consultant', phoneNumber: '+919876543210',
+    const body = { ...approvedRegistration, email, fullName: 'Synthetic Consultant', phoneNumber: '+919876543210',
       password: 'StrongPassword42!', role: 'counsellor', qualification: 'MSc',
       specialization: 'Wellness', experience: 0, location: 'Bengaluru, Karnataka',
       emailVerificationToken: jwt.sign({ email, purpose: 'registration_email_verified' }, process.env.ACCESS_SECRET, { expiresIn: '10m' }) };

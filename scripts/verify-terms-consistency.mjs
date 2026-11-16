@@ -1,0 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import assert from 'node:assert/strict';
+import { terms, contentText, contentHash, publication } from '../src/legal/terms.js';
+const [mobile, web] = process.argv.slice(2);
+if (!mobile || !web) throw new Error('Provide mobile and website checkout paths');
+for (const path of [resolve(mobile, 'src/content/termsDocument.json'), resolve(web, 'test/fixtures/terms-1.0.json'), resolve(web, 'src/content/mobileTerms.json')]) assert.deepEqual(JSON.parse(readFileSync(path)), terms);
+assert.equal(contentText(terms), terms.content);
+assert.equal(contentHash(terms), terms.contentSha256);
+assert.equal(readFileSync(resolve(mobile, 'src/content/termsContract.js'), 'utf8'), readFileSync(resolve(web, 'src/legal/termsContract.js'), 'utf8'));
+console.log(JSON.stringify({ version: terms.version, effectiveDate: terms.effectiveDate, sections: terms.sections.length, contentSha256: terms.contentSha256, exactParity: true, unifiedPublication: publication.status }, null, 2));

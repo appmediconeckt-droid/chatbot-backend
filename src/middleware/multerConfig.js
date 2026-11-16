@@ -205,6 +205,8 @@ const prescriptionPdfUpload = multer({
 export const uploadPrescriptionPdf = (req, res, next) => {
   prescriptionPdfUpload.single("attachment")(req, res, (error) => {
     if (error) return res.status(400).json({ success: false, error: error.message });
+    try { if (req.file) validateUploadContent(req.file); }
+    catch { return res.status(400).json({ success: false, error: "File contents must be a PDF" }); }
     return next();
   });
 };
@@ -225,6 +227,8 @@ const prescriptionPhotoUpload = multer({
 export const uploadPrescriptionPhoto = (req, res, next) => {
   prescriptionPhotoUpload.single("photo")(req, res, (error) => {
     if (error) return res.status(400).json({ success: false, error: error.message });
+    try { if (req.file) validateUploadContent(req.file); }
+    catch { return res.status(400).json({ success: false, error: "File contents must match the selected image type" }); }
     return next();
   });
 };

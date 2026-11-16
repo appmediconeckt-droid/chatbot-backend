@@ -8,7 +8,7 @@ import { MongoClient } from 'mongodb';
 const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
 Object.assign(env, { NODE_ENV: 'test', ACCESS_SECRET: 'isolated-persistence-access-fixture', REFRESH_SECRET: 'isolated-persistence-refresh-fixture', ACCESS_TOKEN_SECRET: 'isolated-persistence-access-fixture', REFRESH_TOKEN_SECRET: 'isolated-persistence-refresh-fixture' });
 let failed = false;
-const suites = ['chatExpiry', 'googleAuthChatFlow', 'demoPaymentPersistence', 'loginChallengeIntegration', 'securityPersistence', 'releaseGateVerification', 'build21OtpPersistence', 'build21RestoredIntegration'];
+const suites = ['registrationLifecycle', 'chatExpiry', 'googleAuthChatFlow', 'demoPaymentPersistence', 'loginChallengeIntegration', 'securityPersistence', 'releaseGateVerification', 'build21OtpPersistence', 'build21RestoredIntegration', 'bookingSetupPersistence'];
 const selected = process.argv.slice(2);
 if (selected.some(file => !suites.includes(file))) throw new Error('Unknown isolated persistence suite');
 for (const file of selected.length ? selected : suites) {

@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 const schema = new mongoose.Schema({
   ownerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
   chatId: { type: mongoose.Schema.Types.ObjectId, ref: "Chat", index: true },
-  // Set only by a reviewed prescription migration, never from upload input.
+  // Bound by the prescription workflow or a reviewed historical migration.
+  // Never accepted from upload input.
   prescriptionId: { type: mongoose.Schema.Types.ObjectId, ref: "Prescription" },
   purpose: { type: String, enum: ["chat", "certification", "prescription"], required: true },
   name: { type: String, required: true },

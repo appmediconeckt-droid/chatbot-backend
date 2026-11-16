@@ -14,7 +14,10 @@ export const getAnonymousUserName = (
 // Return the same saved picture used by User Profile. Keep the public
 // identity anonymous; do not derive an image from the patient's real name.
 export const getUserAvatarForCounselor = (user) => {
-  const photo = user?.profilePhoto;
+  let photo = user?.profilePhoto;
+  if (typeof photo === "string" && photo.trim().startsWith("{")) {
+    try { photo = JSON.parse(photo); } catch { return null; }
+  }
   const url = asTrimmedString(
     typeof photo === "string" ? photo : photo?.url || photo?.secure_url || photo?.uri,
   );

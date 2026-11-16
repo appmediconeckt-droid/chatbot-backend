@@ -57,13 +57,13 @@ authRoutes.post("/send-email-otp", authRateLimit, sendEmailOTP);
 authRoutes.post("/verify-email-otp", authRateLimit, verifyEmailOTP);
 authRoutes.post("/send-phone-otp", authRateLimit, sendPhoneOTP);
 authRoutes.post("/verify-phone-otp", authRateLimit, verifyPhoneOTP);
-authRoutes.post("/complete-registration",uploadProfilePhoto,completeRegistration,);
+authRoutes.post("/complete-registration", authRateLimit, uploadProfilePhoto, completeRegistration);
 
 // AUTHENTICATION ROUTES
 authRoutes.post("/login", authRateLimit, loginUser);
 // Google OAuth (signup + login in one endpoint — handles both new and existing users)
-authRoutes.post("/google", googleAuth);
-authRoutes.post("/apple-login", appleLogin);
+authRoutes.post("/google", authRateLimit, googleAuth);
+authRoutes.post("/apple-login", authRateLimit, appleLogin);
 authRoutes.post("/google/relink", authMiddleware, relinkGoogleAccount);
 authRoutes.post("/google/unlink/send-otp", authMiddleware, sendUnlinkGoogleOtp);
 authRoutes.post("/google/unlink", authMiddleware, unlinkGoogleAccount);

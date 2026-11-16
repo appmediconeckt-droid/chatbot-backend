@@ -2,6 +2,9 @@ import mongoose from "mongoose";
 import Chat from "../models/Chat.js";
 import Prescription from "../models/Prescription.js";
 import User from "../models/userModel.js";
+import { resolveProfileAsset } from "../services/profileAssetReferences.js";
+import PrivateAsset from "../models/PrivateAsset.js";
+import { privateAssetId } from "../services/privateAssets.js";
 
 const normalizeSpecializations = (user) => [
   user?.specialization,
@@ -74,6 +77,41 @@ const getImageUrl = (value) => {
   return value.secure_url || value.url || value.path || value.uri || "";
 };
 
+const prescriptionImages = async (body, psychiatrist, recordId, previousSnapshot = {}) => {
+  const images = {};
+  for (const [field, alias, legacyFields] of [
+    ["prescriptionSignature", "signatureUrl", ["signature", "signatureImage", "doctorSignature"]],
+    ["prescriptionSeal", "sealUrl", ["seal", "stamp", "clinicSeal"]],
+  ]) {
+    const existing = [psychiatrist?.[field], ...legacyFields.map(key => psychiatrist?.[key]), previousSnapshot[field]]
+      .map(value => ({ url: getImageUrl(value) })).filter(asset => asset.url);
+    const requested = getImageUrl(body[`${field}Url`]) || getImageUrl(body[alias]);
+    if (requested && !await resolveProfileAsset(requested, psychiatrist._id, "prescription", existing)) {
+      throw Object.assign(new Error("Signature and seal must belong to the issuing consultant."), { statusCode: 403 });
+    }
+    images[field] = requested || existing[0]?.url || "";
+    const sourceId = privateAssetId(images[field]);
+    if (sourceId) {
+      const source = await PrivateAsset.findOne({
+        _id: sourceId, ownerId: psychiatrist._id, purpose: "prescription",
+        $or: [{ prescriptionId: { $exists: false } }, { prescriptionId: recordId }],
+      }).select("+data");
+      if (!source) throw Object.assign(new Error("Signature and seal must belong to the issuing consultant."), { statusCode: 403 });
+      if (!source.prescriptionId) {
+        // A per-prescription snapshot preserves the patient verification gate
+        // while the original professional image remains owner-only. Until the
+        // record saves, the snapshot is detached and cannot be downloaded.
+        const snapshot = await PrivateAsset.create({
+          ownerId: psychiatrist._id, prescriptionId: recordId, purpose: "prescription",
+          name: source.name, mimeType: source.mimeType, size: source.size, data: source.data,
+        });
+        images[field] = `/api/private-files/${snapshot._id}`;
+      }
+    }
+  }
+  return images;
+};
+
 const toResponse = (record) => ({
   id: record._id,
   problem: record.problem,
@@ -122,22 +160,11 @@ export const issuePrescription = async (req, res) => {
     const medicines = parseMedicines(req.body.medicines);
     const patient = await User.findById(chat.userId).lean();
     if (!patient) return res.status(404).json({ success: false, error: "Patient not found" });
-    const prescriptionSignature =
-      getImageUrl(req.body.prescriptionSignatureUrl) ||
-      getImageUrl(req.body.signatureUrl) ||
-      getImageUrl(psychiatrist.prescriptionSignature) ||
-      getImageUrl(psychiatrist.signature) ||
-      getImageUrl(psychiatrist.signatureImage) ||
-      getImageUrl(psychiatrist.doctorSignature);
-    const prescriptionSeal =
-      getImageUrl(req.body.prescriptionSealUrl) ||
-      getImageUrl(req.body.sealUrl) ||
-      getImageUrl(psychiatrist.prescriptionSeal) ||
-      getImageUrl(psychiatrist.seal) ||
-      getImageUrl(psychiatrist.stamp) ||
-      getImageUrl(psychiatrist.clinicSeal);
+    const recordId = new mongoose.Types.ObjectId();
+    const { prescriptionSignature, prescriptionSeal } = await prescriptionImages(req.body, psychiatrist, recordId);
 
     const record = await Prescription.create({
+      _id: recordId,
       chatId: chat._id,
       patientId: patient._id,
       psychiatristId: psychiatrist._id,
@@ -218,7 +245,7 @@ export const getPrescriptionFile = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", pdfBuffer.length);
     res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
-    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("Cache-Control", "private, no-store");
     return res.send(pdfBuffer);
   } catch (error) {
     console.error("Get prescription file error:", error);
@@ -271,7 +298,7 @@ export const getPatientPhoto = async (req, res) => {
     if (!photoBuffer.length) return res.status(404).json({ success: false, error: "Patient photo is empty" });
     res.setHeader("Content-Type", record.patientPhoto.mimeType || "image/jpeg");
     res.setHeader("Content-Length", photoBuffer.length);
-    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("Cache-Control", "private, no-store");
     return res.send(photoBuffer);
   } catch (error) {
     console.error("Get prescription patient photo error:", error);
@@ -305,14 +332,7 @@ export const reviewPatientPhoto = async (req, res) => {
     const reason = String(req.body.reason || "").trim();
     if (action === "reject" && !reason) return res.status(400).json({ success: false, error: "Rejection reason is required" });
     const psychiatrist = await User.findById(req.user._id).lean();
-    const prescriptionSignature =
-      getImageUrl(req.body.prescriptionSignatureUrl) ||
-      getImageUrl(req.body.signatureUrl) ||
-      getImageUrl(psychiatrist?.prescriptionSignature);
-    const prescriptionSeal =
-      getImageUrl(req.body.prescriptionSealUrl) ||
-      getImageUrl(req.body.sealUrl) ||
-      getImageUrl(psychiatrist?.prescriptionSeal);
+    const { prescriptionSignature, prescriptionSeal } = await prescriptionImages(req.body, psychiatrist, record._id, record.psychiatristSnapshot);
     if (prescriptionSignature) record.psychiatristSnapshot.prescriptionSignature = prescriptionSignature;
     if (prescriptionSeal) record.psychiatristSnapshot.prescriptionSeal = prescriptionSeal;
     record.identityVerification = {
@@ -327,8 +347,8 @@ export const reviewPatientPhoto = async (req, res) => {
       verificationStatus: record.identityVerification.status,
       prescription: toResponse(record),
     });
-  } catch {
-    return res.status(500).json({ success: false, error: "Unable to review patient photo" });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.statusCode ? error.message : "Unable to review patient photo" });
   }
 };
 

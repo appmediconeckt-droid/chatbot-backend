@@ -1,3 +1,5 @@
+import { registrationEligibility } from "../services/registrationEligibility.js";
+import { resolveProfileAsset } from "../services/profileAssetReferences.js";
 import { validateUploadContent } from "../services/privateAssets.js";
 import { requestAccountDeletion, accountDeletionPending } from "../services/accountDeletionService.js";
 import { issueLoginChallenge, consumeLoginChallenge, discardLoginChallenge } from "../services/loginChallengeService.js";
@@ -470,6 +472,16 @@ export const updateUserById = async (req, res) => {
         success: false,
       });
     }
+    if (currentUser.registrationConsent && (Object.hasOwn(req.body, "age") || Object.hasOwn(req.body, "dateOfBirth"))) {
+      const eligibility = registrationEligibility({
+        age: req.body.age ?? currentUser.age,
+        dateOfBirth: req.body.dateOfBirth ?? currentUser.dateOfBirth?.toISOString().slice(0, 10),
+        termsAccepted: true,
+        termsVersion: currentUser.registrationConsent.version,
+        termsContentSha256: currentUser.registrationConsent.contentSha256,
+      }, res, currentUser.registrationConsent.channel);
+      if (!eligibility) return;
+    }
     const isPatientUser = normalizeRole(currentUser.role) === "user";
 
     // Prepare updates object
@@ -597,10 +609,9 @@ export const updateUserById = async (req, res) => {
             bytes: uploadedFile.bytes || uploadedFile.size || null,
           };
         } else if (typeof req.body[urlField] === "string" && req.body[urlField].trim()) {
-          updates[field] = {
-            ...(currentUser[field]?.toObject?.() || currentUser[field] || {}),
-            url: req.body[urlField].trim(),
-          };
+          const asset = await resolveProfileAsset(req.body[urlField].trim(), userId, "prescription", [currentUser[field]]);
+          if (!asset) return res.status(403).json({ success: false, message: "Upload a signature or seal belonging to your account." });
+          updates[field] = { url: asset.url, publicId: asset.publicId, format: asset.format, bytes: asset.bytes };
         }
       }
     }
@@ -979,17 +990,20 @@ export const updateUserById = async (req, res) => {
       }
     }
 
-    // Log final certifications before update
+    // Storage references cannot be supplied by another account or used to claim
+    // arbitrary historical files. Never trust client-provided provider IDs.
     if (updates.certifications) {
-      console.log("Final certifications to save:");
-      updates.certifications.forEach((cert, idx) => {
-        console.log(`  Cert ${idx}:`, {
-          name: cert.name,
-          documentUrl: cert.documentUrl,
-          documentName: cert.documentName,
-          _id: cert._id,
-        });
-      });
+      const existing = (currentUser.certifications || []).map(cert => ({
+        url: cert.documentUrl, publicId: cert.documentPublicId, name: cert.documentName,
+      }));
+      for (const cert of updates.certifications) {
+        if (!cert.documentUrl && !cert.documentPublicId) continue;
+        const asset = await resolveProfileAsset(cert.documentUrl, userId, "certification", existing);
+        if (!asset) return res.status(403).json({ success: false, message: "Upload certification documents belonging to your account." });
+        cert.documentUrl = asset.url;
+        cert.documentPublicId = asset.publicId || null;
+        cert.documentName = asset.name || "";
+      }
     }
 
     // 3. Handle basic user fields.
@@ -1005,8 +1019,6 @@ export const updateUserById = async (req, res) => {
       "gender",
       "dateOfBirth",
       "bloodGroup",
-      "isActive",
-      "isVerified",
       "profileCompleted",
       "email",
     ];
@@ -1173,9 +1185,6 @@ export const updateUserById = async (req, res) => {
         "languages",
         "aboutMe",
         "education",
-        "rating",
-        "totalSessions",
-        "activeClients",
       ];
 
       counsellorFields.forEach((field) => {
@@ -1540,27 +1549,19 @@ export const sendPhoneOTP = async (req, res) => {
         .json({ message: "Phone number is required", success: false });
     }
 
-    let userEmail = email;
-    let userVerification = null;
-
-    if (userEmail) {
-      userVerification = verifiedUsersStore.get(userEmail);
-    } else {
-      for (const [email, data] of verifiedUsersStore.entries()) {
-        if (data.isEmailVerified && !data.isPhoneVerified) {
-          userEmail = email;
-          userVerification = data;
-          break;
-        }
-      }
-    }
-
-    if (!userVerification || !userVerification.isEmailVerified) {
+    const userEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const userVerification = verifiedUsersStore.get(userEmail);
+    if (!userVerification?.isEmailVerified || Date.now() > userVerification.expiresAt) {
       return res.status(400).json({
         message: "Please verify your email first.",
         success: false,
         requiresEmailFirst: true,
       });
+    }
+
+    const pendingPhone = phoneOTPStore.get(userEmail);
+    if (pendingPhone && Date.now() - pendingPhone.sentAt < 60000) {
+      return res.status(429).json({ success: false, message: "Wait one minute before requesting another phone OTP." });
     }
 
     const normalizedPhone = normalizePhoneNumber(phoneNumber, phoneCountryCode);
@@ -1593,6 +1594,8 @@ export const sendPhoneOTP = async (req, res) => {
 
     phoneOTPStore.set(userEmail, {
       otp,
+      attempts: 0,
+      sentAt: Date.now(),
       phoneNumber: formattedPhone,
       formattedPhone,
       expiresAt: Date.now() + 10 * 60 * 1000,
@@ -1658,11 +1661,7 @@ export const sendPhoneOTP = async (req, res) => {
       userVerification.formattedPhone = undefined;
       verifiedUsersStore.set(userEmail, userVerification);
 
-      console.error("Phone OTP sending error:", {
-        code: sendError?.code,
-        message: sendError?.message,
-        moreInfo: sendError?.moreInfo,
-      });
+      console.error("Phone OTP delivery failed");
 
       if (sendError?.code === 21211) {
         return res.status(400).json({
@@ -1783,24 +1782,9 @@ export const verifyPhoneOTP = async (req, res) => {
         .json({ message: "Enter a valid phone number", success: false });
     }
     const cleanedPhone = normalizedPhone.formatted;
-    let foundEmail = email;
-    let storedData = null;
-
-    if (foundEmail) {
-      storedData = phoneOTPStore.get(foundEmail);
-      if (storedData && storedData.phoneNumber !== cleanedPhone)
-        storedData = null;
-    }
-
-    if (!storedData) {
-      for (const [email, data] of phoneOTPStore.entries()) {
-        if (data.phoneNumber === cleanedPhone && Date.now() <= data.expiresAt) {
-          foundEmail = email;
-          storedData = data;
-          break;
-        }
-      }
-    }
+    const foundEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    let storedData = phoneOTPStore.get(foundEmail);
+    if (storedData?.phoneNumber !== cleanedPhone) storedData = null;
 
     if (!storedData) {
       return res.status(400).json({
@@ -1817,6 +1801,11 @@ export const verifyPhoneOTP = async (req, res) => {
       });
     }
 
+    if (storedData.attempts >= 5) {
+      return res.status(429).json({ message: "Too many phone OTP attempts. Request a new code after the resend cooldown.", success: false });
+    }
+    storedData.attempts = (storedData.attempts || 0) + 1;
+
     if (storedData.otp !== otp) {
       return res.status(400).json({ message: "Invalid OTP", success: false });
     }
@@ -1829,13 +1818,6 @@ export const verifyPhoneOTP = async (req, res) => {
       userVerification.phoneCountryCode = normalizedPhone.countryCode;
       verifiedUsersStore.set(foundEmail, userVerification);
 
-      // DEBUG: Log the verification status
-      console.log(`✅ Phone verified for ${foundEmail}`);
-      console.log(`Verification data:`, {
-        isEmailVerified: userVerification.isEmailVerified,
-        isPhoneVerified: userVerification.isPhoneVerified,
-        expiresAt: new Date(userVerification.expiresAt),
-      });
     } else {
       // If no verification entry exists, create one
       verifiedUsersStore.set(foundEmail, {
@@ -1846,9 +1828,6 @@ export const verifyPhoneOTP = async (req, res) => {
         phoneCountryCode: normalizedPhone.countryCode,
         expiresAt: Date.now() + 60 * 60 * 1000,
       });
-      console.log(
-        `⚠️ Created new verification entry for ${foundEmail} (email verification missing)`,
-      );
     }
 
     phoneOTPStore.delete(foundEmail);
@@ -2012,6 +1991,8 @@ export const completeRegistration = async (req, res) => {
         message: "Select a valid role and complete the consultant professional details." });
     }
 
+    const eligibility = registrationEligibility(req.body, res, "email");
+    if (!eligibility) return;
     const hashedPassword = await bcrypt.hash(password, 10);
     const dob = getAgeFromDateOfBirth(dateOfBirth);
     if (!dob.valid) {
@@ -2021,7 +2002,7 @@ export const completeRegistration = async (req, res) => {
         field: "dateOfBirth",
       });
     }
-    const derivedAge = dob.age ?? (age !== undefined && age !== "" ? Number(age) : null);
+
 
     // Base user data (common for both roles)
     const userData = {
@@ -2031,7 +2012,8 @@ export const completeRegistration = async (req, res) => {
       password: hashedPassword,
       phoneNumber: cleanedPhone.formatted,
       phoneCountryCode: cleanedPhone.countryCode,
-      age: Number.isFinite(derivedAge) ? derivedAge : null,
+      age: eligibility.age,
+      registrationConsent: eligibility.consent,
       gender: gender || "male",
       role,
       profileCompleted: role !== "counsellor",
@@ -2490,8 +2472,12 @@ export const googleAuth = async (req, res) => {
           .json({ message: "Account is deactivated", success: false });
       }
     } else {
-      // 3. Create new account from Google profile
+      // Eligibility is checked only after verified identity and existing-account lookup.
+      const eligibility = registrationEligibility(req.body, res, "google");
+      if (!eligibility) return;
       const newUserData = {
+        age: eligibility.age,
+        registrationConsent: eligibility.consent,
         fullName,
         email,
         googleEmail: email,
@@ -2718,8 +2704,12 @@ export const appleLogin = async (req, res) => {
         });
       }
 
+      const eligibility = registrationEligibility(req.body, res, "apple");
+      if (!eligibility) return;
       const appleName = getAppleFullName(fullName);
       user = await User.create({
+        age: eligibility.age,
+        registrationConsent: eligibility.consent,
         fullName: appleName || tokenEmail.split("@")[0],
         email: tokenEmail,
         appleEmail: tokenEmail,
@@ -3448,6 +3438,12 @@ export const getAllCounsellors = async (req, res) => {
   try {
     const { specialization, location, consultationMode, minExperience } =
       req.query;
+    if ([specialization, location, consultationMode].some(value =>
+      value !== undefined && (typeof value !== "string" || value.length > 200)) ||
+      (minExperience !== undefined && (typeof minExperience !== "string" ||
+        !minExperience.trim() || !Number.isFinite(Number(minExperience)) || Number(minExperience) < 0))) {
+      return res.status(400).json({ success: false, message: "Invalid directory filters" });
+    }
     let filter = {
       role: "counsellor",
       isActive: true,
@@ -3461,7 +3457,7 @@ export const getAllCounsellors = async (req, res) => {
     };
 
     if (specialization) filter.specialization = { $in: [specialization] };
-    if (location) filter.location = { $regex: location, $options: "i" };
+    if (location) filter.location = { $regex: location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
     if (consultationMode) filter.consultationMode = { $in: [consultationMode] };
     if (minExperience) filter.experience = { $gte: Number(minExperience) };
 

@@ -4,6 +4,18 @@ import mongoose from "mongoose";
 import { type } from "os";
 
 const userSchema = new mongoose.Schema({
+    registrationConsent: {
+      type: new mongoose.Schema({
+        version: { type: String, required: true, immutable: true },
+        contentSha256: { type: String, required: true, immutable: true },
+        acceptedAt: { type: Date, required: true, immutable: true },
+        channel: { type: String, enum: ["email", "google", "apple"], required: true, immutable: true },
+        eligibilityPolicy: { type: String, required: true, immutable: true },
+        declaredAge: { type: Number, min: 18, max: 150, required: true, immutable: true },
+      }, { _id: false }),
+      immutable: true,
+      default: undefined,
+    },
     fullName: {
         type: String,
         trim: true,
