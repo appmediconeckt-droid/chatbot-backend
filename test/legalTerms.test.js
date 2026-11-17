@@ -22,7 +22,7 @@ describe('canonical Terms publication boundary', () => {
     expect(response.body.contentSha256).to.equal(contentHash(terms));
     expect(response.body.sections).to.have.length(15);
     expect(response.body.sections[6].title).to.include('Consultant');
-    expect(response.body.version).to.equal('1.0');
+    expect(response.body.version).to.equal(terms.version);
     expect(response.body).not.to.have.property('approvalReference');
     expect(response.headers['cache-control']).to.include('max-age=300');
     const cached = await request(app).get('/api/legal/terms').set('If-None-Match', response.headers.etag);

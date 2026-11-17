@@ -1,0 +1,60 @@
+{
+  "checkedAt": "2026-11-17T05:30:41.836Z",
+  "mode": "read-only",
+  "matchedUsers": [
+    {
+      "_id": "6afbdff2d57ef7ecb15b0be3",
+      "authProvider": "local",
+      "role": "user",
+      "isActive": false,
+      "createdAt": "2026-11-17T05:02:42.652Z",
+      "updatedAt": "2026-11-17T05:07:09.300Z",
+      "passwordConfigured": true,
+      "googleLinked": false
+    }
+  ],
+  "matchedJobs": [
+    {
+      "_id": "6afbdff2d57ef7ecb15b0be3",
+      "blockers": [
+        "RETENTION_PERIOD_ACTIVE"
+      ],
+      "cleanupTracking": {
+        "retainedRecords": "blocked_policy",
+        "legalHolds": "unreviewed",
+        "backups": "not_verified",
+        "cloudinaryCleanup": "blocked_policy",
+        "streamCleanup": "not_verified",
+        "appleAuthorization": "not_applicable",
+        "aiConsent": "revoked"
+      },
+      "createdAt": "2026-11-17T05:06:39.015Z",
+      "nextAttemptAt": "2027-02-15T05:06:39.015Z",
+      "policyVersion": "owner-90-days-2026-11-14",
+      "retentionUntil": "2027-02-15T05:06:39.015Z",
+      "status": "waiting_retention",
+      "updatedAt": "2026-11-17T05:06:42.069Z",
+      "accessRevokedAt": "2026-11-17T05:06:41.495Z"
+    }
+  ],
+  "counts": {
+    "users": 1,
+    "sessions": 3,
+    "refreshtokens": 0,
+    "chats": 1,
+    "appointments": 0,
+    "privateassets": 0,
+    "messages": 2,
+    "loginchallenges": 0,
+    "prescriptions": 0,
+    "calls": 0,
+    "transactions": 0,
+    "counselorearnings": 0,
+    "activeSessions": 0
+  },
+  "commands": [
+    "aggregate",
+    "find"
+  ],
+  "limitation": "Jobs whose completion email was erased cannot be linked to this email without the original account/request ID. Counts cover matched IDs only."
+}

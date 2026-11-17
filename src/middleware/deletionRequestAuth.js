@@ -1,3 +1,4 @@
+import { accountDeletionResponse, processAccountDeletionJob } from "../services/accountDeletionService.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import Session from "../models/sessionModel.js";
@@ -14,8 +15,10 @@ export async function deletionRequestAuth(req, res, next) {
     const job = await AccountDeletionJob.findById(claims.userId);
     if (!job) return authMiddleware(req, res, next);
     const originalSession = await Session.exists({ _id: claims.sessionId, userId: claims.userId });
-    if (!originalSession) return res.status(401).json({ success: false, code: "AUTHENTICATION_REQUIRED" });
-    return res.set("Cache-Control", "no-store").status(202).json({ success: false, accepted: true, code: "ACCOUNT_DELETION_PENDING", requestId: String(job._id), status: job.status });
+    if (!originalSession && !job.requestSessionIds?.some(id => String(id) === String(claims.sessionId))) return res.status(401).json({ success: false, code: "AUTHENTICATION_REQUIRED" });
+    await processAccountDeletionJob(new Date(), job._id);
+    const result = accountDeletionResponse(await AccountDeletionJob.findById(job._id));
+    return res.set("Cache-Control", "no-store").status(result.statusCode).json(result.body);
   } catch (error) {
     if (["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(error.name)) return res.status(401).json({ success: false, code: "AUTHENTICATION_REQUIRED" });
     return res.status(503).json({ error: "Deletion request status is unavailable. Contact support@humaeli.com." });

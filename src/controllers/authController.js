@@ -1,7 +1,8 @@
+import AccountDeletionJob from "../models/AccountDeletionJob.js";
 import { registrationEligibility } from "../services/registrationEligibility.js";
 import { resolveProfileAsset } from "../services/profileAssetReferences.js";
 import { validateUploadContent } from "../services/privateAssets.js";
-import { requestAccountDeletion, accountDeletionPending } from "../services/accountDeletionService.js";
+import { requestAccountDeletion, accountDeletionPending, processAccountDeletionJob, accountDeletionResponse } from "../services/accountDeletionService.js";
 import { issueLoginChallenge, consumeLoginChallenge, discardLoginChallenge } from "../services/loginChallengeService.js";
 import { DEMO_ACCOUNT_EMAILS } from "../models/demoOtpConfigModel.js";
 import mongoose from "mongoose";
@@ -1386,10 +1387,8 @@ export const sendEmailOTP = async (req, res) => {
       .select("role")
       .lean();
     if (existingUser) {
-      const accountType =
-        existingUser.role === "counsellor" ? "Counselor" : "User";
       return res.status(409).json({
-        message: `${accountType} account already exists with this email`,
+        message: "Unable to register with these details. Sign in or contact support.",
         success: false,
       });
     }
@@ -2184,6 +2183,13 @@ const expireStaleLoginSessions = async (userId) => {
   );
 };
 
+// Keep account existence, deletion state and password failures indistinguishable.
+const invalidCredentials = res => res.status(401).json({
+  success: false, code: "AUTHENTICATION_FAILED", message: "Unable to sign in with these credentials.",
+});
+// Comparable password work for absent/passwordless accounts; this is not a real credential.
+const dummyPasswordHash = bcrypt.hashSync("humaeli-invalid-account-placeholder", 10);
+
 export const loginUser = async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
@@ -2201,38 +2207,18 @@ export const loginUser = async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (!user) {
-      return res.status(401).json({
-        message: "Invalid email or password",
-        success: false,
-      });
+    const passwordHash = typeof user?.password === "string" && user.password.startsWith("$2")
+      ? user.password : dummyPasswordHash;
+    const match = await bcrypt.compare(password, passwordHash);
+    if (!user || !user.password || !match || !user.isActive || await accountDeletionPending(user._id)) {
+      return invalidCredentials(res);
     }
-
+    // Reveal role guidance only after the caller has proved the active account password.
     if (normalizeRole(user.role) !== role) {
       return res.status(403).json({
-        message:
-          normalizeRole(user.role) === "counsellor"
-            ? "This account is registered as a counsellor. Please use counsellor login."
-            : "This account is registered as a user. Please use user login.",
-        success: false,
-        roleMismatch: true,
-        code: "ROLE_MISMATCH",
-        actualRole: user.role,
-        requestedRole: role,
+        message: "Use the login panel for your account role.", success: false,
+        roleMismatch: true, code: "ROLE_MISMATCH", actualRole: user.role, requestedRole: role,
       });
-    }
-
-    if (!user.isActive || await accountDeletionPending(user._id)) {
-      return res
-        .status(401)
-        .json({ message: "Account is deactivated", success: false });
-    }
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res
-        .status(401)
-        .json({ message: "Invalid password", success: false });
     }
 
     // A browser may close without completing /logout. Expire sessions whose
@@ -2317,7 +2303,10 @@ export const loginUser = async (req, res) => {
 //   4. Enforce one-device policy (same as /login)
 export const googleAuth = async (req, res) => {
   try {
-    const { idToken, role } = req.body;
+    const { idToken, role, mode } = req.body;
+    if (mode !== undefined && !["login", "signup"].includes(mode)) {
+      return res.status(400).json({ success: false, message: "Invalid authentication mode" });
+    }
 
     if (typeof idToken !== "string" || !idToken.trim()) {
       return res.status(400).json({
@@ -2396,6 +2385,7 @@ export const googleAuth = async (req, res) => {
     if (!user) {
       const byEmail = await User.findOne({ email });
       if (byEmail) {
+        if (!byEmail.isActive || await accountDeletionPending(byEmail._id)) return invalidCredentials(res);
         if (byEmail.googleId && byEmail.googleId !== googleId) {
           // The email belongs to an account already linked to a different
           // Google identity. Do not merge — that would let any Google user
@@ -2412,6 +2402,8 @@ export const googleAuth = async (req, res) => {
     }
 
     if (user) {
+      // Check before linking identities, syncing email/photos or saving the account.
+      if (!user.isActive || await accountDeletionPending(user._id)) return invalidCredentials(res);
       // Role mismatch guard — same contract as /login. If the client said
       // "user" but the existing account is a counsellor (or vice-versa),
       // refuse rather than silently logging them in to the wrong dashboard.
@@ -2466,12 +2458,8 @@ export const googleAuth = async (req, res) => {
         await user.save();
       }
 
-      if (!user.isActive || await accountDeletionPending(user._id)) {
-        return res
-          .status(401)
-          .json({ message: "Account is deactivated", success: false });
-      }
     } else {
+      if (mode === "login") return invalidCredentials(res);
       // Eligibility is checked only after verified identity and existing-account lookup.
       const eligibility = registrationEligibility(req.body, res, "google");
       if (!eligibility) return;
@@ -3039,15 +3027,7 @@ export const logoutOtherDevicesAndSendOTP = async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user) {
-      return res
-        .status(404)
-        .json({ message: "User not found", success: false });
-    }
-
-    if (!await validLoginOtpAccount(user, req.body)) {
-      return res.status(401).json({ success: false, message: "Valid account credentials are required" });
-    }
+    if (!await validLoginOtpAccount(user, req.body)) return invalidCredentials(res);
     const otp = await otpService.generateLoginOTPForAccount(email);
     console.log("Generated short-lived login verification code");
 
@@ -3094,7 +3074,7 @@ export const verifyLoginOTP = async (req, res) => {
     if (!/^\d{6}$/.test(otp)) return res.status(400).json({ success: false, message: "Invalid OTP" });
     const user = await User.findOne({ email });
     if (!await validLoginOtpAccount(user, req.body)) {
-      return res.status(401).json({ success: false, message: "Valid account credentials are required" });
+      return invalidCredentials(res);
     }
     if (!await consumeLoginChallenge(user, otp)) {
       return res.status(400).json({ success: false, message: "Invalid, expired or already used OTP. Request a new code." });
@@ -4153,16 +4133,9 @@ export const deleteUser = async (req, res) => {
         .json({ message: "User not found", success: false });
 
     const job = await requestAccountDeletion(user);
-    return res.status(202).json({
-      success: false,
-      accepted: true,
-      code: "ACCOUNT_DELETION_PENDING",
-      status: job.status,
-      requestId: String(job._id),
-      retentionUntil: job.retentionUntil,
-      retentionDays: 90,
-      message: "Your deletion request is recorded and account access is disabled. Cleanup is pending. Clinical, financial and related account records are retained for 90 days from your deletion request, then scheduled for cleanup, subject to legal holds and verified provider/backup cleanup. Contact support@humaeli.com for request status.",
-    });
+    await processAccountDeletionJob(new Date(), user._id);
+    const result = accountDeletionResponse(await AccountDeletionJob.findById(job._id));
+    return res.set("Cache-Control", "no-store").status(result.statusCode).json(result.body);
   } catch (error) {
     console.error("deleteUser error:");
     if (String(error.code || "").startsWith("APPLE_")) return res.status(error.status || 503).json({ success: false, code: error.code, message: error.message });

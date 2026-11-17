@@ -1,7 +1,7 @@
-// Product-owner instruction, 14 November 2026: retain records for 90 days
-// after an account deletion request. This is not a determination of legal duties.
-export const RETENTION_DAYS = 90;
-export const RETENTION_POLICY_VERSION = "owner-90-days-2026-11-14";
+// Owner instruction, 17 November 2026: start erasure immediately on confirmation.
+// Known legal holds and external cleanup receipts remain distinct from local erasure.
+export const RETENTION_DAYS = 0;
+export const RETENTION_POLICY_VERSION = "owner-immediate-deletion-2026-11-17";
 export const deletionDueAt = requestedAt => {
   const date = new Date(requestedAt);
   if (!Number.isFinite(date.getTime())) throw new Error("Valid deletion request date required");
@@ -9,12 +9,10 @@ export const deletionDueAt = requestedAt => {
 };
 export function deletionCleanupBlockers(tracking = {}) {
   const blockers = [];
-  if (!String(tracking.policyApprovalReference || "").trim()) blockers.push("RETENTION_POLICY_APPROVAL_REQUIRED");
   if (tracking.legalHolds !== "reviewed") blockers.push("LEGAL_HOLD_REVIEW_REQUIRED");
   if (tracking.backups !== "verified") blockers.push("BACKUP_CLEANUP_VERIFICATION_REQUIRED");
   if (!["verified", "not_applicable"].includes(tracking.cloudinaryCleanup)) blockers.push("CLOUDINARY_CLEANUP_VERIFICATION_REQUIRED");
   if (!["verified", "not_applicable"].includes(tracking.streamCleanup)) blockers.push("STREAM_CLEANUP_VERIFICATION_REQUIRED");
-  if (!String(tracking.manualReviewReference || "").trim()) blockers.push("CLEANUP_REVIEW_REFERENCE_REQUIRED");
   for (const [status, receipt, code] of [
     ["backups", "backupCleanupReceipt", "BACKUP_CLEANUP_RECEIPT_REQUIRED"],
     ["cloudinaryCleanup", "cloudinaryCleanupReceipt", "CLOUDINARY_CLEANUP_RECEIPT_REQUIRED"],

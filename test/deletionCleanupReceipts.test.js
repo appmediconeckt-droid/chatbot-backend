@@ -8,7 +8,7 @@ describe('Deletion completion receipt gate', () => {
       expect(deletionCleanupBlockers({ ...tracking, [field]: '   ' })).to.include(code);
     });
   }
-  it('not-applicable providers still require the policy and cleanup review', () => {
-    expect(deletionCleanupBlockers({ ...tracking, cloudinaryCleanup: 'not_applicable', streamCleanup: 'not_applicable', policyApprovalReference: '' })).to.include('RETENTION_POLICY_APPROVAL_REQUIRED');
+  it('does not impose manual policy approval on immediate erasure', () => {
+    expect(deletionCleanupBlockers({ ...tracking, policyApprovalReference: '', manualReviewReference: '', cloudinaryCleanup: 'not_applicable', streamCleanup: 'not_applicable' })).to.deep.equal([]);
   });
 });

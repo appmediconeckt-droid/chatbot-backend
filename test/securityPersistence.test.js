@@ -1,3 +1,4 @@
+import { deleteUser } from "../src/controllers/authController.js";
 import { expect } from "chai";
 import sinon from "sinon";
 import mongoose from "mongoose";
@@ -19,7 +20,7 @@ import PrivateAsset from "../src/models/PrivateAsset.js";
 import Prescription from "../src/models/Prescription.js";
 import { issuePrescription } from "../src/controllers/prescriptionController.js";
 import { resolveProfileAsset } from "../src/services/profileAssetReferences.js";
-import { requestAccountDeletion, processAccountDeletionJob } from "../src/services/accountDeletionService.js";
+import { requestAccountDeletion, processAccountDeletionJob, accountDeletionResponse } from "../src/services/accountDeletionService.js";
 import deletionNotification from "../src/services/deletionNotification.js";
 import { encryptAppleToken } from "../src/services/appleTokenService.js";
 import { authenticateToken, authenticateSocket } from "../src/middleware/auth.js";
@@ -55,156 +56,133 @@ const local = process.env.AUDIT_ISOLATED_ENV === "true" && /^mongodb:\/\/(127\.0
     token = jwt.sign({ userId: String(patient._id), role: "user", sessionId: String(session._id) }, process.env.ACCESS_SECRET, { expiresIn: 600 });
     app = express(); app.use(express.json());
     app.get("/protected", authenticateToken, (_req, res) => res.json({ ok: true }));
-    app.delete("/delete", deletionRequestAuth, (_req, res) => res.sendStatus(418));
+    app.delete("/delete", deletionRequestAuth, deleteUser);
     app.use("/api/private-files", privateFiles);
   });
   afterEach(() => { sinon.restore(); delete process.env.APPLE_CLIENT_SECRET; delete process.env.APPLE_TOKEN_ENCRYPTION_KEY; });
   after(async () => mongoose.disconnect());
 
+  const approveExternalCleanup = async userId => AccountDeletionJob.updateOne({ _id: userId }, { $set: {
+    "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-backup",
+    "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
+    nextAttemptAt: new Date(0),
+  } });
   for (const role of ["user", "counsellor"]) {
-    it(`${role}: duplicate deletion requests create one job, revoke access, preserve records and stop at retention hold`, async () => {
+    it(`${role}: delete endpoint erases live data immediately and retries return the same result`, async () => {
       const user = role === "user" ? patient : consultant;
+      const login = role === "user" ? session : await Session.create({ userId: user._id, refreshToken: "consultant-refresh" });
+      const accessToken = jwt.sign({ userId: String(user._id), role, sessionId: String(login._id) }, process.env.ACCESS_SECRET, { expiresIn: 600 });
       await Appointment.create({ patient: patient._id, counselor: consultant._id, date: new Date(Date.now() + 86400000) });
-      await Promise.all(Array.from({ length: 4 }, () => requestAccountDeletion(user)));
-      expect(await AccountDeletionJob.countDocuments({ _id: user._id })).to.equal(1);
-      expect((await User.findById(user._id)).isActive).to.equal(false);
-      if (role === "user") {
-        expect((await auth(request(app).get("/protected"))).status).to.equal(401);
-        const retry = await auth(request(app).delete("/delete"));
-        expect(retry.status).to.equal(202); expect(retry.body.success).to.equal(false);
-        expect(retry.body.requestId).to.equal(String(user._id));
-      }
-      expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
-      expect(await processAccountDeletionJob()).to.equal(null);
-      expect(await Appointment.countDocuments()).to.equal(1);
-      expect(await User.findById(user._id)).not.to.equal(null);
-      expect((await AccountDeletionJob.findById(user._id)).blockers).to.include("RETENTION_PERIOD_ACTIVE");
+      await PrivateAsset.create({ ownerId: user._id, purpose: "certification", name: "synthetic.txt", mimeType: "text/plain", data: Buffer.from("synthetic"), size: 9 });
+      await Transaction.create({ userId: user._id, amount: 1 });
+      const chat = await Chat.create({ userId: patient._id, counselorId: consultant._id, status: "active" });
+      await Message.create({ chatId: chat._id, senderId: patient._id, senderRole: "user", content: "synthetic" });
+      const result = await request(app).delete("/delete").set("Authorization", `Bearer ${accessToken}`);
+      expect(result.status).to.equal(200);
+      expect(result.body).to.include({ success: true, status: "account_deleted", localDataDeleted: true, cleanupPending: true, retentionDays: 0 });
+      expect(await User.findById(user._id)).to.equal(null);
+      expect(await Session.countDocuments({ userId: user._id })).to.equal(0);
+      expect(await Appointment.countDocuments()).to.equal(0);
+      expect(await PrivateAsset.countDocuments({ ownerId: user._id })).to.equal(0);
+      expect(await Transaction.countDocuments({ userId: user._id })).to.equal(0);
+      expect(await Message.countDocuments()).to.equal(0);
+      expect(await Chat.countDocuments()).to.equal(0);
+      const other = role === "user" ? consultant : patient;
+      expect(await User.findById(other._id)).not.to.equal(null);
+      expect((await request(app).get("/protected").set("Authorization", `Bearer ${accessToken}`)).status).to.equal(401);
+      const retry = await request(app).delete("/delete").set("Authorization", `Bearer ${accessToken}`);
+      expect(retry.status).to.equal(200); expect(retry.body.requestId).to.equal(String(user._id));
+      const wrongSessionToken = jwt.sign({ userId: String(user._id), role, sessionId: String(new mongoose.Types.ObjectId()) }, process.env.ACCESS_SECRET, { expiresIn: 600 });
+      expect((await request(app).delete("/delete").set("Authorization", `Bearer ${wrongSessionToken}`)).status).to.equal(401);
     });
   }
-  it("a crash after job creation still blocks access; a later worker repairs session revocation", async () => {
+  it("duplicate requests and concurrent workers erase once without a waiting period", async () => {
+    await Promise.all(Array.from({ length: 4 }, () => requestAccountDeletion(patient)));
+    expect(await AccountDeletionJob.countDocuments({ _id: patient._id })).to.equal(1);
+    const results = await Promise.all(Array.from({ length: 4 }, () => processAccountDeletionJob()));
+    expect(results.filter(Boolean)).to.have.length(1);
+    expect(results.find(Boolean).status).to.equal("account_deleted");
+    expect(await User.findById(patient._id)).to.equal(null);
+  });
+  it("a crash after job creation still blocks access and a worker finishes erasure", async () => {
     const fail = sinon.stub(Session, "updateMany").rejects(new Error("synthetic write failure"));
     try { await requestAccountDeletion(patient); throw new Error("expected failure"); } catch (error) { expect(error.message).to.equal("synthetic write failure"); }
     fail.restore();
-    // Model a crash before the account flag write as well.
     await User.updateOne({ _id: patient._id }, { $set: { isActive: true } });
     expect((await auth(request(app).get("/protected"))).status).to.equal(401);
-    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
-    expect((await Session.findById(session._id)).isActive).to.equal(false);
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
+    expect(await User.findById(patient._id)).to.equal(null);
   });
-  it("Apple network failure is durable and retryable; success is checkpointed without deleting records", async () => {
+  it("legacy 90-day jobs are processed immediately despite a future schedule", async () => {
+    await requestAccountDeletion(patient);
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { status: "waiting_retention", policyVersion: "owner-90-days-2026-11-14", retentionUntil: new Date(Date.now() + 90 * 86400000), nextAttemptAt: new Date(Date.now() + 90 * 86400000) } });
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
+    expect(await User.findById(patient._id)).to.equal(null);
+  });
+  it("Apple failure remains retryable and is never reported as completed deletion", async () => {
     process.env.APPLE_CLIENT_SECRET = "synthetic-client-secret";
     process.env.APPLE_TOKEN_ENCRYPTION_KEY = "11".repeat(32);
-    patient.appleId = "synthetic-apple-id";
-    patient.appleTokenCiphertext = encryptAppleToken("synthetic-apple-refresh");
-    await patient.save();
+    patient.appleId = "synthetic-apple-id"; patient.appleTokenCiphertext = encryptAppleToken("synthetic-apple-refresh"); await patient.save();
     const provider = sinon.stub(globalThis, "fetch").onFirstCall().rejects(new Error("network unavailable"));
     provider.onSecondCall().resolves(new Response(null, { status: 200 }));
     await requestAccountDeletion(patient);
     expect((await processAccountDeletionJob()).status).to.equal("retry");
     let job = await AccountDeletionJob.findById(patient._id);
-    expect(job.lastErrorCode).to.equal("APPLE_UNAVAILABLE"); expect(job.appleRevokedAt).to.equal(undefined);
-    expect(await processAccountDeletionJob()).to.equal(null);
+    expect(job.lastErrorCode).to.equal("APPLE_UNAVAILABLE");
+    expect(accountDeletionResponse(job).statusCode).to.equal(202);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
-    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
     job = await AccountDeletionJob.findById(patient._id);
     expect(job.appleRevokedAt).to.be.instanceOf(Date);
+    expect(await User.findById(patient._id)).to.equal(null);
     expect(provider.secondCall.args[1].body.get("token")).to.equal("synthetic-apple-refresh");
     expect(JSON.stringify(job)).not.to.contain("synthetic-apple-refresh");
   });
-  it("expired worker leases recover and competing workers claim a job only once", async () => {
+  it("transaction failure rolls back erasure and can be retried", async () => {
+    await requestAccountDeletion(patient);
+    const failure = sinon.stub(User, "deleteOne").rejects(new Error("synthetic purge failure"));
+    expect((await processAccountDeletionJob()).status).to.equal("retry");
+    expect(await User.findById(patient._id)).not.to.equal(null);
+    expect(await Session.findById(session._id)).not.to.equal(null);
+    failure.restore();
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
+  });
+  it("expired worker leases recover", async () => {
     await requestAccountDeletion(patient);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { status: "processing", leaseOwner: "crashed", leaseUntil: new Date(0) } });
-    const results = await Promise.all(Array.from({ length: 4 }, () => processAccountDeletionJob()));
-    expect(results.filter(Boolean)).to.have.length(1);
-    expect((await AccountDeletionJob.findById(patient._id)).attempts).to.equal(1);
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
   });
-  it("a later cleanup failure preserves the Apple checkpoint and retries the remaining effect only", async () => {
-    process.env.APPLE_CLIENT_SECRET = "synthetic-client-secret";
-    process.env.APPLE_TOKEN_ENCRYPTION_KEY = "11".repeat(32);
-    patient.appleId = "synthetic-apple-id"; patient.appleTokenCiphertext = encryptAppleToken("synthetic-refresh"); await patient.save();
-    await AIConsent.create({ userId: patient._id, provider: "OpenAI", activeCalls: ["synthetic-call"] });
-    const provider = sinon.stub(globalThis, "fetch");
-    provider.onFirstCall().resolves(new Response(null, { status: 200 }));
-    provider.onSecondCall().resolves(new Response(null, { status: 503 }));
-    provider.onThirdCall().resolves(new Response(null, { status: 200 }));
+  it("external cleanup receipts complete independently after immediate local erasure", async () => {
+    const confirmation = sinon.stub(deletionNotification, "send").resolves();
     await requestAccountDeletion(patient);
-    expect((await processAccountDeletionJob()).status).to.equal("retry");
-    expect((await AccountDeletionJob.findById(patient._id)).appleRevokedAt).to.be.instanceOf(Date);
-    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
-    expect((await processAccountDeletionJob()).status).to.equal("waiting_retention");
-    expect(provider.getCalls().filter(call => call.args[0].includes("appleid.apple.com"))).to.have.length(1);
-    expect((await AIConsent.findOne({ userId: patient._id })).activeCalls).to.have.length(0);
-  });
-  it("retains records through day 89, then blocks unverified external cleanup at day 90", async () => {
-    const job = await requestAccountDeletion(patient);
-    await processAccountDeletionJob();
-    const due = new Date(job.retentionUntil);
-    expect(await processAccountDeletionJob(new Date(due.getTime() - 1))).to.equal(null);
-    expect((await processAccountDeletionJob(due)).status).to.equal("blocked_cleanup");
-    expect(await User.findById(patient._id)).not.to.equal(null);
-    expect((await AccountDeletionJob.findById(patient._id)).blockers).to.include("BACKUP_CLEANUP_VERIFICATION_REQUIRED");
-  });
-  it("erases local account, private files and financial records after 90 days and verified cleanup", async () => {
-    const confirmation = sinon.stub(deletionNotification, "send").resolves();
-    await PrivateAsset.create({ ownerId: patient._id, purpose: "certification", name: "synthetic.txt", mimeType: "text/plain", data: Buffer.from("synthetic"), size: 9 });
-    await Transaction.create({ userId: patient._id, amount: 1 });
-    await Appointment.create({ patient: patient._id, counselor: consultant._id, date: new Date(Date.now() + 86400000) });
-    const job = await requestAccountDeletion(patient);
-    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
-      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
-      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
-      "cleanupTracking.manualReviewReference": "synthetic-only-review",
-      "cleanupTracking.policyApprovalReference": "synthetic-only-policy-approval"
-    } });
-    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("completed");
-    expect(await User.findById(patient._id)).to.equal(null);
-    expect(confirmation.calledOnceWithExactly(patient.email)).to.equal(true);
-    expect((await AccountDeletionJob.findById(patient._id).select("+completionEmail")).completionEmail).to.equal(undefined);
-    expect(await User.findById(consultant._id)).not.to.equal(null);
-    expect(await PrivateAsset.countDocuments({ ownerId: patient._id })).to.equal(0);
-    expect(await Transaction.countDocuments({ userId: patient._id })).to.equal(0);
-    expect(await Appointment.countDocuments({ patient: patient._id })).to.equal(0);
-  });
-  it("retries completion confirmation after erasure without recreating an account", async () => {
-    const confirmation = sinon.stub(deletionNotification, "send");
-    confirmation.onFirstCall().rejects(new Error("synthetic delivery outage"));
-    confirmation.onSecondCall().resolves();
-    const job = await requestAccountDeletion(patient);
-    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
-      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
-      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
-      "cleanupTracking.manualReviewReference": "synthetic-only-review",
-      "cleanupTracking.policyApprovalReference": "synthetic-only-policy-approval"
-    } });
-    const due = new Date(job.retentionUntil);
-    expect((await processAccountDeletionJob(due)).status).to.equal("retry");
-    expect(await User.findById(patient._id)).to.equal(null);
-    expect((await processAccountDeletionJob(new Date(due.getTime() + 60000))).status).to.equal("completed");
-    expect(confirmation.callCount).to.equal(2);
-    const result = await AccountDeletionJob.findById(patient._id).select("+completionEmail");
-    expect(result.completionNoticeSentAt).to.be.instanceOf(Date);
-    expect(result.completionEmail).to.equal(undefined);
-  });
-  it("requires policy approval before erasure even when all operational checks are cleared", async () => {
-    const confirmation = sinon.stub(deletionNotification, "send").resolves();
-    const job = await requestAccountDeletion(patient);
-    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: {
-      "cleanupTracking.legalHolds": "reviewed", "cleanupTracking.backups": "verified", "cleanupTracking.backupCleanupReceipt": "synthetic-only-backup-receipt",
-      "cleanupTracking.cloudinaryCleanup": "not_applicable", "cleanupTracking.streamCleanup": "not_applicable",
-      "cleanupTracking.manualReviewReference": "synthetic-only-review",
-      "cleanupTracking.policyApprovalReference": "   "
-    } });
-    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("blocked_cleanup");
-    const persisted = await AccountDeletionJob.findById(patient._id);
-    expect(persisted.blockers).to.include("RETENTION_POLICY_APPROVAL_REQUIRED");
-    expect(await User.findById(patient._id)).not.to.equal(null);
+    expect((await processAccountDeletionJob()).status).to.equal("account_deleted");
     expect(confirmation.called).to.equal(false);
+    await approveExternalCleanup(patient._id);
+    expect((await processAccountDeletionJob()).status).to.equal("completed");
+    expect(confirmation.calledOnceWithExactly(patient.email)).to.equal(true);
+    const job = await AccountDeletionJob.findById(patient._id).select("+completionEmail");
+    expect(job.completionEmail).to.equal(undefined);
+    expect(job.cleanupContext).to.equal(undefined);
   });
-  it("an active legal hold prevents erasure even after 90 days", async () => {
-    const job = await requestAccountDeletion(patient);
+  it("confirmation delivery retries do not recreate or re-erase the deleted account", async () => {
+    const confirmation = sinon.stub(deletionNotification, "send");
+    confirmation.onFirstCall().rejects(new Error("synthetic delivery outage")); confirmation.onSecondCall().resolves();
+    await requestAccountDeletion(patient);
+    await approveExternalCleanup(patient._id);
+    expect((await processAccountDeletionJob()).status).to.equal("retry");
+    expect(await User.findById(patient._id)).to.equal(null);
+    expect(accountDeletionResponse(await AccountDeletionJob.findById(patient._id)).body.status).to.equal("account_deleted");
+    await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { nextAttemptAt: new Date(0) } });
+    expect((await processAccountDeletionJob()).status).to.equal("completed");
+    expect(confirmation.callCount).to.equal(2);
+  });
+  it("a known active legal hold prevents erasure and never claims success", async () => {
+    await requestAccountDeletion(patient);
     await AccountDeletionJob.updateOne({ _id: patient._id }, { $set: { "cleanupTracking.legalHolds": "active" } });
-    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal("blocked_cleanup");
+    expect((await processAccountDeletionJob()).status).to.equal("blocked_cleanup");
     expect(await User.findById(patient._id)).not.to.equal(null);
+    expect(accountDeletionResponse(await AccountDeletionJob.findById(patient._id)).statusCode).to.equal(202);
   });
   const booking = (who, date, key, mode = "free") => ({ user: who, body: { counselorId: String(consultant._id), date, requestId: key, paymentMode: mode, demoAmount: 200 } });
   it("concurrent identical free booking retries commit one appointment without a ledger record", async () => {

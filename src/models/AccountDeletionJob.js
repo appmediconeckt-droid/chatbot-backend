@@ -30,6 +30,7 @@ const schema = new mongoose.Schema({
   _id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   status: { type: String, enum: ["pending", "processing", "retry", "blocked_retention", "waiting_retention", "blocked_cleanup", "completed"], default: "pending" },
   retentionUntil: Date,
+  requestSessionIds: [{ type: mongoose.Schema.Types.ObjectId }],
   policyVersion: String,
   completedAt: Date,
   localCleanupStartedAt: Date,

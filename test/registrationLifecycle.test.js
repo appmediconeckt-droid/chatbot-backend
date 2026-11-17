@@ -34,6 +34,7 @@ const local = process.env.AUDIT_ISOLATED_ENV === 'true' && /^mongodb:\/\/(127\.0
   const approveSyntheticCleanup = async id => AccountDeletionJob.updateOne({ _id: id }, { $set: {
     'cleanupTracking.legalHolds': 'reviewed', 'cleanupTracking.backups': 'verified', 'cleanupTracking.backupCleanupReceipt': 'synthetic-only-backup-receipt',
     'cleanupTracking.cloudinaryCleanup': 'not_applicable', 'cleanupTracking.streamCleanup': 'not_applicable',
+    nextAttemptAt: new Date(0),
     'cleanupTracking.manualReviewReference': 'synthetic-disposable-only', 'cleanupTracking.policyApprovalReference': 'synthetic-disposable-only',
   } });
   for (const role of ['user', 'counsellor']) {
@@ -65,9 +66,9 @@ const local = process.env.AUDIT_ISOLATED_ENV === 'true' && /^mongodb:\/\/(127\.0
       await PrivateAsset.create({ ownerId: user._id, purpose: 'certification', name: 'synthetic.txt', mimeType: 'text/plain', data: Buffer.from('synthetic'), size: 9 });
       const send = sinon.stub(deletionNotification, 'send').resolves();
       const job = await requestAccountDeletion(user);
-      expect((await processAccountDeletionJob()).status).to.equal('waiting_retention'); expect(send.called).to.equal(false);
+      expect((await processAccountDeletionJob()).status).to.equal('account_deleted'); expect(send.called).to.equal(false);
       await approveSyntheticCleanup(user._id);
-      expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal('completed');
+      expect((await processAccountDeletionJob()).status).to.equal('completed');
       expect(await User.exists({ _id: user._id })).to.equal(null);
       expect(await PrivateAsset.countDocuments({ ownerId: user._id })).to.equal(0);
       expect(await Session.countDocuments({ userId: user._id })).to.equal(0);
@@ -89,7 +90,7 @@ const local = process.env.AUDIT_ISOLATED_ENV === 'true' && /^mongodb:\/\/(127\.0
     const job = await requestAccountDeletion(user); await approveSyntheticCleanup(user._id);
     sinon.stub(PrivateAsset, 'countDocuments').returns({ session: async () => 1 });
     const send = sinon.stub(deletionNotification, 'send').resolves();
-    expect((await processAccountDeletionJob(new Date(job.retentionUntil))).status).to.equal('retry');
+    expect((await processAccountDeletionJob()).status).to.equal('retry');
     expect(await User.exists({ _id: user._id })).not.to.equal(null);
     expect(await PrivateAsset.exists({ _id: asset._id })).not.to.equal(null);
     expect((await AccountDeletionJob.findById(user._id)).localCleanupVerifiedAt).to.equal(undefined);
